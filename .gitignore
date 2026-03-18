@@ -1,0 +1,8 @@
+Deliveroo.js/
+DeliverooAgent.js/
+node_modules/
+dist/
+logs/
+tmp/
+.env
+configs/
