@@ -22,7 +22,9 @@ import { BeliefMapImpl } from '../beliefs/belief-map.js';
 import { ActionExecutor } from '../execution/action-executor.js';
 import { Deliberator } from '../deliberation/deliberator.js';
 import { BfsPlanner } from '../planning/bfs-planner.js';
+import { PddlPlanner } from '../planning/pddl-planner.js';
 import { PlanValidator } from '../planning/plan-validator.js';
+import type { IPlanner } from '../types.js';
 import { findPath } from '../pathfinding/pathfinder.js';
 import { createLogger, type Logger } from '../logging/logger.js';
 import { MetricsCollector } from '../metrics/metrics-collector.js';
@@ -44,7 +46,8 @@ export class BdiAgent implements IAgent {
   private config!: AgentConfig;
   private beliefs: BeliefStore | null = null;
   private deliberator!: Deliberator;
-  private planner!: BfsPlanner;
+  private planner!: IPlanner;
+  private bfsFallback: BfsPlanner | null = null;
   private validator!: PlanValidator;
   private executor!: ActionExecutor;
   private log!: Logger;
@@ -85,7 +88,12 @@ export class BdiAgent implements IAgent {
     this.log = createLogger('bdi-agent', config.logLevel);
 
     this.deliberator = new Deliberator();
-    this.planner     = new BfsPlanner();
+    if (config.planner === 'pddl') {
+      this.planner     = new PddlPlanner();
+      this.bfsFallback = new BfsPlanner();
+    } else {
+      this.planner = new BfsPlanner();
+    }
     this.validator   = new PlanValidator();
 
     if (config.metrics?.enabled !== false) {
@@ -241,6 +249,7 @@ export class BdiAgent implements IAgent {
 
     this.allyTracker?.stop();
     this.planner.abort();
+    this.bfsFallback?.abort();
     if (this.executor) this.executor.cancelCurrentPlan();
 
     if (this.sigintHandler)  process.removeListener('SIGINT',  this.sigintHandler);
@@ -407,26 +416,36 @@ export class BdiAgent implements IAgent {
       // Plan — pass current agent positions as dynamic obstacles so BFS avoids occupied tiles
       const deliveryZones = Array.from(this.beliefs.getMap().getDeliveryZones());
       const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
-      const planStart = Date.now();
-      const planResult = await this.planner.plan({
+      const planningRequest = {
         currentPosition:  self.position,
         carriedParcels:   self.carriedParcels as ReadonlyArray<ParcelBelief>,
         targetParcels,
         deliveryZones,
         beliefMap:        this.beliefs.getMap(),
         constraints:      agentObstacles.length > 0 ? { avoidPositions: agentObstacles } : undefined,
-      });
-      this.metrics?.recordPlannerCall('bfs', Date.now() - planStart, planResult.success);
+      };
+
+      const planStart = Date.now();
+      let planResult = await this.planner.plan(planningRequest);
+      this.metrics?.recordPlannerCall(this.planner.name, Date.now() - planStart, planResult.success);
+
+      // Fall back to BFS if primary planner (PDDL) failed
+      if (!planResult.success && this.bfsFallback) {
+        this.log.warn({ kind: 'llm_fallback', reason: planResult.error ?? 'pddl_failed' });
+        const bfsStart = Date.now();
+        planResult = await this.bfsFallback.plan(planningRequest);
+        this.metrics?.recordPlannerCall('bfs', Date.now() - bfsStart, planResult.success);
+      }
 
       if (!planResult.success || !planResult.plan) {
-        this.log.warn({ kind: 'plan_failed', plannerName: 'bfs', error: planResult.error ?? 'unknown' });
+        this.log.warn({ kind: 'plan_failed', plannerName: planResult.metadata.plannerName, error: planResult.error ?? 'unknown' });
         this.currentIntention = null;
         return;
       }
 
       this.log.info({
         kind:        'plan_generated',
-        plannerName: 'bfs',
+        plannerName: planResult.metadata.plannerName,
         steps:       planResult.plan.steps.length,
         timeMs:      planResult.metadata.computeTimeMs,
       });

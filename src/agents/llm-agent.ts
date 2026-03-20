@@ -23,6 +23,7 @@ import { BeliefMapImpl } from '../beliefs/belief-map.js';
 import { ActionExecutor } from '../execution/action-executor.js';
 import { Deliberator } from '../deliberation/deliberator.js';
 import { BfsPlanner } from '../planning/bfs-planner.js';
+import { PddlPlanner } from '../planning/pddl-planner.js';
 import { LlmPlanner } from '../planning/llm-planner.js';
 import { PlanValidator } from '../planning/plan-validator.js';
 import { findPath } from '../pathfinding/pathfinder.js';
@@ -49,6 +50,7 @@ export class LlmAgent implements IAgent {
   private beliefs: BeliefStore | null = null;
   private deliberator!: Deliberator;
   private llmPlanner: LlmPlanner | null = null;
+  private pddlPlanner: PddlPlanner | null = null;
   private bfsPlanner!: BfsPlanner;
   private validator!: PlanValidator;
   private executor!: ActionExecutor;
@@ -115,6 +117,11 @@ export class LlmAgent implements IAgent {
         const llmClient = new LlmClient(llmCfg);
         this.llmMemory  = new LlmMemory();
         this.llmPlanner = new LlmPlanner(llmClient, this.llmMemory, this.beliefs, llmCfg.maxTokenBudget);
+      }
+
+      // Initialise PDDL as intermediate planner (between LLM and BFS) if configured
+      if (config.planner === 'pddl') {
+        this.pddlPlanner = new PddlPlanner();
       }
     });
 
@@ -245,6 +252,7 @@ export class LlmAgent implements IAgent {
 
     this.allyTracker?.stop();
     this.llmPlanner?.abort();
+    this.pddlPlanner?.abort();
     this.bfsPlanner.abort();
     if (this.executor) this.executor.cancelCurrentPlan();
 
@@ -415,6 +423,24 @@ export class LlmAgent implements IAgent {
           });
         } else {
           this.log.warn({ kind: 'llm_fallback', reason: llmResult.error ?? 'llm_failed' });
+        }
+      }
+
+      // Fallback to PDDL (intermediate) if configured
+      if (!planResult && this.pddlPlanner) {
+        const pddlStartMs = Date.now();
+        const pddlResult  = await this.pddlPlanner.plan(planningRequest);
+        this.metrics?.recordPlannerCall('pddl', Date.now() - pddlStartMs, pddlResult.success);
+        if (pddlResult.success) {
+          planResult = pddlResult;
+          this.log.info({
+            kind:        'plan_generated',
+            plannerName: 'pddl',
+            steps:       pddlResult.plan!.steps.length,
+            timeMs:      pddlResult.metadata.computeTimeMs,
+          });
+        } else {
+          this.log.warn({ kind: 'llm_fallback', reason: pddlResult.error ?? 'pddl_failed' });
         }
       }
 
