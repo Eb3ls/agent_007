@@ -28,9 +28,16 @@ type VoidCallback = () => void;
 // --- Tile type mapping ---
 
 function parseTileType(raw: string | number): TileType {
-  const n = typeof raw === 'string' ? parseInt(raw, 10) : raw;
+  const s = String(raw).trim();
+  if (s === '↑') return 4; // one-way up    (enter moving up)
+  if (s === '↓') return 5; // one-way down  (enter moving down)
+  if (s === '←') return 6; // one-way left  (enter moving left)
+  if (s === '→') return 7; // one-way right (enter moving right)
+  const n = parseInt(s, 10);
   if (n === 0 || n === 1 || n === 2 || n === 3) return n;
-  return 0; // default to non-walkable for unknown values
+  if (n === 4) return 3; // base/spawn tile — walkable (not a directional tile)
+  if (n === 5) return 5; // one-way ↓ — covers "5" and "5!" (parseInt strips suffix)
+  return 0; // unknown — treat as non-walkable
 }
 
 export class GameClient {
@@ -72,11 +79,15 @@ export class GameClient {
         y: t.y,
         type: parseTileType(t.type),
       }));
-      const event: BufferedEvent = { kind: 'map', tiles, width, height };
+      // Server reports width/height as max coordinate index (0-based),
+      // so actual grid dimensions are (width+1) × (height+1).
+      const gridWidth  = width  + 1;
+      const gridHeight = height + 1;
+      const event: BufferedEvent = { kind: 'map', tiles, width: gridWidth, height: gridHeight };
       if (!this.eventBuffer.isDrained()) {
         this.eventBuffer.push(event);
       } else {
-        this.dispatchMap(tiles, width, height);
+        this.dispatchMap(tiles, gridWidth, gridHeight);
       }
     });
 
@@ -99,14 +110,20 @@ export class GameClient {
     });
 
     // Parcel sensing
-    this.api.onParcelsSensing((rawParcels) => {
-      const parcels: RawParcelSensing[] = rawParcels.map(p => ({
-        id: p.id,
-        x: p.x,
-        y: p.y,
-        carriedBy: p.carriedBy ?? null,
-        reward: p.reward,
-      }));
+    // The server sends all sensed tiles; only tiles with a parcel have the `parcel` field.
+    this.api.onParcelsSensing((entries) => {
+      const parcels: RawParcelSensing[] = entries
+        .filter(e => e.parcel != null)
+        .map(e => {
+          const p = e.parcel!;
+          return {
+            id: p.id,
+            x: p.x,
+            y: p.y,
+            carriedBy: p.carriedBy ?? null,
+            reward: p.reward,
+          };
+        });
       const event: BufferedEvent = { kind: 'parcels', parcels };
       if (!this.eventBuffer.isDrained()) {
         this.eventBuffer.push(event);
@@ -324,5 +341,17 @@ export class GameClient {
 
   getServerConfig(): GameConfig | null {
     return this.serverConfig;
+  }
+
+  getServerCapacity(): number {
+    // Server sends capacity at GAME.player.capacity (nested under the GAME sub-object).
+    const game = this.serverConfig?.['GAME'] as { player?: { capacity?: unknown } } | null | undefined;
+    const cap = game?.player?.capacity;
+    return typeof cap === 'number' && cap > 0 ? cap : Infinity;
+  }
+
+  getParcelsObservationDistance(): number {
+    const dist = this.serverConfig?.PARCELS_OBSERVATION_DISTANCE;
+    return typeof dist === 'number' && dist > 0 ? dist : 0;
   }
 }

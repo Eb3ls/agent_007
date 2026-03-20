@@ -13,6 +13,23 @@ declare module '@unitn-asa/deliveroo-js-client' {
         penalty: number;
     }
 
+    export interface ParcelData {
+        id: string;
+        x: number;
+        y: number;
+        carriedBy?: string | null;
+        reward: number;
+    }
+
+    /** Each element of the onParcelsSensing array is a sensed tile.
+     *  If a parcel is present on that tile, `parcel` is populated. */
+    export interface ParcelSensingEntry {
+        x: number;
+        y: number;
+        parcel?: ParcelData | null;
+    }
+
+    /** Legacy alias kept for emitPickup/emitPutdown return types. */
     export interface Parcel {
         id: string;
         x: number;
@@ -82,7 +99,7 @@ declare module '@unitn-asa/deliveroo-js-client' {
         onYou(callback: (agent: Agent, info: Info) => void): void;
         onceYou(callback: (agent: Agent, info: Info) => void): void;
         onAgentsSensing(callback: (agents: Agent[]) => void): void;
-        onParcelsSensing(callback: (parcels: Parcel[]) => void): void;
+        onParcelsSensing(callback: (entries: ParcelSensingEntry[]) => void): void;
         onMsg(callback: (id: string, name: string, msg: any, replyAcknowledgmentCallback: (reply: any) => void) => void): void;
         onLog(callback: (info: LogInfo, ...msgArgs: any[]) => void): void;
 

@@ -24,6 +24,8 @@ export interface MockActionConfig {
   putdownResult: ReadonlyArray<RawParcelSensing>;
   /** Simulated action duration in ms. Default: 0 (instant). */
   actionDelayMs: number;
+  /** Simulated server capacity (GAME.player.capacity). Default: Infinity (no limit). */
+  serverCapacity: number;
 }
 
 const DEFAULT_ACTION_CONFIG: MockActionConfig = {
@@ -31,6 +33,7 @@ const DEFAULT_ACTION_CONFIG: MockActionConfig = {
   pickupResult: [],
   putdownResult: [],
   actionDelayMs: 0,
+  serverCapacity: Infinity,
 };
 
 // --- Callback types (mirrors game-client.ts) ---
@@ -154,6 +157,14 @@ export class MockGameClient implements GameClient {
 
   getMeasuredActionDurationMs(): number {
     return this.measuredDuration;
+  }
+
+  getServerCapacity(): number {
+    return this.actionConfig.serverCapacity;
+  }
+
+  getParcelsObservationDistance(): number {
+    return 0;
   }
 
   // --- Test helpers: Emit events on demand ---
