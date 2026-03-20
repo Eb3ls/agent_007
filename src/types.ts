@@ -5,8 +5,12 @@
 
 // --- Game Primitives ---
 
-export type TileType = 0 | 1 | 2 | 3;
-// 0: non-walkable, 1: parcel-spawning, 2: delivery zone, 3: walkable
+// 0: non-walkable/wall, 1: parcel-spawning, 2: delivery zone, 3: walkable,
+// 4: one-way ↑ (can only be entered moving up,    dy=+1),
+// 5: one-way ↓ (can only be entered moving down,  dy=-1),
+// 6: one-way ← (can only be entered moving left,  dx=-1),
+// 7: one-way → (can only be entered moving right, dx=+1)
+export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export interface Tile {
   readonly x: number;
@@ -133,6 +137,8 @@ export interface IBeliefStore {
   updateParcels(parcels: ReadonlyArray<RawParcelSensing>): void;
   updateAgents(agents: ReadonlyArray<RawAgentSensing>): void;
   mergeRemoteBelief(snapshot: BeliefSnapshot): void;
+  removeParcel(id: string): void;
+  clearDeliveredParcels(): void;
 
   getSelf(): SelfBelief;
   getParcelBeliefs(): ReadonlyArray<ParcelBelief>;
@@ -140,6 +146,14 @@ export interface IBeliefStore {
   getMap(): BeliefMap;
   getNearestDeliveryZone(from: Position): Position | null;
   getReachableParcels(): ReadonlyArray<ParcelBelief>;
+  /** Maximum number of parcels the agent can carry simultaneously. Infinity if unconstrained. */
+  getCapacity(): number;
+  /**
+   * Returns the nearest unvisited spawning tile for exploration.
+   * Falls back to the nearest spawning tile (any) when all have been visited.
+   * Returns null if the map has no spawning tiles.
+   */
+  getExploreTarget(from: Position): Position | null;
 
   toSnapshot(): BeliefSnapshot;
   onUpdate(callback: (changeType: BeliefChangeType) => void): void;
@@ -248,6 +262,7 @@ export interface IActionExecutor {
   onStepComplete(cb: (step: PlanStep, index: number) => void): void;
   onPlanComplete(cb: (plan: Plan) => void): void;
   onStepFailed(cb: (step: PlanStep, index: number, reason: string) => void): void;
+  onPutdown(cb: (count: number) => void): void;
 }
 
 // --- Agent Interface ---
@@ -297,6 +312,8 @@ export interface AgentConfig {
   readonly llm?: LlmConfig;
   readonly metrics?: MetricsConfig;
   readonly recording?: RecordingConfig;
+  /** How many ms without a score increase before stagnation is declared. Default: 15000. */
+  readonly stagnationTimeoutMs?: number;
 }
 
 // --- LLM Memory ---
@@ -422,6 +439,7 @@ export interface MetricsSnapshot {
     totalTokensUsed: number;
     fallbackCount: number;
   };
+  readonly stagnationsDetected?: number;
   readonly beliefAccuracy?: {
     predictionsChecked: number;
     predictionsCorrect: number;
@@ -459,4 +477,8 @@ export interface GameClient {
   onReconnect(cb: () => void): void;
   drainPending(): void;
   getMeasuredActionDurationMs(): number;
+  /** Maximum parcels the agent can carry simultaneously, from server config. Infinity if unconstrained. */
+  getServerCapacity(): number;
+  /** Server's PARCELS_OBSERVATION_DISTANCE; 0 if not available. */
+  getParcelsObservationDistance(): number;
 }
