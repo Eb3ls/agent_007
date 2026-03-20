@@ -468,6 +468,10 @@ export interface GameClient {
   putdown(): Promise<ReadonlyArray<RawParcelSensing>>;
   sendMessage(toId: string, msg: InterAgentMessage): void;
   broadcastMessage(msg: InterAgentMessage): void;
+  /** Send a targeted message and await a direct reply from the recipient. */
+  askMessage(toId: string, msg: InterAgentMessage): Promise<unknown>;
+  /** Consume and return the reply callback stored for a given message seq, if any. */
+  consumeReply(seq: number): ((data: unknown) => void) | undefined;
   onMap(cb: (tiles: ReadonlyArray<Tile>, width: number, height: number) => void): void;
   onYou(cb: (self: RawSelfSensing) => void): void;
   onParcelsSensing(cb: (parcels: ReadonlyArray<RawParcelSensing>) => void): void;

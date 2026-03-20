@@ -58,6 +58,23 @@ export class MessageHandler {
   }
 
   /**
+   * Send a targeted message and await a direct reply from the recipient.
+   * Resolves with whatever the recipient passes to their reply callback.
+   */
+  askTo(toId: string, msg: InterAgentMessage): Promise<unknown> {
+    logger.debug({ kind: 'message_sent', msgType: msg.type, to: toId });
+    return this.client.askMessage(toId, msg);
+  }
+
+  /**
+   * Consume and return the reply callback stored for a given message seq, if any.
+   * Used by handlers to reply inline (via emitAsk) instead of sending a separate message.
+   */
+  consumeReply(seq: number): ((data: unknown) => void) | undefined {
+    return this.client.consumeReply(seq);
+  }
+
+  /**
    * Broadcast a message to all agents.
    * `belief_share` messages are rate-limited to at most 1 per second.
    * Returns true if the message was sent, false if rate-limited.

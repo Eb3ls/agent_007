@@ -6,7 +6,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { AllyTracker } from './ally-tracker.js';
 import { MessageHandler } from './message-handler.js';
-import { makeHello, makeBeliefShare, makeParcelClaim, makeParcelClaimAck } from './message-protocol.js';
+import { makeHello, makeBeliefShare, makeParcelClaim } from './message-protocol.js';
 import { MockGameClient } from '../testing/mock-game-client.js';
 import { BeliefStore } from '../beliefs/belief-store.js';
 import { BeliefMapImpl } from '../beliefs/belief-map.js';
@@ -205,32 +205,31 @@ describe('AllyTracker — parcel claim (no allies)', () => {
 });
 
 describe('AllyTracker — parcel claim protocol', () => {
-  it('wins claim when ally yields (parcel_claim_ack yield=true)', async () => {
+  it('wins claim when ally yields (reply yield=true)', async () => {
     const { client, tracker } = makeSetup();
     tracker.start();
     deliver(client, ALLY_ID, makeHello(ALLY_ID, 'bdi'));
 
-    // Start claim (will broadcast parcel_claim)
+    // Start claim — sends ask to ally via emitAsk
     const claimPromise = tracker.claimParcel('p-1', 2);
 
-    // Ally responds: ally yields to us (yield=true)
-    deliver(client, ALLY_ID, makeParcelClaimAck(ALLY_ID, 'p-1', true));
+    // Ally replies: yield=true means ally yields to us → we win
+    client.resolveAsk(ALLY_ID, 'p-1', true);
 
-    // Wait for 500ms timeout to elapse
     const result = await claimPromise;
     assert.equal(result, 'claim', 'should win when ally yields');
     tracker.stop();
   });
 
-  it('yields when ally does not yield (parcel_claim_ack yield=false)', async () => {
+  it('yields when ally does not yield (reply yield=false)', async () => {
     const { client, tracker } = makeSetup();
     tracker.start();
     deliver(client, ALLY_ID, makeHello(ALLY_ID, 'bdi'));
 
     const claimPromise = tracker.claimParcel('p-1', 5);
 
-    // Ally responds: ally does NOT yield (yield=false) → we must yield
-    deliver(client, ALLY_ID, makeParcelClaimAck(ALLY_ID, 'p-1', false));
+    // Ally replies: yield=false means ally does NOT yield → we must yield
+    client.resolveAsk(ALLY_ID, 'p-1', false);
 
     const result = await claimPromise;
     assert.equal(result, 'yield', 'should yield when ally has priority');

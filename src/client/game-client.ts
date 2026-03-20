@@ -57,6 +57,9 @@ export class GameClient {
   private moveDurations: number[] = [];
   private measuredActionDurationMs = 500; // default fallback
 
+  // Reply callbacks stored when messages arrive via emitAsk (keyed by msg.seq)
+  private readonly pendingReplies = new Map<number, (data: unknown) => void>();
+
   // Server config (populated after connect)
   private serverConfig: GameConfig | null = null;
 
@@ -150,18 +153,23 @@ export class GameClient {
     });
 
     // Inter-agent messages
-    this.api.onMsg((id, _name, msg, _reply) => {
+    this.api.onMsg((id, _name, msg, reply) => {
       // Attempt to parse as InterAgentMessage
       if (msg && typeof msg === 'object' && 'type' in msg) {
+        const typedMsg = msg as InterAgentMessage;
+        // Store the reply fn (present when message was sent via emitAsk)
+        if (typeof reply === 'function' && 'seq' in typedMsg) {
+          this.pendingReplies.set((typedMsg as { seq: number }).seq, reply);
+        }
         const event: BufferedEvent = {
           kind: 'message',
           from: id,
-          msg: msg as InterAgentMessage,
+          msg: typedMsg,
         };
         if (!this.eventBuffer.isDrained()) {
           this.eventBuffer.push(event);
         } else {
-          this.dispatchMessage(id, msg as InterAgentMessage);
+          this.dispatchMessage(id, typedMsg);
         }
       }
     });
@@ -277,6 +285,16 @@ export class GameClient {
 
   broadcastMessage(msg: InterAgentMessage): void {
     this.api.emitShout(msg);
+  }
+
+  askMessage(toId: string, msg: InterAgentMessage): Promise<unknown> {
+    return this.api.emitAsk(toId, msg);
+  }
+
+  consumeReply(seq: number): ((data: unknown) => void) | undefined {
+    const fn = this.pendingReplies.get(seq);
+    this.pendingReplies.delete(seq);
+    return fn;
   }
 
   // --- Public: Event subscriptions ---

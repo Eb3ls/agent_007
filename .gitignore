@@ -5,4 +5,4 @@ dist/
 logs/
 tmp/
 .env
-configs/
+configs/*.md

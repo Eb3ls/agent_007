@@ -5,7 +5,6 @@ import { MessageHandler } from "./message-handler.js";
 import {
   makeHello,
   makeParcelClaim,
-  makeParcelClaimAck,
 } from "./message-protocol.js";
 import { MockGameClient } from "../testing/mock-game-client.js";
 import { BeliefStore } from "../beliefs/belief-store.js";
@@ -69,14 +68,15 @@ describe("AllyTracker — edge cases", () => {
     tracker.stop();
   });
 
-  it("keeps claim when all received acks are yield=true", async () => {
+  it("keeps claim when ally reply yields (yield=true)", async () => {
     const { client, tracker } = makeSetup();
     tracker.start();
     client.emitMessage(ALLY_ID, makeHello(ALLY_ID, "bdi"));
 
     const claimPromise = tracker.claimParcel("p-ack", 2);
 
-    client.emitMessage(ALLY_ID, makeParcelClaimAck(ALLY_ID, "p-ack", true));
+    // Ally replies via ask: yield=true means ally yields → we win immediately
+    client.resolveAsk(ALLY_ID, "p-ack", true);
 
     const result = await claimPromise;
     assert.equal(result, "claim");

@@ -64,6 +64,14 @@ export class MockGameClient implements GameClient {
   readonly putdownCount = { value: 0 };
   readonly sentMessages: Array<{ toId: string; msg: InterAgentMessage }> = [];
   readonly broadcastedMessages: InterAgentMessage[] = [];
+  /** Pending emitAsk calls awaiting test-side resolution. */
+  readonly pendingAsks: Array<{
+    toId: string;
+    msg: InterAgentMessage;
+    resolve: (reply: unknown) => void;
+  }> = [];
+  /** Reply callbacks stored when emitMessageWithReply is used. */
+  private readonly pendingReplies = new Map<number, (data: unknown) => void>();
 
   private connected = false;
   private measuredDuration = 500;
@@ -117,6 +125,18 @@ export class MockGameClient implements GameClient {
 
   broadcastMessage(msg: InterAgentMessage): void {
     this.broadcastedMessages.push(msg);
+  }
+
+  askMessage(toId: string, msg: InterAgentMessage): Promise<unknown> {
+    return new Promise((resolve) => {
+      this.pendingAsks.push({ toId, msg, resolve });
+    });
+  }
+
+  consumeReply(seq: number): ((data: unknown) => void) | undefined {
+    const fn = this.pendingReplies.get(seq);
+    this.pendingReplies.delete(seq);
+    return fn;
   }
 
   // --- GameClient interface: Event subscriptions ---
@@ -189,6 +209,37 @@ export class MockGameClient implements GameClient {
     for (const cb of this.messageCallbacks) cb(from, msg);
   }
 
+  /**
+   * Simulate an incoming message that arrived via emitAsk (includes a reply callback).
+   * The reply fn is stored so that AllyTracker._onParcelClaim can consume it.
+   */
+  emitMessageWithReply(
+    from: string,
+    msg: InterAgentMessage,
+    reply: (data: unknown) => void,
+  ): void {
+    if ('seq' in msg) {
+      this.pendingReplies.set((msg as { seq: number }).seq, reply);
+    }
+    for (const cb of this.messageCallbacks) cb(from, msg);
+  }
+
+  /**
+   * Resolve a pending askMessage call (simulates ally replying to a parcel claim).
+   * @param toId  — the ally that was asked
+   * @param parcelId — the parcel being claimed
+   * @param allyYields — true: ally yields to us (we win); false: ally does not yield (we lose)
+   */
+  resolveAsk(toId: string, parcelId: string, allyYields: boolean): void {
+    const idx = this.pendingAsks.findIndex(
+      a => a.toId === toId && (a.msg as { parcelId?: string }).parcelId === parcelId,
+    );
+    if (idx >= 0) {
+      const ask = this.pendingAsks.splice(idx, 1)[0];
+      ask.resolve({ type: 'parcel_claim_ack', yield: allyYields, parcelId });
+    }
+  }
+
   emitDisconnect(): void {
     for (const cb of this.disconnectCallbacks) cb();
   }
@@ -217,6 +268,8 @@ export class MockGameClient implements GameClient {
     this.putdownCount.value = 0;
     this.sentMessages.length = 0;
     this.broadcastedMessages.length = 0;
+    this.pendingAsks.length = 0;
+    this.pendingReplies.clear();
     this.actionConfig = { ...DEFAULT_ACTION_CONFIG };
   }
 }

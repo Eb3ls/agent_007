@@ -10,7 +10,6 @@ import type {
   HelloMessage,
   BeliefShareMessage,
   ParcelClaimMessage,
-  ParcelClaimAckMessage,
 } from '../types.js';
 import { manhattanDistance } from '../types.js';
 import { BeliefStore } from '../beliefs/belief-store.js';
@@ -25,6 +24,7 @@ import {
 const HEARTBEAT_INTERVAL_MS   = 5_000;
 const BELIEF_SHARE_INTERVAL_MS = 2_000;
 const STALE_TIMEOUT_MS        = 10_000;
+/** Safety timeout for claim resolution — fires only if an ally never replies (e.g., crashed). */
 const CLAIM_WAIT_MS           = 500;
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,8 @@ interface AllyRecord {
 interface PendingClaim {
   readonly myDistance: number;
   shouldYield: boolean;
+  /** Number of ally asks still awaiting a reply. When it hits 0, we win. */
+  pendingReplies: number;
   timer: ReturnType<typeof setTimeout>;
   resolve: (result: 'claim' | 'yield') => void;
 }
@@ -142,31 +144,74 @@ export class AllyTracker {
   // ---------------------------------------------------------------------------
 
   /**
-   * Broadcast a parcel claim and wait up to CLAIM_WAIT_MS for ally responses.
+   * Send targeted claim asks to all connected allies and resolve as soon as
+   * all replies arrive (or the safety timeout elapses).
    *
    * Returns 'claim' if this agent wins, 'yield' if an ally has priority.
    * Priority rule: shorter distance wins; ties broken by lexicographically
    * smaller agentId.
+   *
+   * Uses emitAsk() so claims are sent only to known allies (not broadcast to
+   * opponents) and each ally's reply resolves the ask Promise immediately —
+   * no fixed wait time in the happy path.
    */
   async claimParcel(parcelId: string, myDistance: number): Promise<'claim' | 'yield'> {
-    if (this.getAllyCount() === 0) return 'claim'; // nobody to negotiate with
+    const allies = this.getConnectedAllyIds();
+    if (allies.length === 0) return 'claim'; // nobody to negotiate with
+
+    const claimMsg = makeParcelClaim(this.agentId, parcelId, myDistance);
 
     return new Promise<'claim' | 'yield'>((resolve) => {
-      const timer = setTimeout(() => {
-        const pending = this.pendingClaims.get(parcelId);
-        this.pendingClaims.delete(parcelId);
-        resolve(pending?.shouldYield ? 'yield' : 'claim');
-      }, CLAIM_WAIT_MS);
-      // NOTE: do NOT unref this timer — it is awaited by caller code
-
-      this.pendingClaims.set(parcelId, {
+      const pending: PendingClaim = {
         myDistance,
         shouldYield: false,
-        timer,
+        pendingReplies: allies.length,
+        timer: setTimeout(() => {
+          if (!this.pendingClaims.has(parcelId)) return;
+          this.pendingClaims.delete(parcelId);
+          resolve(pending.shouldYield ? 'yield' : 'claim');
+        }, CLAIM_WAIT_MS),
+        // NOTE: do NOT unref this timer — it is awaited by caller code
         resolve,
-      });
+      };
+      this.pendingClaims.set(parcelId, pending);
 
-      this.msgHandler.broadcast(makeParcelClaim(this.agentId, parcelId, myDistance));
+      for (const allyId of allies) {
+        this.msgHandler.askTo(allyId, claimMsg).then((reply) => {
+          const p = this.pendingClaims.get(parcelId);
+          if (!p) return; // already resolved (timeout or earlier yield)
+
+          const allyYields = reply != null &&
+            typeof reply === 'object' &&
+            'yield' in (reply as object) &&
+            (reply as { yield: boolean }).yield === true;
+
+          if (!allyYields) {
+            // Ally does NOT yield → we must yield
+            clearTimeout(p.timer);
+            this.pendingClaims.delete(parcelId);
+            resolve('yield');
+            return;
+          }
+
+          p.pendingReplies--;
+          if (p.pendingReplies <= 0) {
+            clearTimeout(p.timer);
+            this.pendingClaims.delete(parcelId);
+            resolve('claim');
+          }
+        }).catch(() => {
+          // Ask failed (ally unreachable) — treat as ally yielding; we may still win
+          const p = this.pendingClaims.get(parcelId);
+          if (!p) return;
+          p.pendingReplies--;
+          if (p.pendingReplies <= 0) {
+            clearTimeout(p.timer);
+            this.pendingClaims.delete(parcelId);
+            resolve('claim');
+          }
+        });
+      }
     });
   }
 
@@ -227,9 +272,7 @@ export class AllyTracker {
       case 'parcel_claim':
         this._onParcelClaim(from, msg as ParcelClaimMessage);
         break;
-      case 'parcel_claim_ack':
-        this._onParcelClaimAck(msg as ParcelClaimAckMessage);
-        break;
+      // parcel_claim_ack: handled via emitAsk reply callback, not as a message
       // intention_announce / intention_release: reserved for future use
     }
   }
@@ -299,20 +342,28 @@ export class AllyTracker {
 
     const iWin = this._hasPriority(myDistance, this.agentId, allyDistance, allyId);
 
+    // Build the ack: yield=true means WE yield to the ally; yield=false means ally yields to us
+    const ack = makeParcelClaimAck(this.agentId, parcelId, !iWin);
+
+    // Reply immediately via the ask reply callback if available; fall back to sendTo
+    const replyFn = this.msgHandler.consumeReply(msg.seq);
+    if (replyFn) {
+      replyFn(ack);
+    } else {
+      this.msgHandler.sendTo(from, ack);
+    }
+
     if (iWin) {
-      // We don't yield — ally should yield to us
-      this.msgHandler.sendTo(from, makeParcelClaimAck(this.agentId, parcelId, false));
       // Remove any prior claim record for this parcel from this ally
       if (this.claimedByOthers.get(parcelId) === allyId) {
         this.claimedByOthers.delete(parcelId);
       }
     } else {
       // We yield — ally has priority
-      this.msgHandler.sendTo(from, makeParcelClaimAck(this.agentId, parcelId, true));
       this.claimedByOthers.set(parcelId, allyId);
     }
 
-    // Resolve any simultaneous outgoing claim for the same parcel
+    // Resolve any simultaneous outgoing claim for the same parcel immediately
     const pending = this.pendingClaims.get(parcelId);
     if (pending && !iWin) {
       pending.shouldYield = true;
@@ -320,19 +371,6 @@ export class AllyTracker {
       this.pendingClaims.delete(parcelId);
       pending.resolve('yield');
     }
-  }
-
-  private _onParcelClaimAck(msg: ParcelClaimAckMessage): void {
-    const pending = this.pendingClaims.get(msg.parcelId);
-    if (!pending) return;
-
-    if (!msg.yield) {
-      // Ally is NOT yielding — we must yield
-      clearTimeout(pending.timer);
-      this.pendingClaims.delete(msg.parcelId);
-      pending.resolve('yield');
-    }
-    // msg.yield === true: ally yields to us — keep waiting for other acks
   }
 
   // ---------------------------------------------------------------------------
