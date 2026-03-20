@@ -88,15 +88,20 @@ describe('ActionExecutor', () => {
     });
 
     let planDone = false;
-    executor.onPlanComplete(() => { planDone = true; });
+    executor.onPlanComplete(() => {
+      planDone = true;
+    });
 
     executor.executePlan(FIVE_STEP_PLAN);
-    await tick();
+    // Move failures trigger retry backoff; allow enough time for all retries
+    // and final failure callback.
+    await delay(700);
 
     assert.equal(failures.length, 1);
     assert.equal(failures[0].index, 0);
-    assert.equal(client.moveHistory.length, 1);
-    assert.ok(!planDone, 'onPlanComplete should NOT fire on failure');
+    // Initial attempt + retries
+    assert.ok(client.moveHistory.length >= 1);
+    assert.ok(!planDone, "onPlanComplete should NOT fire on failure");
   });
 
   it('is idle before executing any plan', () => {

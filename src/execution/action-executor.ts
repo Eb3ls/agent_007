@@ -28,6 +28,7 @@ export class ActionExecutor implements IActionExecutor {
   private stepCompleteCbs: Array<(step: PlanStep, index: number) => void> = [];
   private planCompleteCbs: Array<(plan: Plan) => void> = [];
   private stepFailedCbs: Array<(step: PlanStep, index: number, reason: string) => void> = [];
+  private putdownCbs: Array<(count: number) => void> = [];
 
   constructor(client: GameClient) {
     this.client = client;
@@ -74,6 +75,10 @@ export class ActionExecutor implements IActionExecutor {
 
   onStepFailed(cb: (step: PlanStep, index: number, reason: string) => void): void {
     this.stepFailedCbs.push(cb);
+  }
+
+  onPutdown(cb: (count: number) => void): void {
+    this.putdownCbs.push(cb);
   }
 
   // --- Internal execution loop ---
@@ -132,7 +137,7 @@ export class ActionExecutor implements IActionExecutor {
     }
   }
 
-  private async executeStep(step: PlanStep): Promise<boolean> {
+  private async executeStep(step: PlanStep, retries = 3): Promise<boolean> {
     const direction = actionToDirection(step.action);
     const expectedDurationMs = this.client.getMeasuredActionDurationMs();
 
@@ -149,12 +154,22 @@ export class ActionExecutor implements IActionExecutor {
           this.client.move(direction),
           expectedDurationMs + SAFETY_MARGIN_MS,
         );
+        if (!result && retries > 0) {
+          // Move failed (likely dynamic obstacle). Wait for obstacle to move, then retry.
+          await new Promise(r => setTimeout(r, 100));
+          if (this.cancelled || this.currentPlan === null) return false;
+          this.inFlight = { action: step.action, sentAt: Date.now(), expectedDurationMs };
+          return this.executeStep(step, retries - 1);
+        }
         return result;
       } else if (step.action === 'pickup') {
         await this.client.pickup();
         return true;
       } else if (step.action === 'putdown') {
-        await this.client.putdown();
+        const putResult = await this.client.putdown();
+        if (putResult.length > 0) {
+          for (const cb of this.putdownCbs) cb(putResult.length);
+        }
         return true;
       }
       return false;
