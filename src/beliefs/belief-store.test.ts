@@ -142,6 +142,46 @@ describe('BeliefStore', () => {
       assert.ok(ids.includes('near'));
     });
 
+    it('deletes parcel within observation distance on empty sensing update', () => {
+      // Acceptance criterion for T33: agent at (5,5), observation distance 5,
+      // parcel at (5,8) — distance 3 < 5 — must be deleted on empty update.
+      store.updateSelf({ ...FIXTURE_SELF, x: 5, y: 5 });
+      store.setObservationDistance(5);
+      store.updateParcels([{ id: 'close', x: 5, y: 8, carriedBy: null, reward: 50 }]);
+      assert.equal(store.getParcelBeliefs().length, 1);
+
+      // Empty sensing update — parcel is within observation distance, should be deleted.
+      store.updateParcels([]);
+      assert.equal(store.getParcelBeliefs().length, 0, 'parcel within obs distance must be deleted');
+    });
+
+    it('retains parcel beyond observation distance on empty sensing update', () => {
+      store.updateSelf({ ...FIXTURE_SELF, x: 5, y: 5 });
+      store.setObservationDistance(5);
+      store.updateParcels([{ id: 'far', x: 5, y: 11, carriedBy: null, reward: 50 }]);
+
+      // Empty sensing update — parcel is distance 6, beyond obs distance 5.
+      store.updateParcels([]);
+      assert.equal(store.getParcelBeliefs().length, 1, 'parcel beyond obs distance must be retained');
+    });
+
+    it('uses observation distance for non-empty updates too', () => {
+      store.updateSelf({ ...FIXTURE_SELF, x: 5, y: 5 });
+      store.setObservationDistance(5);
+      // Add two parcels; one close (dist 2), one far (dist 7).
+      store.updateParcels([
+        { id: 'close', x: 5, y: 7, carriedBy: null, reward: 40 },
+        { id: 'far',   x: 5, y: 12, carriedBy: null, reward: 60 },
+      ]);
+
+      // Sensing update that doesn't include 'close' — dist 2 < obs dist 5 → deleted.
+      // 'far' is dist 7 > 5 → retained.
+      store.updateParcels([{ id: 'other', x: 6, y: 5, carriedBy: null, reward: 30 }]);
+      const ids = store.getParcelBeliefs().map(p => p.id);
+      assert.ok(!ids.includes('close'), 'close parcel should be deleted');
+      assert.ok(ids.includes('far'),   'far parcel should be retained');
+    });
+
     it('emits parcels_changed on update', () => {
       const events: BeliefChangeType[] = [];
       store.onUpdate(ct => events.push(ct));
@@ -228,6 +268,34 @@ describe('BeliefStore', () => {
 
       store.updateAgents(FIXTURE_AGENTS);
       assert.ok(events.includes('agents_changed'));
+    });
+
+    it('retains last integer position when fractional coords arrive mid-move', () => {
+      // Agent last seen at tile (3, 3) — simulate mid-move with fractional coords.
+      store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 3, y: 3, score: 0 }]);
+      // Mid-move: x=3.6 would Math.round to 4 (wrong — agent is still leaving 3).
+      store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 3.6, y: 3, score: 0 }]);
+      const alice = store.getAgentBeliefs().find(a => a.id === 'agent-a');
+      assert.ok(alice);
+      // Must NOT snap to tile 4; must retain last stable integer position (3, 3).
+      assert.deepEqual(alice.position, { x: 3, y: 3 });
+    });
+
+    it('updates position once agent arrives at integer tile after mid-move', () => {
+      store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 3, y: 3, score: 0 }]);
+      store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 3.6, y: 3, score: 0 }]);
+      store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 4, y: 3, score: 0 }]);
+      const alice = store.getAgentBeliefs().find(a => a.id === 'agent-a');
+      assert.ok(alice);
+      assert.deepEqual(alice.position, { x: 4, y: 3 });
+    });
+
+    it('infers heading from fractional mid-move updates', () => {
+      store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 3, y: 3, score: 0 }]);
+      store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 3.6, y: 3, score: 0 }]);
+      const alice = store.getAgentBeliefs().find(a => a.id === 'agent-a');
+      assert.ok(alice);
+      assert.equal(alice.heading, 'right');
     });
 
     it('decays confidence for agents no longer sensed', () => {
@@ -410,6 +478,51 @@ describe('BeliefStore', () => {
       const alice = store.getAgentBeliefs().find(a => a.id === 'agent-a');
       assert.ok(alice);
       assert.equal(alice.isAlly, false);
+    });
+  });
+
+  // --- clearStaleBeliefs ---
+
+  describe('clearStaleBeliefs', () => {
+    it('removes all agent beliefs', () => {
+      store.updateAgents(FIXTURE_AGENTS);
+      assert.ok(store.getAgentBeliefs().length > 0);
+
+      store.clearStaleBeliefs();
+      assert.equal(store.getAgentBeliefs().length, 0);
+    });
+
+    it('marks on-ground parcel beliefs as low-confidence', () => {
+      store.updateParcels([
+        { id: 'p1', x: 5, y: 4, carriedBy: null, reward: 50 },
+      ]);
+
+      store.clearStaleBeliefs();
+
+      const p = store.getParcelBeliefs().find(b => b.id === 'p1');
+      assert.ok(p, 'parcel should still exist after clearStaleBeliefs');
+      assert.ok(p.confidence < 1.0, 'on-ground parcel confidence should be lowered');
+    });
+
+    it('retains carried parcel beliefs with original confidence', () => {
+      store.updateParcels([
+        { id: 'carried', x: 4, y: 4, carriedBy: 'agent-self', reward: 30 },
+      ]);
+
+      store.clearStaleBeliefs();
+
+      const p = store.getParcelBeliefs().find(b => b.id === 'carried');
+      assert.ok(p, 'carried parcel should be retained');
+      assert.equal(p.confidence, 1.0, 'carried parcel confidence should be unchanged');
+    });
+
+    it('emits agents_changed and parcels_changed', () => {
+      const events: BeliefChangeType[] = [];
+      store.onUpdate(ct => events.push(ct));
+
+      store.clearStaleBeliefs();
+      assert.ok(events.includes('agents_changed'));
+      assert.ok(events.includes('parcels_changed'));
     });
   });
 

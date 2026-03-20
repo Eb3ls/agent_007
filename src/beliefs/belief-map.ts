@@ -47,7 +47,7 @@ export class BeliefMapImpl implements BeliefMap {
 
   isWalkable(x: number, y: number): boolean {
     const type = this.getTile(x, y);
-    // Types 1 (spawning), 2 (delivery), 3 (walkable) are walkable; 0 and null are not
+    // Types 1–7 are walkable (direction constraints handled in getNeighbors); 0 and null are not
     return type !== null && type !== 0;
   }
 

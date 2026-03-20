@@ -23,7 +23,15 @@ export function getNeighbors(
 
   const result: Position[] = [];
   for (const c of candidates) {
-    if (!map.isWalkable(c.x, c.y)) continue;
+    const tileType = map.getTile(c.x, c.y);
+    if (tileType === null || tileType === 0) continue; // non-walkable
+    // One-way tiles: enforce entry direction constraints.
+    const dy = c.y - pos.y;
+    const dx = c.x - pos.x;
+    if (tileType === 4 && dy !== 1)  continue; // ↑: must enter moving up
+    if (tileType === 5 && dy !== -1) continue; // ↓: must enter moving down
+    if (tileType === 6 && dx !== -1) continue; // ←: must enter moving left
+    if (tileType === 7 && dx !== 1)  continue; // →: must enter moving right
     if (dynamicObstacles && dynamicObstacles.some(o => o.x === c.x && o.y === c.y)) continue;
     result.push(c);
   }

@@ -76,6 +76,89 @@ describe('grid-utils', () => {
     });
   });
 
+  describe('one-way tile constraints', () => {
+    // Build a 3x1 map: S ← G  (agent at x=0, one-way ← tile at x=1, goal at x=2)
+    // ← (type 6): can only be entered moving left (dx=-1), i.e. from x=2 side.
+    function makeHorizMap(midType: TileType): BeliefMapImpl {
+      return new BeliefMapImpl(
+        [tile(0, 0, 3), tile(1, 0, midType), tile(2, 0, 3)],
+        3, 1,
+      );
+    }
+
+    // Build a 1x3 map: S ↑ G  (agent at y=0, one-way tile at y=1, goal at y=2)
+    function makeVertMap(midType: TileType): BeliefMapImpl {
+      return new BeliefMapImpl(
+        [tile(0, 0, 3), tile(0, 1, midType), tile(0, 2, 3)],
+        1, 3,
+      );
+    }
+
+    it('type 6 (←): allows entry from right (dx=-1), blocks entry from left', () => {
+      const map = makeHorizMap(6);
+      // From (0,0): candidate (1,0) has dx=+1 — blocked (must enter from right)
+      const from0 = getNeighbors({ x: 0, y: 0 }, map);
+      assert.equal(from0.some(n => n.x === 1), false, 'should not enter ← tile from left');
+      // From (2,0): candidate (1,0) has dx=-1 — allowed
+      const from2 = getNeighbors({ x: 2, y: 0 }, map);
+      assert.equal(from2.some(n => n.x === 1), true, 'should enter ← tile from right');
+    });
+
+    it('type 7 (→): allows entry from left (dx=+1), blocks entry from right', () => {
+      const map = makeHorizMap(7);
+      // From (0,0): candidate (1,0) has dx=+1 — allowed
+      const from0 = getNeighbors({ x: 0, y: 0 }, map);
+      assert.equal(from0.some(n => n.x === 1), true, 'should enter → tile from left');
+      // From (2,0): candidate (1,0) has dx=-1 — blocked
+      const from2 = getNeighbors({ x: 2, y: 0 }, map);
+      assert.equal(from2.some(n => n.x === 1), false, 'should not enter → tile from right');
+    });
+
+    it('type 4 (↑): allows entry moving up (dy=+1), blocks entry from above', () => {
+      const map = makeVertMap(4);
+      // From (0,0): candidate (0,1) has dy=+1 — allowed
+      const fromBelow = getNeighbors({ x: 0, y: 0 }, map);
+      assert.equal(fromBelow.some(n => n.y === 1), true, 'should enter ↑ tile from below');
+      // From (0,2): candidate (0,1) has dy=-1 — blocked
+      const fromAbove = getNeighbors({ x: 0, y: 2 }, map);
+      assert.equal(fromAbove.some(n => n.y === 1), false, 'should not enter ↑ tile from above');
+    });
+
+    it('type 5 (↓): allows entry moving down (dy=-1), blocks entry from below', () => {
+      const map = makeVertMap(5);
+      // From (0,2): candidate (0,1) has dy=-1 — allowed
+      const fromAbove = getNeighbors({ x: 0, y: 2 }, map);
+      assert.equal(fromAbove.some(n => n.y === 1), true, 'should enter ↓ tile from above');
+      // From (0,0): candidate (0,1) has dy=+1 — blocked
+      const fromBelow = getNeighbors({ x: 0, y: 0 }, map);
+      assert.equal(fromBelow.some(n => n.y === 1), false, 'should not enter ↓ tile from below');
+    });
+
+    it('pathfinder finds route around a ← tile when approaching from wrong side', () => {
+      // 3x3 map: must route around the ← at (1,1) which blocks entry from left
+      const tiles: Tile[] = [];
+      for (let x = 0; x < 3; x++) {
+        for (let y = 0; y < 3; y++) {
+          tiles.push(tile(x, y, 3));
+        }
+      }
+      tiles[tiles.findIndex(t => t.x === 1 && t.y === 1)] = tile(1, 1, 6); // ←
+      const map = new BeliefMapImpl(tiles, 3, 3);
+      // From (0,1) to (2,1): direct path goes through ← tile from wrong side,
+      // so must detour via row y=0 or y=2.
+      const path = findPath({ x: 0, y: 1 }, { x: 2, y: 1 }, map);
+      assert.ok(path, 'should find a detour');
+      assert.deepEqual(path[0], { x: 0, y: 1 });
+      assert.deepEqual(path[path.length - 1], { x: 2, y: 1 });
+      // Should NOT enter (1,1) from (0,1) — that would be dx=+1, wrong direction for ←
+      for (let i = 1; i < path.length; i++) {
+        const atLeft = path[i - 1].x === 0 && path[i - 1].y === 1;
+        const atCenter = path[i].x === 1 && path[i].y === 1;
+        assert.ok(!(atLeft && atCenter), 'should not enter ← tile from left side');
+      }
+    });
+  });
+
   describe('isValidPosition', () => {
     it('returns true for walkable in-bounds position', () => {
       assert.equal(isValidPosition({ x: 5, y: 5 }, fixtureMap), true);
