@@ -5,8 +5,5 @@ dist/
 logs/
 tmp/
 .env
-configs/*.md
-SESSION.md
-PLAN_ACTIVE.md
-PLAN_DONE.md
-PLAN.md
+*.md
+*.json

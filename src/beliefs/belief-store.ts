@@ -360,9 +360,13 @@ export class BeliefStore implements IBeliefStore {
     const spawning = this.map.getSpawningTiles();
     if (spawning.length === 0) return null;
 
-    // Prefer nearest unvisited tile; fall back to all tiles if everything visited
-    const unvisited = spawning.filter(t => !this.visitedSpawningTiles.has(`${t.x},${t.y}`));
-    const candidates = unvisited.length > 0 ? unvisited : spawning;
+    // Always exclude current position — picking it causes an instant no-op loop
+    const notCurrent = spawning.filter(t => !(t.x === from.x && t.y === from.y));
+    if (notCurrent.length === 0) return null; // only one tile and we're on it
+
+    // Prefer nearest unvisited tile; fall back to all non-current tiles if everything visited
+    const unvisited = notCurrent.filter(t => !this.visitedSpawningTiles.has(`${t.x},${t.y}`));
+    const candidates = unvisited.length > 0 ? unvisited : notCurrent;
 
     let nearest: Position | null = null;
     let minDist = Infinity;
@@ -383,10 +387,13 @@ export class BeliefStore implements IBeliefStore {
 
   getReachableParcels(): ReadonlyArray<ParcelBelief> {
     const selfPos = this.self.position;
+    const agentObstacles = Array.from(this.agents.values())
+      .filter(a => !(a.position.x === selfPos.x && a.position.y === selfPos.y))
+      .map(a => a.position);
     return Array.from(this.parcels.values()).filter(p => {
       if (p.carriedBy !== null) return false;
       if (p.confidence <= 0) return false;
-      const path = findPath(selfPos, p.position, this.map);
+      const path = findPath(selfPos, p.position, this.map, agentObstacles);
       return path !== null;
     });
   }

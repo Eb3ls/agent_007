@@ -324,15 +324,13 @@ export class BdiAgent implements IAgent {
       const movementDurationMs = this.client.getMeasuredActionDurationMs();
       const tracker = this.beliefs.getParcelTracker();
 
-      const needsReplan =
-        planFailed ||
-        this.deliberator.shouldReplan(this.currentIntention, this.beliefs, planFailed, movementDurationMs, tracker) ||
-        this.executor.isIdle();
+      const shouldReplan = this.deliberator.shouldReplan(this.currentIntention, this.beliefs, planFailed, movementDurationMs, tracker);
+      const needsReplan = planFailed || shouldReplan || this.executor.isIdle();
 
       if (!needsReplan) return;
 
       // Cancel current plan if replan is warranted
-      if (this.currentIntention !== null && (planFailed || this.deliberator.shouldReplan(this.currentIntention, this.beliefs, false, movementDurationMs, tracker))) {
+      if (this.currentIntention !== null && (planFailed || shouldReplan)) {
         this.executor.cancelCurrentPlan();
         this.log.info({ kind: 'replan_triggered', reason: planFailed ? 'plan_failed' : 'better_option_or_target_gone' });
         this.log.info({ kind: 'intention_dropped', intentionId: this.currentIntention.id, reason: planFailed ? 'plan_failed' : 'superseded' });
@@ -382,85 +380,92 @@ export class BdiAgent implements IAgent {
         return;
       }
 
-      // Don't replan if intention unchanged and executor is busy
-      if (this.currentIntention?.id === best.id && !this.executor.isIdle()) return;
+      // Don't replan if intention target unchanged and executor is busy
+      const sameTarget = this.currentIntention?.targetParcels.join(',') === best.targetParcels.join(',');
+      if (sameTarget && !this.executor.isIdle()) return;
 
-      // Parcel claim negotiation with allies
-      if (this.allyTracker && best.targetParcels.length > 0) {
-        const parcelId = best.targetParcels[0]!;
-        const parcel = this.beliefs.getParcelBeliefs().find(p => p.id === parcelId);
-        if (parcel) {
-          const dist = manhattanDistance(self.position, parcel.position);
-          const result = await this.allyTracker.claimParcel(parcelId, dist);
-          if (result === 'yield') {
-            this.log.info({ kind: 'intention_dropped', intentionId: best.id, reason: 'ally_has_priority' });
-            return;
+      // Iterate candidates: skip any yielded to an ally, use the first we can claim
+      for (const candidate of candidates) {
+        if (candidate.type === 'explore') continue;
+
+        // Parcel claim negotiation with allies
+        if (this.allyTracker && candidate.targetParcels.length > 0) {
+          const parcelId = candidate.targetParcels[0]!;
+          const parcel = this.beliefs.getParcelBeliefs().find(p => p.id === parcelId);
+          if (parcel) {
+            const dist = manhattanDistance(self.position, parcel.position);
+            const result = await this.allyTracker.claimParcel(parcelId, dist);
+            if (result === 'yield') {
+              this.log.info({ kind: 'intention_dropped', intentionId: candidate.id, reason: 'ally_has_priority' });
+              continue;
+            }
           }
         }
+
+        this.currentIntention = candidate;
+        this.log.info({ kind: 'intention_set', intentionId: candidate.id, type: candidate.type, utility: candidate.utility });
+
+        // Resolve target parcel beliefs
+        const allParcels = this.beliefs.getParcelBeliefs();
+        const targetParcels = candidate.targetParcels
+          .map(id => allParcels.find(p => p.id === id))
+          .filter((p): p is ParcelBelief => p !== undefined && p.carriedBy === null);
+
+        if (targetParcels.length === 0) {
+          this.currentIntention = null;
+          continue;
+        }
+
+        // Plan — pass current agent positions as dynamic obstacles so BFS avoids occupied tiles
+        const deliveryZones = Array.from(this.beliefs.getMap().getDeliveryZones());
+        const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
+        const planningRequest = {
+          currentPosition:  self.position,
+          carriedParcels:   self.carriedParcels as ReadonlyArray<ParcelBelief>,
+          targetParcels,
+          deliveryZones,
+          beliefMap:        this.beliefs.getMap(),
+          constraints:      agentObstacles.length > 0 ? { avoidPositions: agentObstacles } : undefined,
+        };
+
+        const planStart = Date.now();
+        let planResult = await this.planner.plan(planningRequest);
+        this.metrics?.recordPlannerCall(this.planner.name, Date.now() - planStart, planResult.success);
+
+        // Fall back to BFS if primary planner (PDDL) failed
+        if (!planResult.success && this.bfsFallback) {
+          this.log.warn({ kind: 'llm_fallback', reason: planResult.error ?? 'pddl_failed' });
+          const bfsStart = Date.now();
+          planResult = await this.bfsFallback.plan(planningRequest);
+          this.metrics?.recordPlannerCall('bfs', Date.now() - bfsStart, planResult.success);
+        }
+
+        if (!planResult.success || !planResult.plan) {
+          this.log.warn({ kind: 'plan_failed', plannerName: planResult.metadata.plannerName, error: planResult.error ?? 'unknown' });
+          this.currentIntention = null;
+          continue;
+        }
+
+        this.log.info({
+          kind:        'plan_generated',
+          plannerName: planResult.metadata.plannerName,
+          steps:       planResult.plan.steps.length,
+          timeMs:      planResult.metadata.computeTimeMs,
+        });
+
+        // Validate
+        const vr = this.validator.validate(planResult.plan, this.beliefs);
+        if (!vr.valid) {
+          this.log.warn({ kind: 'plan_failed', plannerName: 'bfs', error: vr.reason ?? 'validation failed' });
+          this.currentIntention = null;
+          continue;
+        }
+
+        // Stamp intention ID and execute
+        const plan: Plan = { ...planResult.plan, intentionId: candidate.id };
+        this.executor.executePlan(plan);
+        break; // successfully planned and started execution
       }
-
-      this.currentIntention = best;
-      this.log.info({ kind: 'intention_set', intentionId: best.id, type: best.type, utility: best.utility });
-
-      // Resolve target parcel beliefs
-      const allParcels = this.beliefs.getParcelBeliefs();
-      const targetParcels = best.targetParcels
-        .map(id => allParcels.find(p => p.id === id))
-        .filter((p): p is ParcelBelief => p !== undefined && p.carriedBy === null);
-
-      if (targetParcels.length === 0) {
-        this.currentIntention = null;
-        return;
-      }
-
-      // Plan — pass current agent positions as dynamic obstacles so BFS avoids occupied tiles
-      const deliveryZones = Array.from(this.beliefs.getMap().getDeliveryZones());
-      const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
-      const planningRequest = {
-        currentPosition:  self.position,
-        carriedParcels:   self.carriedParcels as ReadonlyArray<ParcelBelief>,
-        targetParcels,
-        deliveryZones,
-        beliefMap:        this.beliefs.getMap(),
-        constraints:      agentObstacles.length > 0 ? { avoidPositions: agentObstacles } : undefined,
-      };
-
-      const planStart = Date.now();
-      let planResult = await this.planner.plan(planningRequest);
-      this.metrics?.recordPlannerCall(this.planner.name, Date.now() - planStart, planResult.success);
-
-      // Fall back to BFS if primary planner (PDDL) failed
-      if (!planResult.success && this.bfsFallback) {
-        this.log.warn({ kind: 'llm_fallback', reason: planResult.error ?? 'pddl_failed' });
-        const bfsStart = Date.now();
-        planResult = await this.bfsFallback.plan(planningRequest);
-        this.metrics?.recordPlannerCall('bfs', Date.now() - bfsStart, planResult.success);
-      }
-
-      if (!planResult.success || !planResult.plan) {
-        this.log.warn({ kind: 'plan_failed', plannerName: planResult.metadata.plannerName, error: planResult.error ?? 'unknown' });
-        this.currentIntention = null;
-        return;
-      }
-
-      this.log.info({
-        kind:        'plan_generated',
-        plannerName: planResult.metadata.plannerName,
-        steps:       planResult.plan.steps.length,
-        timeMs:      planResult.metadata.computeTimeMs,
-      });
-
-      // Validate
-      const vr = this.validator.validate(planResult.plan, this.beliefs);
-      if (!vr.valid) {
-        this.log.warn({ kind: 'plan_failed', plannerName: 'bfs', error: vr.reason ?? 'validation failed' });
-        this.currentIntention = null;
-        return;
-      }
-
-      // Stamp intention ID and execute
-      const plan: Plan = { ...planResult.plan, intentionId: best.id };
-      this.executor.executePlan(plan);
 
     } finally {
       this.planning = false;
@@ -478,8 +483,13 @@ export class BdiAgent implements IAgent {
     if (!delivery) return;
 
     const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
-    const path = findPath(self.position, delivery, this.beliefs.getMap(), agentObstacles.length > 0 ? agentObstacles : undefined);
-    if (!path) return;
+    let path = findPath(self.position, delivery, this.beliefs.getMap(), agentObstacles.length > 0 ? agentObstacles : undefined);
+    // Retry without agent obstacles — agents move, corridor may open
+    if (!path) path = findPath(self.position, delivery, this.beliefs.getMap());
+    if (!path) {
+      this.log.warn({ kind: 'plan_failed', plannerName: 'bfs', error: `no delivery path from (${self.position.x},${self.position.y}) to (${delivery.x},${delivery.y})` });
+      return;
+    }
 
     const steps: PlanStep[] = [];
     for (let i = 1; i < path.length; i++) {
@@ -487,9 +497,19 @@ export class BdiAgent implements IAgent {
     }
     steps.push({ action: 'putdown', expectedPosition: delivery });
 
+    const deliveryIntentionId = randomUUID();
+    this.currentIntention = {
+      id:            deliveryIntentionId,
+      type:          'go_to_delivery',
+      targetParcels: self.carriedParcels.map(p => p.id),
+      targetPosition: delivery,
+      utility:       self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
+      createdAt:     Date.now(),
+    };
+
     const plan: Plan = {
       id:              randomUUID(),
-      intentionId:     this.currentIntention?.id ?? '',
+      intentionId:     deliveryIntentionId,
       steps,
       estimatedReward: self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
       createdAt:       Date.now(),

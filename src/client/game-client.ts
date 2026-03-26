@@ -29,13 +29,13 @@ type VoidCallback = () => void;
 
 function parseTileType(raw: string | number): TileType {
   const s = String(raw).trim();
-  if (s === '↑') return 4; // one-way up    (enter moving up)
-  if (s === '↓') return 5; // one-way down  (enter moving down)
-  if (s === '←') return 6; // one-way left  (enter moving left)
-  if (s === '→') return 7; // one-way right (enter moving right)
+  if (s === "↑") return 4; // one-way up    (enter moving up)
+  if (s === "↓") return 5; // one-way down  (enter moving down)
+  if (s === "←") return 6; // one-way left  (enter moving left)
+  if (s === "→") return 7; // one-way right (enter moving right)
   const n = parseInt(s, 10);
   if (n === 0 || n === 1 || n === 2 || n === 3) return n;
-  if (n === 4) return 3; // base/spawn tile — walkable (not a directional tile)
+  if (n === 4) return 1; // base/spawn tile — parcel-spawning (same as internal type 1)
   if (n === 5) return 5; // one-way ↓ — covers "5" and "5!" (parseInt strips suffix)
   return 0; // unknown — treat as non-walkable
 }
