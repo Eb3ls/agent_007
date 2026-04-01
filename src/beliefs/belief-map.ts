@@ -3,7 +3,7 @@
 // Grid data structure conforming to BeliefMap interface
 // ============================================================
 
-import type { BeliefMap, Position, Tile, TileType } from '../types.js';
+import type { BeliefMap, Direction, Position, Tile, TileType } from '../types.js';
 
 export class BeliefMapImpl implements BeliefMap {
   readonly width: number;
@@ -47,8 +47,28 @@ export class BeliefMapImpl implements BeliefMap {
 
   isWalkable(x: number, y: number): boolean {
     const type = this.getTile(x, y);
-    // Types 1–7 are walkable (direction constraints handled in getNeighbors); 0 and null are not
+    // Types 1–7 are walkable (directional constraints handled via canEnterFrom); 0 and null are not
     return type !== null && type !== 0;
+  }
+
+  /**
+   * R02 — directional tile entry restriction (not exit restriction).
+   * Tile ↑ (4): arrow points North → blocks entry from South (fromDir='up').
+   * Tile ↓ (5): blocks entry from North (fromDir='down').
+   * Tile ← (6): blocks entry from East  (fromDir='left').
+   * Tile → (7): blocks entry from West  (fromDir='right').
+   * Non-walkable tiles always return false. All other walkable tiles return true.
+   */
+  canEnterFrom(x: number, y: number, from: Direction): boolean {
+    const type = this.getTile(x, y);
+    if (type === null || type === 0) return false;
+    switch (type) {
+      case 4: return from !== 'up';
+      case 5: return from !== 'down';
+      case 6: return from !== 'left';
+      case 7: return from !== 'right';
+      default: return true;
+    }
   }
 
   isDeliveryZone(x: number, y: number): boolean {

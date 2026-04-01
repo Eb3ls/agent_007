@@ -100,6 +100,8 @@ export interface BeliefMap {
   readonly height: number;
   getTile(x: number, y: number): TileType | null;
   isWalkable(x: number, y: number): boolean;
+  /** R02: returns false if directional tile (4–7) blocks entry from the given direction. */
+  canEnterFrom(x: number, y: number, from: Direction): boolean;
   isDeliveryZone(x: number, y: number): boolean;
   isSpawningTile(x: number, y: number): boolean;
   getDeliveryZones(): ReadonlyArray<Position>;
