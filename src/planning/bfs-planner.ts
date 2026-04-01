@@ -72,6 +72,10 @@ function buildPlanForOrder(
   let current = startPos;
 
   for (const parcel of order) {
+    // Skip immediately if the parcel tile is occupied by an agent obstacle
+    if (avoidPositions?.some(p => p.x === parcel.position.x && p.y === parcel.position.y)) {
+      return null;
+    }
     const path = findPath(current, parcel.position, map, avoidPositions);
     if (!path) return null;
     steps.push(...pathToSteps(path));

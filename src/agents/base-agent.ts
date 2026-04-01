@@ -221,11 +221,6 @@ export abstract class BaseAgent implements IAgent {
       this._scheduleDeliberation();
     });
 
-    this.executor.onStepComplete((_step, _idx) => {
-      // Re-check after each step so replanning uses the up-to-date position.
-      this._scheduleDeliberation();
-    });
-
     this.executor.onStepFailed((step, idx, reason) => {
       const selfPos = this.beliefs?.getSelf().position;
       const detail = `step[${idx}] ${step.action} to (${step.expectedPosition.x},${step.expectedPosition.y}) from (${selfPos?.x},${selfPos?.y})`;
@@ -409,8 +404,9 @@ export abstract class BaseAgent implements IAgent {
         // Plan — pass current agent positions as dynamic obstacles so BFS avoids occupied tiles
         const deliveryZones = Array.from(this.beliefs.getMap().getDeliveryZones());
         const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
+        const selfPos = { x: Math.round(self.position.x), y: Math.round(self.position.y) };
         const planningRequest = {
-          currentPosition:  self.position,
+          currentPosition:  selfPos,
           carriedParcels:   self.carriedParcels as ReadonlyArray<ParcelBelief>,
           targetParcels,
           deliveryZones,
@@ -465,9 +461,10 @@ export abstract class BaseAgent implements IAgent {
     if (!delivery) return;
 
     const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
-    let path = findPath(self.position, delivery, this.beliefs.getMap(), agentObstacles.length > 0 ? agentObstacles : undefined);
+    const selfPos = { x: Math.round(self.position.x), y: Math.round(self.position.y) };
+    let path = findPath(selfPos, delivery, this.beliefs.getMap(), agentObstacles.length > 0 ? agentObstacles : undefined);
     // Retry without agent obstacles — agents move, corridor may open
-    if (!path) path = findPath(self.position, delivery, this.beliefs.getMap());
+    if (!path) path = findPath(selfPos, delivery, this.beliefs.getMap());
     if (!path) {
       this.log.warn({ kind: 'plan_failed', plannerName: 'bfs', error: `no delivery path from (${self.position.x},${self.position.y}) to (${delivery.x},${delivery.y})` });
       return;
@@ -514,8 +511,9 @@ export abstract class BaseAgent implements IAgent {
       return;
     }
     const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
+    const selfPos = { x: Math.round(self.position.x), y: Math.round(self.position.y) };
     const path = findPath(
-      self.position,
+      selfPos,
       target,
       this.beliefs.getMap(),
       agentObstacles.length > 0 ? agentObstacles : undefined,
