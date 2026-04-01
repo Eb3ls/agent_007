@@ -422,8 +422,8 @@ export type LogEvent =
   | { kind: 'plan_failed';       plannerName: string; error: string }
   | { kind: 'replan_triggered';  reason: string }
   | { kind: 'belief_update';     changeType: BeliefChangeType }
-  | { kind: 'message_sent';      msgType: string; to: string }
-  | { kind: 'message_received';  msgType: string; from: string }
+  | { kind: 'message_sent';      msgType: string; to: string;   ts?: number }
+  | { kind: 'message_received';  msgType: string; from: string; ts?: number }
   | { kind: 'llm_call';          latencyMs: number; tokensUsed: number }
   | { kind: 'llm_fallback';      reason: string }
   | { kind: 'penalty';           cause: string }
