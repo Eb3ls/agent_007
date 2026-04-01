@@ -136,14 +136,19 @@ export class GameClient {
     });
 
     // Agent sensing
-    this.api.onAgentsSensing((rawAgents) => {
-      const agents: RawAgentSensing[] = rawAgents.map(a => ({
-        id: a.id,
-        name: a.name,
-        x: a.x,
-        y: a.y,
-        score: a.score,
-      }));
+    this.api.onAgentsSensing((entries) => {
+      const agents: RawAgentSensing[] = entries
+        .filter(e => e.agent != null)
+        .map(e => {
+          const a = e.agent!;
+          return {
+            id: a.id,
+            name: a.name,
+            x: a.x,
+            y: a.y,
+            score: a.score,
+          };
+        });
       const event: BufferedEvent = { kind: 'agents', agents };
       if (!this.eventBuffer.isDrained()) {
         this.eventBuffer.push(event);

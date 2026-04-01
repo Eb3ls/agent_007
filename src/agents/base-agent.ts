@@ -39,8 +39,10 @@ const DELIBERATION_INTERVAL_MS = 2_000;
 
 export abstract class BaseAgent implements IAgent {
   // IAgent interface
-  private _id = '';
-  get id(): string { return this._id; }
+  private _id = "";
+  get id(): string {
+    return this._id;
+  }
   abstract readonly role: AgentRole;
 
   // Internals
@@ -59,7 +61,7 @@ export abstract class BaseAgent implements IAgent {
 
   // Metrics
   private metrics: MetricsCollector | null = null;
-  private metricsOutputPath = '';
+  private metricsOutputPath = "";
 
   // State
   private currentIntention: Intention | null = null;
@@ -72,6 +74,9 @@ export abstract class BaseAgent implements IAgent {
 
   // Stagnation
   private stagnationMonitor: StagnationMonitor | null = null;
+
+  // Last tile that caused a step failure — injected as a dynamic obstacle on next replan
+  private lastFailedTile: Position | null = null;
 
   // ---------------------------------------------------------------------------
   // Abstract method — subclasses provide the planner chain
@@ -93,14 +98,15 @@ export abstract class BaseAgent implements IAgent {
     this.log = createLogger(`${config.role}-agent`, config.logLevel);
 
     this.deliberator = new Deliberator();
-    this.validator   = new PlanValidator();
+    this.validator = new PlanValidator();
 
     if (config.metrics?.enabled !== false) {
       this.metrics = new MetricsCollector(
         config.role,
         config.metrics?.sampleIntervalMs ?? 5_000,
       );
-      this.metricsOutputPath = config.metrics?.outputPath ?? `logs/${config.role}-metrics.json`;
+      this.metricsOutputPath =
+        config.metrics?.outputPath ?? `logs/${config.role}-metrics.json`;
     }
 
     // Map event initializes BeliefStore (fires on drainPending / reconnect).
@@ -111,13 +117,15 @@ export abstract class BaseAgent implements IAgent {
       const map = new BeliefMapImpl([...tiles], width, height);
       this.beliefs = new BeliefStore(map);
       this.beliefs.setCapacity(client.getServerCapacity());
-      this.beliefs.setObservationDistance(client.getParcelsObservationDistance());
+      this.beliefs.setObservationDistance(
+        client.getParcelsObservationDistance(),
+      );
       this.executor = new ActionExecutor(client);
       // Build planner chain now that beliefs are available (LlmAgent needs BeliefStore reference)
       this.planner = this.buildPlannerChain();
     });
 
-    client.onYou(self => {
+    client.onYou((self) => {
       if (!this.beliefs) return;
       if (!this._id) {
         this._id = self.id;
@@ -125,7 +133,7 @@ export abstract class BaseAgent implements IAgent {
 
         // Wire up comms once we know our own ID
         if (config.teamId && this.beliefs) {
-          this.msgHandler  = new MessageHandler(client, self.id);
+          this.msgHandler = new MessageHandler(client, self.id);
           this.allyTracker = new AllyTracker(
             this.msgHandler,
             this.beliefs,
@@ -139,31 +147,30 @@ export abstract class BaseAgent implements IAgent {
       this.stagnationMonitor?.notifyScore(self.score);
       if (self.score > 0 && self.score !== this.lastLoggedScore) {
         this.lastLoggedScore = self.score;
-        this.log.info({ kind: 'score_update', score: self.score });
+        this.log.info({ kind: "score_update", score: self.score });
       }
     });
 
-    client.onParcelsSensing(parcels => {
+    client.onParcelsSensing((parcels) => {
       if (!this.beliefs) return;
-      console.log("Parcel sensing update:", parcels);
       this.beliefs.updateParcels(parcels);
       if (this.running) this._scheduleDeliberation();
     });
 
-    client.onAgentsSensing(agents => {
+    client.onAgentsSensing((agents) => {
       if (!this.beliefs) return;
       this.beliefs.updateAgents(agents);
     });
 
     client.onDisconnect(() => {
-      this.log.warn({ kind: 'connection_lost' });
+      this.log.warn({ kind: "connection_lost" });
       // Cancel any in-flight action so it isn't replayed on reconnect
       if (this.executor) this.executor.cancelCurrentPlan();
       this.currentIntention = null;
     });
 
     client.onReconnect(() => {
-      this.log.info({ kind: 'connection_restored' });
+      this.log.info({ kind: "connection_restored" });
       // Clear beliefs that may have gone stale during the outage
       this.beliefs?.clearStaleBeliefs();
       // Re-announce presence to allies (they may have timed us out)
@@ -181,7 +188,7 @@ export abstract class BaseAgent implements IAgent {
     if (!this.beliefs || !this.executor) {
       throw new Error(
         `${this.constructor.name}.start() called before the map event was received. ` +
-        'Call init(), then drainPending(), then start().',
+          "Call init(), then drainPending(), then start().",
       );
     }
 
@@ -194,9 +201,10 @@ export abstract class BaseAgent implements IAgent {
       onStagnation: (elapsedMs) => {
         if (!this.beliefs) return;
         // Only detect stagnation when pursuing a real goal, not while exploring or idle
-        if (!this.currentIntention || this.currentIntention.type === 'explore') return;
+        if (!this.currentIntention || this.currentIntention.type === "explore")
+          return;
         const secondsSinceLastScore = Math.round(elapsedMs / 1000);
-        this.log.warn({ kind: 'stagnation_detected', secondsSinceLastScore });
+        this.log.warn({ kind: "stagnation_detected", secondsSinceLastScore });
         this.metrics?.recordStagnation();
         // Abandon the stuck intention — next deliberation will explore or try a different parcel
         this.executor.cancelCurrentPlan();
@@ -209,15 +217,16 @@ export abstract class BaseAgent implements IAgent {
     this.allyTracker?.start();
 
     // Wire executor callbacks
-    this.executor.onPutdown(_count => {
+    this.executor.onPutdown((_count) => {
       this.beliefs?.clearDeliveredParcels();
     });
 
-    this.executor.onPlanComplete(plan => {
-      const deliveredReward = plan.steps.some(s => s.action === 'putdown')
+    this.executor.onPlanComplete((plan) => {
+      const deliveredReward = plan.steps.some((s) => s.action === "putdown")
         ? plan.estimatedReward
         : 0;
-      if (deliveredReward > 0) this.metrics?.recordParcelDelivered(deliveredReward);
+      if (deliveredReward > 0)
+        this.metrics?.recordParcelDelivered(deliveredReward);
       this.currentIntention = null;
       this._scheduleDeliberation();
     });
@@ -225,13 +234,19 @@ export abstract class BaseAgent implements IAgent {
     this.executor.onStepFailed((step, idx, reason) => {
       const selfPos = this.beliefs?.getSelf().position;
       const detail = `step[${idx}] ${step.action} to (${step.expectedPosition.x},${step.expectedPosition.y}) from (${selfPos?.x},${selfPos?.y})`;
-      this.log.warn({ kind: 'plan_failed', plannerName: this.planner.name, error: `${reason} — ${detail}` });
+      this.log.warn({
+        kind: "plan_failed",
+        plannerName: this.planner.name,
+        error: `${reason} — ${detail}`,
+      });
+      // Record the blocked tile so the next replan avoids it even if sensing is stale
+      this.lastFailedTile = step.expectedPosition;
       this.currentIntention = null;
       this._scheduleDeliberation(/* planFailed= */ true);
     });
 
-    this.executor.onReplanRequired(signal => {
-      this.log.warn({ kind: 'replan_triggered', reason: signal.reason });
+    this.executor.onReplanRequired((signal) => {
+      this.log.warn({ kind: "replan_triggered", reason: signal.reason });
       this.currentIntention = null;
       this._scheduleDeliberation(/* planFailed= */ true);
     });
@@ -243,11 +258,18 @@ export abstract class BaseAgent implements IAgent {
     this.deliberateTimer.unref();
 
     // Signal handlers for graceful shutdown
-    const shutdown = async (): Promise<void> => { await this.stop(); process.exit(0); };
-    this.sigintHandler  = () => { void shutdown(); };
-    this.sigtermHandler = () => { void shutdown(); };
-    process.on('SIGINT',  this.sigintHandler);
-    process.on('SIGTERM', this.sigtermHandler);
+    const shutdown = async (): Promise<void> => {
+      await this.stop();
+      process.exit(0);
+    };
+    this.sigintHandler = () => {
+      void shutdown();
+    };
+    this.sigtermHandler = () => {
+      void shutdown();
+    };
+    process.on("SIGINT", this.sigintHandler);
+    process.on("SIGTERM", this.sigtermHandler);
 
     // Kick off first deliberation cycle
     this._scheduleDeliberation();
@@ -266,14 +288,16 @@ export abstract class BaseAgent implements IAgent {
     if (this.planner) this.planner.abort();
     if (this.executor) this.executor.cancelCurrentPlan();
 
-    if (this.sigintHandler)  process.removeListener('SIGINT',  this.sigintHandler);
-    if (this.sigtermHandler) process.removeListener('SIGTERM', this.sigtermHandler);
+    if (this.sigintHandler)
+      process.removeListener("SIGINT", this.sigintHandler);
+    if (this.sigtermHandler)
+      process.removeListener("SIGTERM", this.sigtermHandler);
 
     if (this.metrics) {
       this.metrics.stop();
       console.log(formatSummary(this.metrics.snapshot()));
-      await this.metrics.exportJson(this.metricsOutputPath).catch(err => {
-        console.error('Failed to export metrics:', err);
+      await this.metrics.exportJson(this.metricsOutputPath).catch((err) => {
+        console.error("Failed to export metrics:", err);
       });
     }
 
@@ -294,7 +318,9 @@ export abstract class BaseAgent implements IAgent {
     if (!planFailed && this.executor?.getInFlightAction() !== null) return;
     if (planFailed) {
       // Brief pause to let dynamic obstacles (NPCs) move away before replanning
-      setTimeout(() => { if (this.running) void this._deliberateAndPlan(planFailed); }, 150);
+      setTimeout(() => {
+        if (this.running) void this._deliberateAndPlan(planFailed);
+      }, 150);
     } else {
       void this._deliberateAndPlan(planFailed);
     }
@@ -310,7 +336,13 @@ export abstract class BaseAgent implements IAgent {
       const movementDurationMs = this.client.getMeasuredActionDurationMs();
       const tracker = this.beliefs.getParcelTracker();
 
-      const shouldReplan = this.deliberator.shouldReplan(this.currentIntention, this.beliefs, planFailed, movementDurationMs, tracker);
+      const shouldReplan = this.deliberator.shouldReplan(
+        this.currentIntention,
+        this.beliefs,
+        planFailed,
+        movementDurationMs,
+        tracker,
+      );
       const needsReplan = planFailed || shouldReplan || this.executor.isIdle();
 
       if (!needsReplan) return;
@@ -318,8 +350,15 @@ export abstract class BaseAgent implements IAgent {
       // Cancel current plan if replan is warranted
       if (this.currentIntention !== null && (planFailed || shouldReplan)) {
         this.executor.cancelCurrentPlan();
-        this.log.info({ kind: 'replan_triggered', reason: planFailed ? 'plan_failed' : 'better_option_or_target_gone' });
-        this.log.info({ kind: 'intention_dropped', intentionId: this.currentIntention.id, reason: planFailed ? 'plan_failed' : 'superseded' });
+        this.log.info({
+          kind: "replan_triggered",
+          reason: planFailed ? "plan_failed" : "better_option_or_target_gone",
+        });
+        this.log.info({
+          kind: "intention_dropped",
+          intentionId: this.currentIntention.id,
+          reason: planFailed ? "plan_failed" : "superseded",
+        });
         this.currentIntention = null;
       }
 
@@ -341,9 +380,14 @@ export abstract class BaseAgent implements IAgent {
       }
 
       // Deliberate: select best intention, excluding parcels claimed by allies
-      const claimedByOthers = this.allyTracker?.getClaimedByOthers() ?? new Set<string>();
-      const candidates = this.deliberator.evaluate(this.beliefs, movementDurationMs, tracker)
-        .filter(intention => !intention.targetParcels.some(id => claimedByOthers.has(id)));
+      const claimedByOthers =
+        this.allyTracker?.getClaimedByOthers() ?? new Set<string>();
+      const candidates = this.deliberator
+        .evaluate(this.beliefs, movementDurationMs, tracker)
+        .filter(
+          (intention) =>
+            !intention.targetParcels.some((id) => claimedByOthers.has(id)),
+        );
 
       if (candidates.length === 0) {
         if (self.carriedParcels.length > 0) await this._planDelivery();
@@ -353,49 +397,73 @@ export abstract class BaseAgent implements IAgent {
       const best = candidates[0]!;
 
       // Handle explore intentions — no parcels to pick up, just move to target
-      if (best.type === 'explore') {
+      if (best.type === "explore") {
         // Skip if already executing an explore plan toward the same tile
         if (
-          this.currentIntention?.type === 'explore' &&
-          positionEquals(this.currentIntention.targetPosition, best.targetPosition) &&
+          this.currentIntention?.type === "explore" &&
+          positionEquals(
+            this.currentIntention.targetPosition,
+            best.targetPosition,
+          ) &&
           !this.executor.isIdle()
-        ) return;
+        )
+          return;
         this.currentIntention = best;
-        this.log.info({ kind: 'intention_set', intentionId: best.id, type: best.type, utility: best.utility });
+        this.log.info({
+          kind: "intention_set",
+          intentionId: best.id,
+          type: best.type,
+          utility: best.utility,
+        });
         await this._planExplore(best.targetPosition);
         return;
       }
 
       // Don't replan if intention target unchanged and executor is busy
-      const sameTarget = this.currentIntention?.targetParcels.join(',') === best.targetParcels.join(',');
+      const sameTarget =
+        this.currentIntention?.targetParcels.join(",") ===
+        best.targetParcels.join(",");
       if (sameTarget && !this.executor.isIdle()) return;
 
       // Iterate candidates: skip any yielded to an ally, use the first we can claim
       for (const candidate of candidates) {
-        if (candidate.type === 'explore') continue;
+        if (candidate.type === "explore") continue;
 
         // Parcel claim negotiation with allies
         if (this.allyTracker && candidate.targetParcels.length > 0) {
           const parcelId = candidate.targetParcels[0]!;
-          const parcel = this.beliefs.getParcelBeliefs().find(p => p.id === parcelId);
+          const parcel = this.beliefs
+            .getParcelBeliefs()
+            .find((p) => p.id === parcelId);
           if (parcel) {
             const dist = manhattanDistance(self.position, parcel.position);
             const result = await this.allyTracker.claimParcel(parcelId, dist);
-            if (result === 'yield') {
-              this.log.info({ kind: 'intention_dropped', intentionId: candidate.id, reason: 'ally_has_priority' });
+            if (result === "yield") {
+              this.log.info({
+                kind: "intention_dropped",
+                intentionId: candidate.id,
+                reason: "ally_has_priority",
+              });
               continue;
             }
           }
         }
 
         this.currentIntention = candidate;
-        this.log.info({ kind: 'intention_set', intentionId: candidate.id, type: candidate.type, utility: candidate.utility });
+        this.log.info({
+          kind: "intention_set",
+          intentionId: candidate.id,
+          type: candidate.type,
+          utility: candidate.utility,
+        });
 
         // Resolve target parcel beliefs
         const allParcels = this.beliefs.getParcelBeliefs();
         const targetParcels = candidate.targetParcels
-          .map(id => allParcels.find(p => p.id === id))
-          .filter((p): p is ParcelBelief => p !== undefined && p.carriedBy === null);
+          .map((id) => allParcels.find((p) => p.id === id))
+          .filter(
+            (p): p is ParcelBelief => p !== undefined && p.carriedBy === null,
+          );
 
         if (targetParcels.length === 0) {
           this.currentIntention = null;
@@ -403,49 +471,73 @@ export abstract class BaseAgent implements IAgent {
         }
 
         // Plan — pass current agent positions as dynamic obstacles so BFS avoids occupied tiles
-        const deliveryZones = Array.from(this.beliefs.getMap().getDeliveryZones());
-        const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
-        const selfPos = { x: Math.round(self.position.x), y: Math.round(self.position.y) };
+        const deliveryZones = Array.from(
+          this.beliefs.getMap().getDeliveryZones(),
+        );
+        const agentObstacles = this.beliefs
+          .getAgentBeliefs()
+          .map((a) => a.position);
+        // Include the last failed tile as an extra obstacle in case sensing is stale
+        if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
+        const selfPos = {
+          x: Math.round(self.position.x),
+          y: Math.round(self.position.y),
+        };
         const planningRequest = {
-          currentPosition:  selfPos,
-          carriedParcels:   self.carriedParcels as ReadonlyArray<ParcelBelief>,
+          currentPosition: selfPos,
+          carriedParcels: self.carriedParcels as ReadonlyArray<ParcelBelief>,
           targetParcels,
           deliveryZones,
-          beliefMap:        this.beliefs.getMap(),
-          constraints:      agentObstacles.length > 0 ? { avoidPositions: agentObstacles } : undefined,
+          beliefMap: this.beliefs.getMap(),
+          constraints:
+            agentObstacles.length > 0
+              ? { avoidPositions: agentObstacles }
+              : undefined,
         };
 
         const planStart = Date.now();
         const planResult = await this.planner.plan(planningRequest);
-        this.metrics?.recordPlannerCall(this.planner.name, Date.now() - planStart, planResult.success);
+        this.metrics?.recordPlannerCall(
+          this.planner.name,
+          Date.now() - planStart,
+          planResult.success,
+        );
 
         if (!planResult.success || !planResult.plan) {
-          this.log.warn({ kind: 'plan_failed', plannerName: planResult.metadata.plannerName, error: planResult.error ?? 'unknown' });
+          this.log.warn({
+            kind: "plan_failed",
+            plannerName: planResult.metadata.plannerName,
+            error: planResult.error ?? "unknown",
+          });
           this.currentIntention = null;
           continue;
         }
 
         this.log.info({
-          kind:        'plan_generated',
+          kind: "plan_generated",
           plannerName: planResult.metadata.plannerName,
-          steps:       planResult.plan.steps.length,
-          timeMs:      planResult.metadata.computeTimeMs,
+          steps: planResult.plan.steps.length,
+          timeMs: planResult.metadata.computeTimeMs,
         });
 
         // Validate
         const vr = this.validator.validate(planResult.plan, this.beliefs);
         if (!vr.valid) {
-          this.log.warn({ kind: 'plan_failed', plannerName: planResult.metadata.plannerName, error: vr.reason ?? 'validation failed' });
+          this.log.warn({
+            kind: "plan_failed",
+            plannerName: planResult.metadata.plannerName,
+            error: vr.reason ?? "validation failed",
+          });
           this.currentIntention = null;
           continue;
         }
 
         // Stamp intention ID and execute
         const plan: Plan = { ...planResult.plan, intentionId: candidate.id };
+        this.lastFailedTile = null; // fresh plan started — clear the failed-tile override
         this.executor.executePlan(plan);
         break; // successfully planned and started execution
       }
-
     } finally {
       this.planning = false;
     }
@@ -457,45 +549,72 @@ export abstract class BaseAgent implements IAgent {
 
   private async _planDelivery(): Promise<void> {
     if (!this.beliefs) return;
-    const self     = this.beliefs.getSelf();
+    const self = this.beliefs.getSelf();
     const delivery = this.beliefs.getNearestDeliveryZone(self.position);
     if (!delivery) return;
 
-    const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
-    const selfPos = { x: Math.round(self.position.x), y: Math.round(self.position.y) };
-    let path = findPath(selfPos, delivery, this.beliefs.getMap(), agentObstacles.length > 0 ? agentObstacles : undefined);
+    const agentObstacles = this.beliefs
+      .getAgentBeliefs()
+      .map((a) => a.position);
+    if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
+    const selfPos = {
+      x: Math.round(self.position.x),
+      y: Math.round(self.position.y),
+    };
+    let path = findPath(
+      selfPos,
+      delivery,
+      this.beliefs.getMap(),
+      agentObstacles.length > 0 ? agentObstacles : undefined,
+    );
     // Retry without agent obstacles — agents move, corridor may open
     if (!path) path = findPath(selfPos, delivery, this.beliefs.getMap());
     if (!path) {
-      this.log.warn({ kind: 'plan_failed', plannerName: 'bfs', error: `no delivery path from (${self.position.x},${self.position.y}) to (${delivery.x},${delivery.y})` });
+      this.log.warn({
+        kind: "plan_failed",
+        plannerName: "bfs",
+        error: `no delivery path from (${self.position.x},${self.position.y}) to (${delivery.x},${delivery.y})`,
+      });
       return;
     }
 
     const steps: PlanStep[] = [];
     for (let i = 1; i < path.length; i++) {
-      steps.push({ action: _posToAction(path[i - 1]!, path[i]!), expectedPosition: path[i]! });
+      steps.push({
+        action: _posToAction(path[i - 1]!, path[i]!),
+        expectedPosition: path[i]!,
+      });
     }
-    steps.push({ action: 'putdown', expectedPosition: delivery });
+    steps.push({ action: "putdown", expectedPosition: delivery });
 
     const deliveryIntentionId = randomUUID();
     this.currentIntention = {
-      id:            deliveryIntentionId,
-      type:          'go_to_delivery',
-      targetParcels: self.carriedParcels.map(p => p.id),
+      id: deliveryIntentionId,
+      type: "go_to_delivery",
+      targetParcels: self.carriedParcels.map((p) => p.id),
       targetPosition: delivery,
-      utility:       self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
-      createdAt:     Date.now(),
+      utility: self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
+      createdAt: Date.now(),
     };
 
     const plan: Plan = {
-      id:              randomUUID(),
-      intentionId:     deliveryIntentionId,
+      id: randomUUID(),
+      intentionId: deliveryIntentionId,
       steps,
-      estimatedReward: self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
-      createdAt:       Date.now(),
+      estimatedReward: self.carriedParcels.reduce(
+        (s, p) => s + p.estimatedReward,
+        0,
+      ),
+      createdAt: Date.now(),
     };
 
-    this.log.info({ kind: 'plan_generated', plannerName: 'bfs', steps: plan.steps.length, timeMs: 0 });
+    this.log.info({
+      kind: "plan_generated",
+      plannerName: "bfs",
+      steps: plan.steps.length,
+      timeMs: 0,
+    });
+    this.lastFailedTile = null;
     this.executor.executePlan(plan);
   }
 
@@ -511,8 +630,14 @@ export abstract class BaseAgent implements IAgent {
       this.currentIntention = null;
       return;
     }
-    const agentObstacles = this.beliefs.getAgentBeliefs().map(a => a.position);
-    const selfPos = { x: Math.round(self.position.x), y: Math.round(self.position.y) };
+    const agentObstacles = this.beliefs
+      .getAgentBeliefs()
+      .map((a) => a.position);
+    if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
+    const selfPos = {
+      x: Math.round(self.position.x),
+      y: Math.round(self.position.y),
+    };
     const path = findPath(
       selfPos,
       target,
@@ -525,16 +650,25 @@ export abstract class BaseAgent implements IAgent {
     }
     const steps: PlanStep[] = [];
     for (let i = 1; i < path.length; i++) {
-      steps.push({ action: _posToAction(path[i - 1]!, path[i]!), expectedPosition: path[i]! });
+      steps.push({
+        action: _posToAction(path[i - 1]!, path[i]!),
+        expectedPosition: path[i]!,
+      });
     }
     const plan: Plan = {
       id: randomUUID(),
-      intentionId: this.currentIntention?.id ?? '',
+      intentionId: this.currentIntention?.id ?? "",
       steps,
       estimatedReward: 0,
       createdAt: Date.now(),
     };
-    this.log.info({ kind: 'plan_generated', plannerName: 'bfs', steps: plan.steps.length, timeMs: 0 });
+    this.log.info({
+      kind: "plan_generated",
+      plannerName: "bfs",
+      steps: plan.steps.length,
+      timeMs: 0,
+    });
+    this.lastFailedTile = null;
     this.executor.executePlan(plan);
   }
 }
