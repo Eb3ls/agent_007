@@ -148,7 +148,14 @@ export class BeliefStore implements IBeliefStore {
       if (belief.carriedBy !== null) continue; // carried parcels don't appear in sensing
 
       const dist = manhattanDistance(selfPos, belief.position);
-      if (dist <= effectiveRange) {
+      // R10: when observationDistance is configured by the server, the boundary
+      // is exclusive (dist < observationDistance). When using the heuristic
+      // (effectiveRange = maxSensedDist), the boundary is inclusive.
+      const inRange =
+        this.observationDistance > 0
+          ? dist < this.observationDistance
+          : dist <= effectiveRange;
+      if (inRange) {
         this.parcels.delete(id);
       } else {
         // Mark stale parcels with decaying confidence
