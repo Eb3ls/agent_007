@@ -289,6 +289,12 @@ export interface IAgent {
 // --- Agent Configuration ---
 
 export type PlannerChoice = 'bfs' | 'pddl' | 'llm';
+/** Identifies which planner chain PlannerFactory should build:
+ *  'bfs'  → BFS only
+ *  'pddl' → PDDL → BFS fallback
+ *  'llm'  → LLM → PDDL → BFS fallback
+ */
+export type PlannerChainType = 'bfs' | 'pddl' | 'llm';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LlmConfig {
