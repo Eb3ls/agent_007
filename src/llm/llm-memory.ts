@@ -40,8 +40,13 @@ export const TOTAL_INPUT_BUDGET_TOKENS =
 /** Maximum age of shared beliefs before they are dropped. */
 const SHARED_BELIEFS_MAX_AGE_MS = 20_000;
 
-/** How many recent log events to request (trimmed to budget below). */
-const HISTORY_FETCH_EVENTS = 60;
+/**
+ * Rolling window: keep only the last N action history events.
+ * Dependency Chain 6 CODEBASE: unbounded history bloats context and causes
+ * silent truncation in the LLM client. 20 entries is enough for recent context
+ * without overflowing the BUDGET.history token cap.
+ */
+const HISTORY_FETCH_EVENTS = 20;
 
 // ---------------------------------------------------------------------------
 // Token counting
