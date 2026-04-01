@@ -79,14 +79,24 @@ function parcelName(id: string): string {
 // ---------------------------------------------------------------------------
 
 function buildProblem(request: PlanningRequest): string {
-  const { currentPosition, carriedParcels, targetParcels, deliveryZones, beliefMap } =
+  const { currentPosition, carriedParcels, targetParcels, deliveryZones, beliefMap, constraints } =
     request;
 
-  // Collect all walkable tiles from the belief map
+  // R05/Pattern-2: build obstacle set from avoidPositions (known agent positions).
+  // Tiles occupied by other agents are excluded from the PDDL walkable set so the
+  // solver never generates a path through them.
+  const obstacleKeys = new Set<string>();
+  for (const obs of constraints?.avoidPositions ?? []) {
+    obstacleKeys.add(`${obs.x},${obs.y}`);
+  }
+
+  // Collect walkable tiles, excluding agent-occupied ones
   const walkable: Position[] = [];
   for (let x = 0; x < beliefMap.width; x++) {
     for (let y = 0; y < beliefMap.height; y++) {
-      if (beliefMap.isWalkable(x, y)) walkable.push({ x, y });
+      if (beliefMap.isWalkable(x, y) && !obstacleKeys.has(`${x},${y}`)) {
+        walkable.push({ x, y });
+      }
     }
   }
 
