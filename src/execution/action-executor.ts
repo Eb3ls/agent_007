@@ -10,11 +10,19 @@ import type {
   InFlightAction,
   Plan,
   PlanStep,
+  ReplanSignal,
 } from '../types.js';
 import { actionToDirection } from './action-types.js';
 
 /** Safety margin added to measured action duration for timeout detection. */
 const SAFETY_MARGIN_MS = 100;
+
+/**
+ * Number of consecutive move failures before emitting onReplanRequired.
+ * After MAX_MOVE_RETRIES failed attempts, further retrying only accumulates
+ * penalties (R07, R22). Signal replan instead.
+ */
+const MAX_MOVE_RETRIES = 1; // 1 retry → 2 total attempts before replan
 
 export class ActionExecutor implements IActionExecutor {
   private client: GameClient;
@@ -28,7 +36,11 @@ export class ActionExecutor implements IActionExecutor {
   private stepCompleteCbs: Array<(step: PlanStep, index: number) => void> = [];
   private planCompleteCbs: Array<(plan: Plan) => void> = [];
   private stepFailedCbs: Array<(step: PlanStep, index: number, reason: string) => void> = [];
+  private replanRequiredCbs: Array<(signal: ReplanSignal) => void> = [];
   private putdownCbs: Array<(count: number) => void> = [];
+
+  /** Set by executeStep when a replan signal has been emitted; cleared in runLoop. */
+  private replanEmitted = false;
 
   constructor(client: GameClient) {
     this.client = client;
@@ -41,6 +53,7 @@ export class ActionExecutor implements IActionExecutor {
     this.currentPlan = plan;
     this.stepIndex = 0;
     this.cancelled = false;
+    this.replanEmitted = false;
 
     if (!this.executing) {
       this.runLoop();
@@ -77,6 +90,14 @@ export class ActionExecutor implements IActionExecutor {
     this.stepFailedCbs.push(cb);
   }
 
+  /**
+   * R07 / Pattern-3: fires when move fails consecutively (collision likely).
+   * Distinct from onStepFailed — caller must replan immediately rather than retry.
+   */
+  onReplanRequired(cb: (signal: ReplanSignal) => void): void {
+    this.replanRequiredCbs.push(cb);
+  }
+
   onPutdown(cb: (count: number) => void): void {
     this.putdownCbs.push(cb);
   }
@@ -92,9 +113,10 @@ export class ActionExecutor implements IActionExecutor {
       }
 
       const plan = this.currentPlan;
-      const step = plan.steps[this.stepIndex];
+      const step = plan.steps[this.stepIndex]!;
       const index = this.stepIndex;
 
+      this.replanEmitted = false;
       const success = await this.executeStep(step);
 
       // Check if plan was replaced during execution
@@ -110,15 +132,20 @@ export class ActionExecutor implements IActionExecutor {
       if (success) {
         for (const cb of this.stepCompleteCbs) cb(step, index);
         this.stepIndex++;
+      } else if (this.replanEmitted) {
+        // onReplanRequired already fired inside executeStep — just clear and break.
+        // Do NOT also fire onStepFailed: the caller handles replan, not step retry.
+        this.currentPlan = null;
+        break;
       } else {
-        // Clear the plan before calling failure callbacks to prevent re-entry
+        // Transient failure (non-move actions, unexpected errors)
         this.currentPlan = null;
         for (const cb of this.stepFailedCbs) cb(step, index, 'action failed');
         break;
       }
     }
 
-    // Plan completed or cancelled
+    // Plan completed
     if (
       this.currentPlan &&
       !this.cancelled &&
@@ -137,7 +164,7 @@ export class ActionExecutor implements IActionExecutor {
     }
   }
 
-  private async executeStep(step: PlanStep, retries = 3): Promise<boolean> {
+  private async executeStep(step: PlanStep, attempt = 0): Promise<boolean> {
     const direction = actionToDirection(step.action);
     const expectedDurationMs = this.client.getMeasuredActionDurationMs();
 
@@ -149,22 +176,35 @@ export class ActionExecutor implements IActionExecutor {
 
     try {
       if (direction !== null) {
-        // Move action — wait for server response with safety timeout
+        // Move action
         const result = await this.withTimeout(
           this.client.move(direction),
           expectedDurationMs + SAFETY_MARGIN_MS,
         );
-        if (!result && retries > 0) {
-          // Move failed (likely dynamic obstacle). Wait for obstacle to move, then retry.
-          await new Promise(r => setTimeout(r, 100));
-          if (this.cancelled || this.currentPlan === null) return false;
-          this.inFlight = { action: step.action, sentAt: Date.now(), expectedDurationMs };
-          return this.executeStep(step, retries - 1);
+
+        if (!result) {
+          if (attempt < MAX_MOVE_RETRIES && !this.cancelled && this.currentPlan !== null) {
+            // One retry: wait briefly for dynamic obstacle to clear (R07 transient case)
+            await new Promise(r => setTimeout(r, 100));
+            if (this.cancelled || this.currentPlan === null) return false;
+            return this.executeStep(step, attempt + 1);
+          }
+          // Exhausted retries — collision or persistent block, signal replan (R07, R22)
+          this.replanEmitted = true;
+          const signal: ReplanSignal = {
+            reason: attempt >= MAX_MOVE_RETRIES ? 'consecutive_failures' : 'collision',
+            failedStep: step,
+            failureCount: attempt + 1,
+          };
+          for (const cb of this.replanRequiredCbs) cb(signal);
+          return false;
         }
-        return result;
+        return true;
+
       } else if (step.action === 'pickup') {
         await this.client.pickup();
         return true;
+
       } else if (step.action === 'putdown') {
         const putResult = await this.client.putdown();
         if (putResult.length > 0) {
@@ -172,6 +212,7 @@ export class ActionExecutor implements IActionExecutor {
         }
         return true;
       }
+
       return false;
     } catch {
       return false;
@@ -185,18 +226,11 @@ export class ActionExecutor implements IActionExecutor {
       const timer = setTimeout(() => {
         reject(new Error('action timed out'));
       }, timeoutMs);
-      // Prevent safety timer from keeping Node's event loop alive
       timer.unref();
 
       promise.then(
-        value => {
-          clearTimeout(timer);
-          resolve(value);
-        },
-        err => {
-          clearTimeout(timer);
-          reject(err);
-        },
+        value => { clearTimeout(timer); resolve(value); },
+        err   => { clearTimeout(timer); reject(err); },
       );
     });
   }
