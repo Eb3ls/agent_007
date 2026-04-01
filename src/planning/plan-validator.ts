@@ -3,7 +3,7 @@
 // Checks a Plan against current beliefs before execution.
 // ============================================================
 
-import type { IBeliefStore, Plan, PlanStep, Position } from '../types.js';
+import type { ActionType, IBeliefStore, Plan, PlanStep, Position } from '../types.js';
 
 export interface ValidationResult {
   readonly valid: boolean;
@@ -55,9 +55,11 @@ export class PlanValidator {
       const dest = step.expectedPosition;
 
       if (isMoveStep(step)) {
-        // Check (2)/(3): valid 1-tile move to a walkable tile
-        const dist = Math.abs(dest.x - pos.x) + Math.abs(dest.y - pos.y);
-        if (dist !== 1) {
+        // Check (2)/(3): exact starting position (Bug 4 fix) + walkable destination.
+        // Infer the expected "from" position from the action direction so we catch the
+        // case where the agent moved to an adjacent-but-wrong tile since plan generation.
+        const expectedFrom = impliedFrom(step.action as ActionType, dest);
+        if (expectedFrom === null || expectedFrom.x !== pos.x || expectedFrom.y !== pos.y) {
           const reason = i === 0
             ? 'plan starts from wrong position'
             : `step ${i} starts from wrong position`;
@@ -105,4 +107,19 @@ function isMoveStep(step: PlanStep): boolean {
     step.action === 'move_left' ||
     step.action === 'move_right'
   );
+}
+
+/**
+ * Given a move action and its destination, return the position the agent
+ * must be at BEFORE executing the action (R09 axis convention).
+ * Returns null for non-move actions (should not happen if called on a move step).
+ */
+function impliedFrom(action: ActionType, dest: Position): Position | null {
+  switch (action) {
+    case 'move_up':    return { x: dest.x, y: dest.y - 1 }; // R09: up = y+1 → from y-1
+    case 'move_down':  return { x: dest.x, y: dest.y + 1 }; // R09: down = y-1 → from y+1
+    case 'move_left':  return { x: dest.x + 1, y: dest.y }; // R09: left = x-1 → from x+1
+    case 'move_right': return { x: dest.x - 1, y: dest.y }; // R09: right = x+1 → from x-1
+    default:           return null;
+  }
 }
