@@ -400,7 +400,12 @@ export class BeliefStore implements IBeliefStore {
     return Array.from(this.parcels.values()).filter(p => {
       if (p.carriedBy !== null) return false;
       if (p.confidence <= 0) return false;
-      const path = findPath(selfPos, p.position, this.map, agentObstacles);
+      // Exclude the parcel's own tile from obstacles: an agent standing on a parcel
+      // tile should not make the parcel appear unreachable (they will move away).
+      const obstaclesForParcel = agentObstacles.filter(
+        o => !(o.x === p.position.x && o.y === p.position.y),
+      );
+      const path = findPath(selfPos, p.position, this.map, obstaclesForParcel);
       return path !== null;
     });
   }

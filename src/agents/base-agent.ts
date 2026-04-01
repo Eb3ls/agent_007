@@ -145,6 +145,7 @@ export abstract class BaseAgent implements IAgent {
 
     client.onParcelsSensing(parcels => {
       if (!this.beliefs) return;
+      console.log("Parcel sensing update:", parcels);
       this.beliefs.updateParcels(parcels);
       if (this.running) this._scheduleDeliberation();
     });
