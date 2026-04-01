@@ -22,7 +22,7 @@ const SAFETY_MARGIN_MS = 100;
  * After MAX_MOVE_RETRIES failed attempts, further retrying only accumulates
  * penalties (R07, R22). Signal replan instead.
  */
-const MAX_MOVE_RETRIES = 1; // 1 retry → 2 total attempts before replan
+const MAX_MOVE_RETRIES = 3; // 3 retries → 4 total attempts before step failure
 
 export class ActionExecutor implements IActionExecutor {
   private client: GameClient;
@@ -189,14 +189,7 @@ export class ActionExecutor implements IActionExecutor {
             if (this.cancelled || this.currentPlan === null) return false;
             return this.executeStep(step, attempt + 1);
           }
-          // Exhausted retries — collision or persistent block, signal replan (R07, R22)
-          this.replanEmitted = true;
-          const signal: ReplanSignal = {
-            reason: attempt >= MAX_MOVE_RETRIES ? 'consecutive_failures' : 'collision',
-            failedStep: step,
-            failureCount: attempt + 1,
-          };
-          for (const cb of this.replanRequiredCbs) cb(signal);
+          // Exhausted retries — let runLoop emit onStepFailed for replanning
           return false;
         }
         return true;
