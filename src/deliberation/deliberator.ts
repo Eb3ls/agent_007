@@ -33,7 +33,10 @@ export class Deliberator {
    * Returns intentions sorted by utility descending.
    */
   evaluate(beliefs: IBeliefStore, movementDurationMs = 500, tracker?: ParcelTracker): Intention[] {
-    const reachable = beliefs.getReachableParcels();
+    const allReachable = beliefs.getReachableParcels();
+    // R15: filter out parcels with reward <= 0 before generating intentions.
+    // Expired parcels remain in the belief set as obstacles/noise but must not be pursued.
+    const reachable = allReachable.filter(p => p.reward > 0);
     if (reachable.length === 0) {
       // No parcels visible — explore toward nearest unvisited spawning tile.
       const selfPos = beliefs.getSelf().position;
