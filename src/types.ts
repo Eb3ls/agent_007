@@ -252,6 +252,14 @@ export interface InFlightAction {
   readonly expectedDurationMs: number;
 }
 
+export type ReplanReason = 'collision' | 'consecutive_failures' | 'plan_invalid';
+
+export interface ReplanSignal {
+  readonly reason: ReplanReason;
+  readonly failedStep: PlanStep;
+  readonly failureCount: number;
+}
+
 export interface IActionExecutor {
   executePlan(plan: Plan): void;
   cancelCurrentPlan(): void;
@@ -262,6 +270,7 @@ export interface IActionExecutor {
   onStepComplete(cb: (step: PlanStep, index: number) => void): void;
   onPlanComplete(cb: (plan: Plan) => void): void;
   onStepFailed(cb: (step: PlanStep, index: number, reason: string) => void): void;
+  onReplanRequired(cb: (signal: ReplanSignal) => void): void;
   onPutdown(cb: (count: number) => void): void;
 }
 
