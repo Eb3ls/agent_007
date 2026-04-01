@@ -148,7 +148,7 @@ export class BeliefStore implements IBeliefStore {
       if (belief.carriedBy !== null) continue; // carried parcels don't appear in sensing
 
       const dist = manhattanDistance(selfPos, belief.position);
-      if (dist < effectiveRange) { // R10: sensing uses strict < (not <=)
+      if (dist <= effectiveRange) {
         this.parcels.delete(id);
       } else {
         // Mark stale parcels with decaying confidence
