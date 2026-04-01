@@ -185,13 +185,13 @@ describe('Deliberator.shouldReplan — edge cases', () => {
   it('does NOT replan when new utility exactly equals threshold * currentUtility', () => {
     // Self at (4,4). Parcel 'cur' at (5,4): stepsToParcel=1, nearestDelivery=(9,0) at dist=8.
     // intention utility = 20 / (1+8) = 20/9.
-    // REPLAN_UTILITY_THRESHOLD * 20/9 = 1.5 * 20/9 = 10/3.
+    // REPLAN_UTILITY_THRESHOLD * 20/9 = 2.0 * 20/9 = 40/9.
     const current = makeParcel({ id: 'cur', position: { x: 5, y: 4 }, estimatedReward: 20 });
     const intention = createSingleIntention(current, 1, 8); // utility = 20/9
 
     // Place 'eq' at (0,9): dist from (5,4)=10 > CLUSTER_RADIUS → no cluster.
     // stepsToParcel from (4,4) = 4+5=9; nearestDelivery(0,9)=(0,0) at dist=9 → total=18.
-    // utility = 60/18 = 10/3 — exactly equal to threshold*current → NOT strictly greater.
+    // utility = 60/18 = 10/3 ≈ 3.33 — below threshold*current (40/9 ≈ 4.44) → NOT strictly greater.
     const equalThreshold = makeParcel({ id: 'eq', position: { x: 0, y: 9 }, estimatedReward: 60 });
 
     const result = deliberator.shouldReplan(
@@ -236,6 +236,6 @@ describe('Deliberator.shouldReplan — edge cases', () => {
 
   it('exported REPLAN_UTILITY_THRESHOLD is strictly greater-than (not >=)', () => {
     // Confirm constant value
-    assert.equal(REPLAN_UTILITY_THRESHOLD, 1.5);
+    assert.equal(REPLAN_UTILITY_THRESHOLD, 2.0);
   });
 });

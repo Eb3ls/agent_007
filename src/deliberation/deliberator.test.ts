@@ -273,11 +273,13 @@ describe('Deliberator.shouldReplan', () => {
   });
 
   it('returns false when a slightly better parcel appears (below threshold)', () => {
-    // Current utility = 20/5 = 4
+    // Self at (4,4). 'cur' at (5,4): stepsToParcel=1, nearestDelivery=(9,0) dist=8 → utility=20/9≈2.22
     const current = makeParcel({ id: 'cur', position: { x: 5, y: 4 }, estimatedReward: 20 });
-    const intention = createSingleIntention(current, 1, 4);
-    // New parcel utility = 22/5 = 4.4 — less than 1.5x (6.0), should NOT trigger replan
-    const slightly = makeParcel({ id: 'sl', position: { x: 5, y: 4 }, estimatedReward: 22 });
+    const intention = createSingleIntention(current, 1, 8);
+    // 'sl' at (5,9) — dist from cur is 5 > CLUSTER_RADIUS=3, no cluster forms.
+    // stepsToParcel from (4,4)=6; nearestDelivery(5,9)=(9,9) dist=4 → utility=22/10=2.2
+    // 2.2 < 2.0 * (20/9) ≈ 4.44 → should NOT trigger replan
+    const slightly = makeParcel({ id: 'sl', position: { x: 5, y: 9 }, estimatedReward: 22 });
     assert.equal(
       deliberator.shouldReplan(intention, mockStore([current, slightly])),
       false,
@@ -295,8 +297,8 @@ describe('Deliberator.shouldReplan', () => {
     );
   });
 
-  it('REPLAN_UTILITY_THRESHOLD is exported and is 1.5', () => {
-    assert.equal(REPLAN_UTILITY_THRESHOLD, 1.5);
+  it('REPLAN_UTILITY_THRESHOLD is exported and is 2.0', () => {
+    assert.equal(REPLAN_UTILITY_THRESHOLD, 2.0);
   });
 });
 

@@ -17,7 +17,7 @@ import {
  * A candidate must have at least this multiple of the current intention's
  * utility to justify abandoning the current plan and replanning.
  */
-export const REPLAN_UTILITY_THRESHOLD = 1.5;
+export const REPLAN_UTILITY_THRESHOLD = 2.0;
 
 export class Deliberator {
   /**
@@ -127,8 +127,13 @@ export class Deliberator {
     }
 
     // Check if a significantly better option exists
-    const best = this.evaluate(beliefs, movementDurationMs, tracker)[0];
-    if (best && best.utility > REPLAN_UTILITY_THRESHOLD * currentIntention.utility) {
+    const candidates = this.evaluate(beliefs, movementDurationMs, tracker);
+    const best = candidates[0];
+    const currentRefreshed = candidates.find(
+      c => c.targetParcels.join(',') === currentIntention.targetParcels.join(','),
+    );
+    const referenceUtility = currentRefreshed?.utility ?? currentIntention.utility;
+    if (best && best.utility > REPLAN_UTILITY_THRESHOLD * referenceUtility) {
       return true;
     }
 
