@@ -117,7 +117,7 @@ export class BeliefStore implements IBeliefStore {
 
       this.parcels.set(raw.id, {
         id: raw.id,
-        position: { x: raw.x, y: raw.y },
+        position: { x: Math.round(raw.x), y: Math.round(raw.y) }, // R06: round fractional coords
         carriedBy: raw.carriedBy,
         reward: raw.reward,
         estimatedReward: raw.reward,
@@ -148,7 +148,7 @@ export class BeliefStore implements IBeliefStore {
       if (belief.carriedBy !== null) continue; // carried parcels don't appear in sensing
 
       const dist = manhattanDistance(selfPos, belief.position);
-      if (dist <= effectiveRange) {
+      if (dist < effectiveRange) { // R10: sensing uses strict < (not <=)
         this.parcels.delete(id);
       } else {
         // Mark stale parcels with decaying confidence
