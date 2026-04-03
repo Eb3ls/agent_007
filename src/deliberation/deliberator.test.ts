@@ -409,11 +409,12 @@ describe('Deliberator.evaluate — decay-aware utility via ParcelTracker', () =>
     const pFarDecayRate = 100 / 3200; // reward/ms — will be 0 at delivery time
 
     const tracker = new ParcelTracker();
-    // Seed tracker with two observations to establish decay rate for p_far
+    // p_far: decays fast (100 → ~0 over 3200ms)
     tracker.observe('p_far', 100, now - 3200);
     tracker.observe('p_far', 0.1,  now);        // effectively zero by now
-    tracker.observe('p_near', 20, now - 100);
-    tracker.observe('p_near', 20, now);          // no decay
+    // p_near: slow decay — two observations establish confirmed rate of 1/1000 reward/ms
+    tracker.observe('p_near', 21, now - 1000);
+    tracker.observe('p_near', 20, now);          // slow decay → still valuable at delivery
 
     const pNear = makeParcel({ id: 'p_near', position: { x: 5, y: 4 }, reward: 20, estimatedReward: 20 });
     const pFar  = makeParcel({ id: 'p_far',  position: { x: 9, y: 9 }, reward: 100, estimatedReward: 100 });
@@ -422,8 +423,8 @@ describe('Deliberator.evaluate — decay-aware utility via ParcelTracker', () =>
     const store = mockStore([pNear, pFar]);
     const intentions = deliberator.evaluate(store, movementDurationMs, tracker);
 
-    assert.ok(intentions.length >= 2, 'should have at least 2 intentions');
-    // With decay projection, p_near should rank first
+    // p_far projects to ~0 utility at delivery — filtered out; only p_near remains
+    assert.ok(intentions.length >= 1, 'should have at least 1 intention');
     assert.equal(
       intentions[0]!.targetParcels[0],
       'p_near',

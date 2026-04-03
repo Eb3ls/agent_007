@@ -103,8 +103,17 @@ export class Deliberator {
       );
     }
 
-    intentions.sort((a, b) => b.utility - a.utility);
-    return intentions;
+    // Drop intentions whose projected reward is already 0 at delivery time — not worth pursuing.
+    // If all are zero, fall back to explore so the agent seeks fresh parcels instead of
+    // wasting steps on parcels that will have fully decayed before delivery.
+    const positive = intentions.filter(i => i.utility > 0);
+    if (positive.length === 0) {
+      const target = beliefs.getExploreTarget(selfPos);
+      if (!target) return [];
+      return [createExploreIntention(target)];
+    }
+    positive.sort((a, b) => b.utility - a.utility);
+    return positive;
   }
 
   /**
