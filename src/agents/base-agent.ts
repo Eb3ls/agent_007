@@ -129,7 +129,7 @@ export abstract class BaseAgent implements IAgent {
       if (this.beliefs) return; // already initialized — skip on reconnect
       const map = new BeliefMapImpl([...tiles], width, height);
       this.beliefs = new BeliefStore(map);
-      this.beliefs.setCapacity(client.getServerCapacity());
+      this.beliefs.setCapacity(client.getServerCapacity() + 10);
       this.beliefs.setObservationDistance(
         client.getParcelsObservationDistance(),
       );
@@ -468,6 +468,21 @@ export abstract class BaseAgent implements IAgent {
         best.targetParcels.join(",");
       if (sameTarget && !this.executor.isIdle()) return;
 
+      // When carrying parcels, compare delivering now vs best pickup.
+      // Delivery utility is normalized (reward/steps) to be comparable with pickup utility.
+      if (self.carriedParcels.length > 0) {
+        const deliveryTarget = this.beliefs.getNearestDeliveryZone(self.position);
+        if (deliveryTarget) {
+          const delivSteps = manhattanDistance(self.position, deliveryTarget);
+          const totalCarried = self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0);
+          const deliveryUtility = delivSteps > 0 ? totalCarried / delivSteps : totalCarried;
+          if (deliveryUtility > best.utility) {
+            await this._planDelivery();
+            return;
+          }
+        }
+      }
+
       // Iterate candidates: skip any yielded to an ally, use the first we can claim
       for (const candidate of candidates) {
         if (candidate.type === "explore") continue;
@@ -630,13 +645,15 @@ export abstract class BaseAgent implements IAgent {
     }
     steps.push({ action: "putdown", expectedPosition: delivery });
 
+    const totalCarriedReward = self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0);
+    const stepsToDelivery = manhattanDistance(selfPos, delivery);
     const deliveryIntentionId = randomUUID();
     this.currentIntention = {
       id: deliveryIntentionId,
       type: "go_to_delivery",
       targetParcels: self.carriedParcels.map((p) => p.id),
       targetPosition: delivery,
-      utility: self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
+      utility: stepsToDelivery > 0 ? totalCarriedReward / stepsToDelivery : totalCarriedReward,
       createdAt: Date.now(),
     };
 
