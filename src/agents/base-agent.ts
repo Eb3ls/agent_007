@@ -34,6 +34,17 @@ import { StagnationMonitor } from '../deliberation/stagnation-monitor.js';
 
 export { buildPlannerChain };
 
+/**
+ * Parse a server interval string ("1s", "500ms", "1000") to milliseconds.
+ * Used to convert PARCEL_DECADING_INTERVAL to a decay rate.
+ */
+function parseIntervalMs(s: string): number {
+  const t = s.trim();
+  if (t.endsWith('ms')) return parseInt(t, 10);
+  if (t.endsWith('s')) return parseFloat(t) * 1000;
+  return parseInt(t, 10);
+}
+
 /** Interval between periodic deliberation checks (milliseconds). */
 const DELIBERATION_INTERVAL_MS = 2_000;
 
@@ -120,6 +131,15 @@ export abstract class BaseAgent implements IAgent {
       this.beliefs.setObservationDistance(
         client.getParcelsObservationDistance(),
       );
+      // Initialize base decay rate from server config so estimateRewardAt is
+      // accurate from frame 1 instead of waiting for 2 empirical observations.
+      const decayInterval = client.getServerConfig()?.PARCEL_DECADING_INTERVAL;
+      if (decayInterval) {
+        const intervalMs = parseIntervalMs(decayInterval);
+        if (intervalMs > 0) {
+          this.beliefs.getParcelTracker().setBaseDecayRate(1 / intervalMs);
+        }
+      }
       this.executor = new ActionExecutor(client);
       // Build planner chain now that beliefs are available (LlmAgent needs BeliefStore reference)
       this.planner = this.buildPlannerChain();
@@ -233,7 +253,8 @@ export abstract class BaseAgent implements IAgent {
 
     this.executor.onStepFailed((step, idx, reason) => {
       const selfPos = this.beliefs?.getSelf().position;
-      const detail = `step[${idx}] ${step.action} to (${step.expectedPosition.x},${step.expectedPosition.y}) from (${selfPos?.x},${selfPos?.y})`;
+      // "agent at" = current belief position (updated by onYou events, may lag actual position by ~50ms)
+      const detail = `step[${idx}] ${step.action} to (${step.expectedPosition.x},${step.expectedPosition.y}) — agent at (${selfPos?.x},${selfPos?.y})`;
       this.log.warn({
         kind: "plan_failed",
         plannerName: this.planner.name,
@@ -425,6 +446,21 @@ export abstract class BaseAgent implements IAgent {
         best.targetParcels.join(",");
       if (sameTarget && !this.executor.isIdle()) return;
 
+      // When carrying parcels, compare delivery-now utility against best pickup.
+      // Avoids detours to low-value parcels when delivering immediately is better.
+      if (self.carriedParcels.length > 0) {
+        const deliveryTarget = this.beliefs.getNearestDeliveryZone(self.position);
+        if (deliveryTarget) {
+          const delivSteps = manhattanDistance(self.position, deliveryTarget);
+          const totalCarried = self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0);
+          const deliveryUtility = delivSteps > 0 ? totalCarried / delivSteps : totalCarried;
+          if (deliveryUtility > best.utility) {
+            await this._planDelivery();
+            return;
+          }
+        }
+      }
+
       // Iterate candidates: skip any yielded to an ally, use the first we can claim
       for (const candidate of candidates) {
         if (candidate.type === "explore") continue;
@@ -588,12 +624,15 @@ export abstract class BaseAgent implements IAgent {
     steps.push({ action: "putdown", expectedPosition: delivery });
 
     const deliveryIntentionId = randomUUID();
+    const totalCarriedReward = self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0);
+    const stepsToDelivery = manhattanDistance(selfPos, delivery);
     this.currentIntention = {
       id: deliveryIntentionId,
       type: "go_to_delivery",
       targetParcels: self.carriedParcels.map((p) => p.id),
       targetPosition: delivery,
-      utility: self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
+      // Normalize by steps so this utility is comparable with pickup utilities (reward/steps)
+      utility: stepsToDelivery > 0 ? totalCarriedReward / stepsToDelivery : totalCarriedReward,
       createdAt: Date.now(),
     };
 

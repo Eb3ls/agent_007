@@ -502,4 +502,6 @@ export interface GameClient {
   getServerCapacity(): number;
   /** Server's PARCELS_OBSERVATION_DISTANCE; 0 if not available. */
   getParcelsObservationDistance(): number;
+  /** Full server config object; null if not yet received. */
+  getServerConfig(): { PARCEL_DECADING_INTERVAL?: string; [key: string]: unknown } | null;
 }

@@ -187,6 +187,10 @@ export class MockGameClient implements GameClient {
     return 0;
   }
 
+  getServerConfig(): { PARCEL_DECADING_INTERVAL?: string; [key: string]: unknown } | null {
+    return null;
+  }
+
   // --- Test helpers: Emit events on demand ---
 
   emitMap(tiles: ReadonlyArray<Tile>, width: number, height: number): void {

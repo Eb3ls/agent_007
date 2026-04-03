@@ -21,6 +21,7 @@ interface SpawnRecord {
 export class ParcelTracker {
   private records = new Map<string, ParcelRecord>();
   private spawns = new Map<string, SpawnRecord>();
+  private baseDecayRatePerMs = 0;
 
   /**
    * Feed a sensing observation for a parcel.
@@ -54,6 +55,11 @@ export class ParcelTracker {
     });
   }
 
+  /** Set a fallback decay rate used before empirical data is available. */
+  setBaseDecayRate(ratePerMs: number): void {
+    this.baseDecayRatePerMs = ratePerMs;
+  }
+
   /** Per-parcel decay rate in reward-units/ms. Returns 0 if unknown. */
   getDecayRate(parcelId: string): number {
     return this.records.get(parcelId)?.decayRatePerMs ?? 0;
@@ -67,7 +73,7 @@ export class ParcelTracker {
         rates.push(record.decayRatePerMs);
       }
     }
-    if (rates.length === 0) return 0;
+    if (rates.length === 0) return this.baseDecayRatePerMs;
     return rates.reduce((sum, r) => sum + r, 0) / rates.length;
   }
 
