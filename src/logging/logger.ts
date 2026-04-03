@@ -1,15 +1,19 @@
-import pino from 'pino';
+import { stdout, stderr } from 'process';
 import type { LogEvent, LogLevel } from '../types.js';
 import type { RingBufferEntry } from './log-types.js';
 import { LogRingBuffer } from './log-ring-buffer.js';
 
 const ringBuffer = new LogRingBuffer(500);
 
-const baseLogger = pino({
-  level: 'debug',
-  base: undefined,
-  timestamp: pino.stdTimeFunctions.isoTime,
-});
+const LEVEL_RANK: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
+
+const isTTY = stdout.isTTY ?? false;
+const C = {
+  reset:  isTTY ? '\x1b[0m'  : '',
+  dim:    isTTY ? '\x1b[2m'  : '',
+  yellow: isTTY ? '\x1b[33m' : '',
+  red:    isTTY ? '\x1b[31m' : '',
+};
 
 export interface Logger {
   info(event: LogEvent): void;
@@ -18,25 +22,82 @@ export interface Logger {
   debug(event: LogEvent): void;
 }
 
-export function createLogger(module: string, level?: LogLevel): Logger {
-  const child = baseLogger.child({ module });
-  if (level) child.level = level;
+export function createLogger(module: string, minLevel: LogLevel = 'debug'): Logger {
+  const minRank = LEVEL_RANK[minLevel];
 
-  const log = (pinoMethod: pino.LogFn, event: LogEvent, err?: Error): void => {
+  function emit(level: LogLevel, event: LogEvent, err?: Error): void {
     ringBuffer.push({ ...event, module, ts: Date.now() });
-    if (err) {
-      pinoMethod.call(child, { event: event.kind, ...event, err }, event.kind);
-    } else {
-      pinoMethod.call(child, { event: event.kind, ...event }, event.kind);
-    }
-  };
+    if (LEVEL_RANK[level] < minRank) return;
+    writeLine(level, event, err);
+  }
 
   return {
-    info:  (event) => log(child.info, event),
-    warn:  (event) => log(child.warn, event),
-    error: (event, err?) => log(child.error, event, err),
-    debug: (event) => log(child.debug, event),
+    info:  (event)       => emit('info',  event),
+    warn:  (event)       => emit('warn',  event),
+    error: (event, err?) => emit('error', event, err),
+    debug: (event)       => emit('debug', event),
   };
+}
+
+// --- Output ---
+
+function writeLine(level: LogLevel, event: LogEvent, err?: Error): void {
+  const time = new Date().toTimeString().slice(0, 8);
+  const lvl  = level.toUpperCase().padEnd(5);
+  const kind = event.kind.padEnd(22);
+  const body = formatExtras(event);
+  const errSuffix = err ? ` — ${err.message}` : '';
+
+  const color = level === 'warn' ? C.yellow : level === 'error' ? C.red : '';
+  const line  = `${C.dim}${time}${C.reset} ${color}${lvl}${C.reset} ${kind} ${body}${errSuffix}\n`;
+
+  (level === 'error' ? stderr : stdout).write(line);
+}
+
+function formatExtras(event: LogEvent): string {
+  switch (event.kind) {
+    case 'plan_failed':
+      return `${event.plannerName} — ${event.error}`;
+    case 'plan_generated':
+      return `${event.plannerName} steps=${event.steps} ${event.timeMs}ms`;
+    case 'replan_triggered':
+      return `reason=${event.reason}`;
+    case 'intention_set':
+      return `${event.type} utility=${event.utility.toFixed(2)}`;
+    case 'intention_dropped':
+      return `reason=${event.reason}`;
+    case 'score_update':
+      return `score=${event.score}`;
+    case 'stagnation_detected':
+      return `idle=${event.secondsSinceLastScore}s`;
+    case 'parcel_sensed':
+      return `id=${event.parcelId.slice(0, 6)} pos=(${event.position.x},${event.position.y}) reward=${event.reward}`;
+    case 'parcel_picked_up':
+      return `id=${event.parcelId.slice(0, 6)}`;
+    case 'parcel_delivered':
+      return `id=${event.parcelId.slice(0, 6)} reward=${event.reward}`;
+    case 'parcel_expired':
+      return `id=${event.parcelId.slice(0, 6)}`;
+    case 'action_sent':
+      return `${event.action} (${event.position.x},${event.position.y})`;
+    case 'action_result':
+      return `${event.action} ${event.success ? 'ok' : 'FAIL'} ${event.durationMs}ms`;
+    case 'belief_update':
+      return `change=${event.changeType}`;
+    case 'message_sent':
+      return `${event.msgType} → ${event.to}`;
+    case 'message_received':
+      return `${event.msgType} ← ${event.from}`;
+    case 'llm_call':
+      return `${event.latencyMs}ms tokens=${event.tokensUsed}`;
+    case 'llm_fallback':
+      return `reason=${event.reason}`;
+    case 'penalty':
+      return `cause=${event.cause}`;
+    case 'connection_lost':
+    case 'connection_restored':
+      return '';
+  }
 }
 
 // --- LLM Context ---
