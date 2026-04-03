@@ -239,3 +239,35 @@ describe('Deliberator.shouldReplan — edge cases', () => {
     assert.equal(REPLAN_UTILITY_THRESHOLD, 2.0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// shouldReplan — precomputedCandidates evita doppio evaluate()
+// ---------------------------------------------------------------------------
+
+describe('Deliberator — shouldReplan con precomputedCandidates', () => {
+  it('con precomputedCandidates dà stesso risultato di senza', () => {
+    const deliberator = new Deliberator();
+    const p = makeParcel({ id: 'p1', position: { x: 5, y: 4 }, reward: 20 });
+    const store = mockStore([p]);
+    const intention = createSingleIntention(p, 1, 9, 20);
+
+    const withoutPre = deliberator.shouldReplan(intention, store, false, 500);
+    const candidates = deliberator.evaluate(store, 500);
+    const withPre = deliberator.shouldReplan(intention, store, false, 500, undefined, candidates);
+
+    assert.strictEqual(withPre, withoutPre,
+      'shouldReplan con precomputedCandidates deve dare stesso risultato');
+  });
+
+  it('con precomputedCandidates vuoti: nessun candidato migliore → no replan', () => {
+    const deliberator = new Deliberator();
+    const p = makeParcel({ id: 'p1', position: { x: 5, y: 4 }, reward: 20 });
+    const store = mockStore([p]);
+    const intention = createSingleIntention(p, 1, 9, 20);
+
+    // Array vuoto = nessun candidato migliore → no replan
+    const result = deliberator.shouldReplan(intention, store, false, 500, undefined, []);
+    assert.strictEqual(result, false,
+      'nessun candidato migliore → shouldReplan deve ritornare false');
+  });
+});

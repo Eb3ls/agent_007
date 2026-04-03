@@ -111,6 +111,7 @@ export class Deliberator {
     planFailed = false,
     movementDurationMs = 500,
     tracker?: ParcelTracker,
+    precomputedCandidates?: Intention[],
   ): boolean {
     if (currentIntention === null) return false;
     if (planFailed) return true;
@@ -127,7 +128,7 @@ export class Deliberator {
     }
 
     // Check if a significantly better option exists
-    const candidates = this.evaluate(beliefs, movementDurationMs, tracker);
+    const candidates = precomputedCandidates ?? this.evaluate(beliefs, movementDurationMs, tracker);
     const best = candidates[0];
     const currentRefreshed = candidates.find(
       c => c.targetParcels.join(',') === currentIntention.targetParcels.join(','),
