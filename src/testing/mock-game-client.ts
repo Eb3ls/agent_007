@@ -183,8 +183,8 @@ export class MockGameClient implements GameClient {
     return this.actionConfig.serverCapacity;
   }
 
-  getParcelsObservationDistance(): number {
-    return 0;
+  getObservationDistance(): number {
+    return 5;
   }
 
   getServerConfig(): { PARCEL_DECADING_INTERVAL?: string; [key: string]: unknown } | null {

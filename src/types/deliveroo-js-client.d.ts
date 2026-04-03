@@ -76,17 +76,17 @@ declare module '@unitn-asa/deliveroo-js-client' {
         /** Listen for map data updates */
         onMap(callback: (width: number, height: number, tiles: Tile[]) => void): void;
         /** Listen for updates on an individual tile on the map */
-        onTile(callback: (tile: Tile, info: Info) => void): void;
+        onTile(callback: (tile: Tile) => void): void;
         /** Listen for when another agent connects or disconnects */
         onAgentConnected(callback: (status: 'connected' | 'disconnected', agent: Omit<Agent, 'x' | 'y' | 'penalty'>) => void): void;
         /** Listen continuously for updates to the agent's own state (score, position, etc.) */
-        onYou(callback: (agent: Agent, info: Info) => void): void;
+        onYou(callback: (agent: Agent) => void): void;
         /** Listen once for an update to the agent's own state */
-        onceYou(callback: (agent: Agent, info: Info) => void): void;
-        /** Listen for the agent sensing other agents nearby */
-        onAgentsSensing(callback: (agents: Agent[]) => void): void;
-        /** Listen for the agent sensing parcels nearby */
-        onParcelsSensing(callback: (parcels: Parcel[]) => void): void;
+        onceYou(callback: (agent: Agent) => void): void;
+        /** Listen for unified sensing event (agents + parcels + crates + positions). Replaces onAgentsSensing / onParcelsSensing / onCratesSensing. */
+        onSensing(callback: (data: { positions: Array<{x:number;y:number}>; agents: Agent[]; parcels: Parcel[]; crates: Array<{id:string;x:number;y:number}> }) => void): void;
+        /** Clock/timing info emitted every frame (formerly bundled with 'you'/'tile'). */
+        onInfo(callback: (info: Info) => void): void;
         /** Listen for incoming messages from other agents */
         onMsg(callback: (id: string, name: string, msg: any, replyAcknowledgmentCallback: (reply: any) => void) => void): void;
         /** Listen for log events broadcasted by either the server or other clients */
@@ -113,7 +113,7 @@ declare module '@unitn-asa/deliveroo-js-client' {
          * @param directionOrXy Can be a direction string ('up', 'right', 'left', 'down') or a coordinate object {x,y}
          * @returns Promise resolving to the new {x,y} coordinates on success, or false if the move failed (e.g., hit a wall)
          */
-        emitMove(directionOrXy: 'up' | 'right' | 'left' | 'down' | { x: number; y: number }): Promise<{ x: number; y: number } | false>;
+        emitMove(direction: 'up' | 'right' | 'left' | 'down'): Promise<{ x: number; y: number } | false>;
         /**
          * Pick up all parcels located on the agent's current tile.
          * @returns Promise resolving to an array of picked up parcel objects

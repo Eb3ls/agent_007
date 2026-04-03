@@ -78,8 +78,8 @@ declare module '@unitn-asa/deliveroo-js-client' {
         PENALTY?: number;
         MOVEMENT_STEPS?: number;
         MOVEMENT_DURATION?: number;
-        AGENTS_OBSERVATION_DISTANCE?: number;
-        PARCELS_OBSERVATION_DISTANCE?: number;
+        /** Unified observation distance for all entities (agents, parcels, crates). Default: 5. */
+        OBSERVATION_DISTANCE?: number;
         CLOCK?: number;
         [key: string]: unknown;
     }
@@ -102,7 +102,7 @@ declare module '@unitn-asa/deliveroo-js-client' {
         onDisconnect(callback: () => void): void;
         onConfig(callback: (config: GameConfig) => void): void;
         onMap(callback: (width: number, height: number, tiles: Tile[]) => void): void;
-        onTile(callback: (tile: Tile, info: Info) => void): void;
+        onTile(callback: (tile: Tile) => void): void;
         onAgentConnected(callback: (status: 'connected' | 'disconnected', agent: Omit<Agent, 'x' | 'y' | 'penalty'>) => void): void;
         onYou(callback: (agent: Agent, info: Info) => void): void;
         onceYou(callback: (agent: Agent, info: Info) => void): void;
@@ -115,7 +115,7 @@ declare module '@unitn-asa/deliveroo-js-client' {
         emitSay(toId: string, msg: any): Promise<'successful'>;
         emitAsk(toId: string, msg: any): Promise<any>;
         emitShout(msg: any): Promise<any>;
-        emitMove(directionOrXy: 'up' | 'right' | 'left' | 'down' | { x: number; y: number }): Promise<{ x: number; y: number } | false>;
+        emitMove(direction: 'up' | 'right' | 'left' | 'down'): Promise<{ x: number; y: number } | false>;
         emitPickup(): Promise<{ id: string }[]>;
         emitPutdown(selected?: string[] | null): Promise<{ id: string }[]>;
         emitLog(...message: any[]): void;

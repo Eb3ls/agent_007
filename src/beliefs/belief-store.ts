@@ -39,7 +39,7 @@ export class BeliefStore implements IBeliefStore {
   /** Set of "x,y" keys for spawning tiles the agent has stood on. */
   private visitedSpawningTiles = new Set<string>();
   private parcelTracker = new ParcelTracker();
-  /** Server's PARCELS_OBSERVATION_DISTANCE (0 = unknown, use heuristic). */
+  /** Server's unified observation_distance (0 = unknown, use heuristic). */
   private observationDistance = 0;
 
   // Track previous agent positions for heading estimation
@@ -128,7 +128,7 @@ export class BeliefStore implements IBeliefStore {
     }
 
     // Belief revision: remove parcels that should be visible but aren't sensed.
-    // Use PARCELS_OBSERVATION_DISTANCE when known; otherwise fall back to a
+    // Use observation_distance when known; otherwise fall back to a
     // heuristic based on the farthest sensed parcel distance.
     const selfPos = this.self.position;
     let effectiveRange: number;

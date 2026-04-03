@@ -95,7 +95,7 @@ export class GameClient {
     });
 
     // Self updates
-    this.api.onYou((agent, _info) => {
+    this.api.onYou((agent) => {
       const self: RawSelfSensing = {
         id: agent.id,
         name: agent.name,
@@ -373,8 +373,10 @@ export class GameClient {
     return typeof cap === 'number' && cap > 0 ? cap : Infinity;
   }
 
-  getParcelsObservationDistance(): number {
-    const dist = this.serverConfig?.PARCELS_OBSERVATION_DISTANCE;
-    return typeof dist === 'number' && dist > 0 ? dist : 0;
+  getObservationDistance(): number {
+    // Unified observation_distance under GAME.player (commit a878c26).
+    const game = this.serverConfig?.['GAME'] as { player?: { observation_distance?: unknown } } | null | undefined;
+    const dist = game?.player?.observation_distance;
+    return typeof dist === 'number' && dist > 0 ? dist : 5; // default matches server default
   }
 }

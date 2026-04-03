@@ -500,8 +500,8 @@ export interface GameClient {
   getMeasuredActionDurationMs(): number;
   /** Maximum parcels the agent can carry simultaneously, from server config. Infinity if unconstrained. */
   getServerCapacity(): number;
-  /** Server's PARCELS_OBSERVATION_DISTANCE; 0 if not available. */
-  getParcelsObservationDistance(): number;
+  /** Server's unified observation_distance (for all entities); 5 if not yet received. */
+  getObservationDistance(): number;
   /** Full server config object; null if not yet received. */
   getServerConfig(): { PARCEL_DECADING_INTERVAL?: string; [key: string]: unknown } | null;
 }
