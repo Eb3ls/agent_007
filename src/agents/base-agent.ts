@@ -253,8 +253,7 @@ export abstract class BaseAgent implements IAgent {
 
     this.executor.onStepFailed((step, idx, reason) => {
       const selfPos = this.beliefs?.getSelf().position;
-      // "agent at" = current belief position (updated by onYou events, may lag actual position by ~50ms)
-      const detail = `step[${idx}] ${step.action} to (${step.expectedPosition.x},${step.expectedPosition.y}) — agent at (${selfPos?.x},${selfPos?.y})`;
+      const detail = `step[${idx}] ${step.action} to (${step.expectedPosition.x},${step.expectedPosition.y}) from (${selfPos?.x},${selfPos?.y})`;
       this.log.warn({
         kind: "plan_failed",
         plannerName: this.planner.name,
@@ -446,21 +445,6 @@ export abstract class BaseAgent implements IAgent {
         best.targetParcels.join(",");
       if (sameTarget && !this.executor.isIdle()) return;
 
-      // When carrying parcels, compare delivery-now utility against best pickup.
-      // Avoids detours to low-value parcels when delivering immediately is better.
-      if (self.carriedParcels.length > 0) {
-        const deliveryTarget = this.beliefs.getNearestDeliveryZone(self.position);
-        if (deliveryTarget) {
-          const delivSteps = manhattanDistance(self.position, deliveryTarget);
-          const totalCarried = self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0);
-          const deliveryUtility = delivSteps > 0 ? totalCarried / delivSteps : totalCarried;
-          if (deliveryUtility > best.utility) {
-            await this._planDelivery();
-            return;
-          }
-        }
-      }
-
       // Iterate candidates: skip any yielded to an ally, use the first we can claim
       for (const candidate of candidates) {
         if (candidate.type === "explore") continue;
@@ -624,15 +608,12 @@ export abstract class BaseAgent implements IAgent {
     steps.push({ action: "putdown", expectedPosition: delivery });
 
     const deliveryIntentionId = randomUUID();
-    const totalCarriedReward = self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0);
-    const stepsToDelivery = manhattanDistance(selfPos, delivery);
     this.currentIntention = {
       id: deliveryIntentionId,
       type: "go_to_delivery",
       targetParcels: self.carriedParcels.map((p) => p.id),
       targetPosition: delivery,
-      // Normalize by steps so this utility is comparable with pickup utilities (reward/steps)
-      utility: stepsToDelivery > 0 ? totalCarriedReward / stepsToDelivery : totalCarriedReward,
+      utility: self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
       createdAt: Date.now(),
     };
 
