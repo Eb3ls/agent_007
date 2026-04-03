@@ -16,6 +16,15 @@ import type {
   InterAgentMessage,
 } from '../types.js';
 
+// --- Server sensing payload (unified event, server v2+) ---
+
+interface SensingPayload {
+  positions?: Array<{ x: number; y: number }>;
+  agents?: Array<{ id: string; name: string; x: number; y: number; score: number }>;
+  parcels?: Array<{ id: string; x: number; y: number; carriedBy?: string | null; reward: number }>;
+  crates?: unknown[];
+}
+
 // --- Callback types ---
 
 type MapCallback = (tiles: ReadonlyArray<Tile>, width: number, height: number) => void;
@@ -112,46 +121,33 @@ export class GameClient {
       }
     });
 
-    // Parcel sensing
-    // The server sends all sensed tiles; only tiles with a parcel have the `parcel` field.
-    this.api.onParcelsSensing((entries) => {
-      const parcels: RawParcelSensing[] = entries
-        .filter(e => e.parcel != null)
-        .map(e => {
-          const p = e.parcel!;
-          return {
-            id: p.id,
-            x: p.x,
-            y: p.y,
-            carriedBy: p.carriedBy ?? null,
-            reward: p.reward,
-          };
-        });
-      const event: BufferedEvent = { kind: 'parcels', parcels };
+    // Unified sensing event (server sends 'sensing' with {positions, agents, parcels, crates})
+    // The legacy 'parcels sensing' / 'agents sensing' events are no longer emitted by the server.
+    (this.api as unknown as { on(event: string, cb: (data: SensingPayload) => void): void }).on('sensing', (data) => {
+      const parcels: RawParcelSensing[] = (data.parcels ?? []).map(p => ({
+        id: p.id,
+        x: p.x,
+        y: p.y,
+        carriedBy: p.carriedBy ?? null,
+        reward: p.reward,
+      }));
+      const parcelsEvent: BufferedEvent = { kind: 'parcels', parcels };
       if (!this.eventBuffer.isDrained()) {
-        this.eventBuffer.push(event);
+        this.eventBuffer.push(parcelsEvent);
       } else {
         this.dispatchParcels(parcels);
       }
-    });
 
-    // Agent sensing
-    this.api.onAgentsSensing((entries) => {
-      const agents: RawAgentSensing[] = entries
-        .filter(e => e.agent != null)
-        .map(e => {
-          const a = e.agent!;
-          return {
-            id: a.id,
-            name: a.name,
-            x: a.x,
-            y: a.y,
-            score: a.score,
-          };
-        });
-      const event: BufferedEvent = { kind: 'agents', agents };
+      const agents: RawAgentSensing[] = (data.agents ?? []).map(a => ({
+        id: a.id,
+        name: a.name,
+        x: a.x,
+        y: a.y,
+        score: a.score,
+      }));
+      const agentsEvent: BufferedEvent = { kind: 'agents', agents };
       if (!this.eventBuffer.isDrained()) {
-        this.eventBuffer.push(event);
+        this.eventBuffer.push(agentsEvent);
       } else {
         this.dispatchAgents(agents);
       }
