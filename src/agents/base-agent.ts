@@ -80,6 +80,8 @@ export abstract class BaseAgent implements IAgent {
   private running = false;
   private planning = false;
   private deliberateTimer: ReturnType<typeof setInterval> | null = null;
+  private lastParcelFingerprint = '';
+  private lastRevaluatedPosition: Position = { x: -1, y: -1 };
   private sigintHandler: (() => void) | null = null;
   private sigtermHandler: (() => void) | null = null;
 
@@ -346,6 +348,14 @@ export abstract class BaseAgent implements IAgent {
     }
   }
 
+  private _computeParcelFingerprint(): string {
+    const parcels = this.beliefs!.getParcelBeliefs();
+    return parcels
+      .map(p => `${p.id}:${p.carriedBy ?? ''}`)
+      .sort()
+      .join('|');
+  }
+
   private async _deliberateAndPlan(planFailed = false): Promise<void> {
     if (this.planning) return;
     this.planning = true;
@@ -356,12 +366,33 @@ export abstract class BaseAgent implements IAgent {
       const movementDurationMs = this.client.getMeasuredActionDurationMs();
       const tracker = this.beliefs.getParcelTracker();
 
+      // Structural gate: skip full re-evaluation when parcel set and position are
+      // unchanged — utility ranking is stable with uniform decay (gap is constant).
+      // Bypassed when: planFailed, executor idle, or no active intention.
+      if (!planFailed && !this.executor.isIdle() && this.currentIntention !== null) {
+        const fingerprint = this._computeParcelFingerprint();
+        const currentPos = this.beliefs.getSelf().position;
+        const unchanged = fingerprint === this.lastParcelFingerprint
+          && positionEquals(currentPos, this.lastRevaluatedPosition);
+        this.lastParcelFingerprint = fingerprint;
+        this.lastRevaluatedPosition = currentPos;
+        if (unchanged) return;
+      }
+
+      // Compute candidates once — passed to shouldReplan to avoid a second evaluate().
+      const claimedByOthers =
+        this.allyTracker?.getClaimedByOthers() ?? new Set<string>();
+      const candidates = this.deliberator
+        .evaluate(this.beliefs, movementDurationMs, tracker)
+        .filter(i => !i.targetParcels.some(id => claimedByOthers.has(id)));
+
       const shouldReplan = this.deliberator.shouldReplan(
         this.currentIntention,
         this.beliefs,
         planFailed,
         movementDurationMs,
         tracker,
+        candidates,
       );
       const needsReplan = planFailed || shouldReplan || this.executor.isIdle();
 
@@ -399,15 +430,7 @@ export abstract class BaseAgent implements IAgent {
         }
       }
 
-      // Deliberate: select best intention, excluding parcels claimed by allies
-      const claimedByOthers =
-        this.allyTracker?.getClaimedByOthers() ?? new Set<string>();
-      const candidates = this.deliberator
-        .evaluate(this.beliefs, movementDurationMs, tracker)
-        .filter(
-          (intention) =>
-            !intention.targetParcels.some((id) => claimedByOthers.has(id)),
-        );
+      // candidates already computed above — no second evaluate() needed
 
       if (candidates.length === 0) {
         if (self.carriedParcels.length > 0) await this._planDelivery();
