@@ -4,7 +4,7 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import type { IBeliefStore, ParcelBelief, Position, SelfBelief } from '../types.js';
+import type { AgentBelief, IBeliefStore, ParcelBelief, Position, SelfBelief } from '../types.js';
 import { Deliberator, REPLAN_UTILITY_THRESHOLD } from './deliberator.js';
 import { createSingleIntention } from './intention.js';
 import { BeliefMapImpl } from '../beliefs/belief-map.js';
@@ -194,6 +194,88 @@ describe('Deliberator.evaluate', () => {
     assert.equal(intentions.length, 0, 'no intentions when at capacity');
   });
 
+  // -----------------------------------------------------------------------
+  // Contesa filter — enemy closer to parcel → parcel excluded
+  // -----------------------------------------------------------------------
+
+  function makeAgent(overrides: Partial<AgentBelief> & { id: string }): AgentBelief {
+    return {
+      position: { x: 0, y: 0 },
+      name: 'enemy',
+      score: 0,
+      lastSeen: Date.now(),
+      confidence: 1,
+      heading: null,
+      isAlly: false,
+      ...overrides,
+    };
+  }
+
+  it('excludes parcel when an enemy agent is closer to it', () => {
+    // Self at (4,4).
+    // p_contested at (8,4) — 4 steps from self. Enemy at (7,4) — 1 step from p_contested → enemy wins.
+    // p_safe at (5,4) — 1 step from self. No enemy close → kept.
+    const contested = makeParcel({ id: 'contested', position: { x: 8, y: 4 }, estimatedReward: 50 });
+    const safe = makeParcel({ id: 'safe', position: { x: 5, y: 4 }, estimatedReward: 10 });
+    const enemy = makeAgent({ id: 'enemy1', position: { x: 7, y: 4 } });
+    const store: IBeliefStore = { ...mockStore([contested, safe]), getAgentBeliefs: () => [enemy] };
+
+    const intentions = deliberator.evaluate(store);
+    const ids = intentions.flatMap(i => i.targetParcels);
+    assert.ok(!ids.includes('contested'), 'contested parcel should be filtered when enemy is closer');
+    assert.ok(ids.includes('safe'), 'safe parcel should be kept');
+  });
+
+  it('keeps parcel when self is closer than any enemy', () => {
+    // Self at (4,4). Parcel at (5,4) — 1 step from self.
+    // Enemy at (8,4) — 3 steps from parcel. Self wins → parcel kept.
+    const safe = makeParcel({ id: 'safe', position: { x: 5, y: 4 }, estimatedReward: 30 });
+    const enemy = makeAgent({ id: 'enemy1', position: { x: 8, y: 4 } });
+    const store: IBeliefStore = { ...mockStore([safe]), getAgentBeliefs: () => [enemy] };
+
+    const intentions = deliberator.evaluate(store);
+    const ids = intentions.flatMap(i => i.targetParcels);
+    assert.ok(ids.includes('safe'), 'safe parcel should be kept when self is closer');
+  });
+
+  it('keeps parcel when self and enemy are equidistant (tie favors self)', () => {
+    // Self at (4,4). Parcel at (6,4) — 2 steps.
+    // Enemy at (6,6) — 2 steps. Tie → parcel kept.
+    const tied = makeParcel({ id: 'tied', position: { x: 6, y: 4 }, estimatedReward: 20 });
+    const enemy = makeAgent({ id: 'enemy1', position: { x: 6, y: 6 } });
+    const store: IBeliefStore = { ...mockStore([tied]), getAgentBeliefs: () => [enemy] };
+
+    const intentions = deliberator.evaluate(store);
+    const ids = intentions.flatMap(i => i.targetParcels);
+    assert.ok(ids.includes('tied'), 'tied parcel should be kept (tie favors self)');
+  });
+
+  it('falls back to all reachable parcels when all are contested', () => {
+    // Self at (4,4). All parcels have an enemy closer.
+    const p1 = makeParcel({ id: 'p1', position: { x: 9, y: 4 }, estimatedReward: 20 });
+    const p2 = makeParcel({ id: 'p2', position: { x: 9, y: 9 }, estimatedReward: 20 });
+    const enemy = makeAgent({ id: 'enemy1', position: { x: 8, y: 4 } }); // closer to p1 and p2
+    const store: IBeliefStore = { ...mockStore([p1, p2]), getAgentBeliefs: () => [enemy] };
+
+    const intentions = deliberator.evaluate(store);
+    // Should not return empty — fallback to all reachable
+    assert.ok(intentions.length > 0, 'should not be empty when all parcels are contested');
+    const ids = intentions.flatMap(i => i.targetParcels);
+    assert.ok(ids.includes('p1') || ids.includes('p2'), 'fallback should include at least one parcel');
+  });
+
+  it('ignores ally agents in contesa filter', () => {
+    // Self at (4,4). Parcel at (8,4) — 4 steps. Ally at (7,4) — 1 step.
+    // Ally should NOT trigger the contesa filter.
+    const p = makeParcel({ id: 'p1', position: { x: 8, y: 4 }, estimatedReward: 40 });
+    const ally = makeAgent({ id: 'ally1', position: { x: 7, y: 4 }, isAlly: true });
+    const store: IBeliefStore = { ...mockStore([p]), getAgentBeliefs: () => [ally] };
+
+    const intentions = deliberator.evaluate(store);
+    const ids = intentions.flatMap(i => i.targetParcels);
+    assert.ok(ids.includes('p1'), 'parcel should not be filtered because of ally proximity');
+  });
+
   it('caps cluster size to remaining capacity', () => {
     // 4 parcels clustered together, capacity=3, carrying 1 → remaining=2 → cluster capped at 2
     const parcels = [
@@ -297,8 +379,8 @@ describe('Deliberator.shouldReplan', () => {
     );
   });
 
-  it('REPLAN_UTILITY_THRESHOLD is exported and is 2.0', () => {
-    assert.equal(REPLAN_UTILITY_THRESHOLD, 2.0);
+  it('REPLAN_UTILITY_THRESHOLD is exported and is 1.3', () => {
+    assert.equal(REPLAN_UTILITY_THRESHOLD, 1.3);
   });
 });
 

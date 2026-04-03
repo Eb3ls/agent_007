@@ -17,7 +17,7 @@ import {
  * A candidate must have at least this multiple of the current intention's
  * utility to justify abandoning the current plan and replanning.
  */
-export const REPLAN_UTILITY_THRESHOLD = 2.0;
+export const REPLAN_UTILITY_THRESHOLD = 1.3;
 
 export class Deliberator {
   /**
@@ -55,8 +55,18 @@ export class Deliberator {
     const intentions: Intention[] = [];
     const now = Date.now();
 
+    // --- Contesa filter: remove parcels where an enemy agent is strictly closer ---
+    // Uses Manhattan distance as a proxy for enemy path length (we don't know their obstacles).
+    // Falls back to all reachable parcels if every parcel is contested (avoid paralysis).
+    const enemies = beliefs.getAgentBeliefs().filter(a => !a.isAlly);
+    const uncontested = reachable.filter(parcel => {
+      const mySteps = manhattanDistance(selfPos, parcel.position);
+      return enemies.every(enemy => manhattanDistance(enemy.position, parcel.position) >= mySteps);
+    });
+    const candidates = uncontested.length > 0 ? uncontested : reachable;
+
     // --- Single-parcel intentions ---
-    for (const parcel of reachable) {
+    for (const parcel of candidates) {
       const stepsToParcel = manhattanDistance(selfPos, parcel.position);
       const delivery = beliefs.getNearestDeliveryZone(parcel.position);
       const stepsToDelivery = delivery ? manhattanDistance(parcel.position, delivery) : 0;
@@ -67,7 +77,7 @@ export class Deliberator {
     }
 
     // --- Multi-parcel cluster intentions ---
-    const clusters = groupNearbyClusters(reachable);
+    const clusters = groupNearbyClusters(candidates);
     for (const cluster of clusters) {
       // Cap cluster size to remaining carry capacity
       const capped = remaining < cluster.length ? cluster.slice(0, remaining) : cluster;

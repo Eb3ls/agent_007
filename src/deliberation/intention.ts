@@ -19,6 +19,49 @@ export function computeUtility(totalReward: number, totalSteps: number): number 
 }
 
 /**
+ * Portfolio-aware score for a pickup detour.
+ *
+ * Returns the total portfolio value (carried + new parcel) at delivery time,
+ * accounting for the decay all carried parcels suffer during the detour.
+ *
+ * @param projectedParcelReward  Projected reward of the new parcel at delivery.
+ * @param stepsTotal             Total steps: stepsToParcel + stepsToDelivery.
+ * @param carriedReward          Sum of current rewards of all carried parcels.
+ * @param numCarried             Number of carried parcels.
+ * @param decayPerStep           decayRate * movementDurationMs (reward lost per step per parcel).
+ */
+export function computePickupScore(
+  projectedParcelReward: number,
+  stepsTotal: number,
+  carriedReward: number,
+  numCarried: number,
+  decayPerStep: number,
+): number {
+  const carriedAtDelivery = Math.max(0, carriedReward - numCarried * decayPerStep * stepsTotal);
+  return carriedAtDelivery + projectedParcelReward;
+}
+
+/**
+ * Portfolio-aware score for delivering now (no further pickup).
+ *
+ * Returns the total carried reward at delivery time after accounting for
+ * the decay all parcels suffer on the way to the delivery zone.
+ *
+ * @param carriedReward    Sum of current rewards of all carried parcels.
+ * @param numCarried       Number of carried parcels.
+ * @param stepsToDelivery  Steps from current position to nearest delivery zone.
+ * @param decayPerStep     decayRate * movementDurationMs (reward lost per step per parcel).
+ */
+export function computeDeliveryScore(
+  carriedReward: number,
+  numCarried: number,
+  stepsToDelivery: number,
+  decayPerStep: number,
+): number {
+  return Math.max(0, carriedReward - numCarried * decayPerStep * stepsToDelivery);
+}
+
+/**
  * Create an intention to pick up a single parcel and deliver it.
  *
  * @param projectedReward  Expected reward at delivery time (after decay).

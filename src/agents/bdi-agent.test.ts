@@ -186,17 +186,19 @@ describe('BdiAgent — capacity enforcement', () => {
     await agent.stop();
   });
 
-  it('agent at capacity delivers without picking up another parcel', async () => {
-    // Emit: one parcel already carried, one free parcel nearby
+  it('agent prefers delivering over chasing a distant low-value parcel', async () => {
+    // Agent at (4,4) carries p-carried (50pt). Nearest delivery zone (0,0) is 8 steps away.
+    // p-far at (9,9) worth only 5pt — detour: 10 steps to pickup + 18 steps to delivery = 28 total.
+    // Portfolio comparison: 50/8 = 6.25 deliver-value vs (50+5)/28 ≈ 1.96 pickup-value → deliver wins.
     client.emitParcelsSensing([
       { id: 'p-carried', x: 4, y: 4, carriedBy: FIXTURE_SELF.id, reward: 50 },
-      { id: 'p-free',    x: 5, y: 4, carriedBy: null,            reward: 50 },
+      { id: 'p-far',     x: 9, y: 9, carriedBy: null,            reward: 5 },
     ]);
 
     // Wait for delivery (putdown)
     await waitFor(() => client.putdownCount.value > 0, 3000);
 
-    assert.equal(client.pickupCount.value, 0, 'agent must not pick up while at capacity');
+    assert.equal(client.pickupCount.value, 0, 'agent must not chase a distant low-value parcel while carrying');
     assert.ok(client.putdownCount.value > 0, 'agent must deliver the carried parcel');
   });
 });

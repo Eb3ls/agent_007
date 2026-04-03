@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import type { IBeliefStore, ParcelBelief, Position, SelfBelief } from '../types.js';
 import {
   computeUtility,
+  computePickupScore,
+  computeDeliveryScore,
   createSingleIntention,
   createClusterIntention,
   groupNearbyClusters,
@@ -46,6 +48,54 @@ function makeBeliefStore(): BeliefStore {
   store.updateSelf(FIXTURE_SELF); // agent at (4,4)
   return store;
 }
+
+// ---------------------------------------------------------------------------
+// computePickupScore
+// ---------------------------------------------------------------------------
+
+describe('computePickupScore', () => {
+  it('equals projected parcel reward when carrying nothing', () => {
+    // n=0: no portfolio → score = 0 + parcelReward = 50
+    assert.equal(computePickupScore(50, 10, 0, 0, 0.25), 50);
+  });
+
+  it('deducts portfolio decay over full detour', () => {
+    // n=3 parcels, carriedReward=240, decayPerStep=0.25, totalSteps=10
+    // carriedAtDelivery = max(0, 240 - 3*0.25*10) = 240 - 7.5 = 232.5
+    // score = 232.5 + 60 = 292.5
+    assert.equal(computePickupScore(60, 10, 240, 3, 0.25), 292.5);
+  });
+
+  it('clamps portfolio value at zero when decay exceeds carried reward', () => {
+    // n=5, carriedReward=10, decayPerStep=1, totalSteps=20 → decay=100 > 10 → clamped to 0
+    // score = 0 + 30 = 30
+    assert.equal(computePickupScore(30, 20, 10, 5, 1), 30);
+  });
+
+  it('equals projectedReward + carriedReward when decayPerStep is zero', () => {
+    assert.equal(computePickupScore(40, 10, 100, 3, 0), 140);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeDeliveryScore
+// ---------------------------------------------------------------------------
+
+describe('computeDeliveryScore', () => {
+  it('deducts portfolio decay for stepsToDelivery', () => {
+    // n=3, carriedReward=240, decayPerStep=0.25, steps=5
+    // score = max(0, 240 - 3*0.25*5) = 240 - 3.75 = 236.25
+    assert.equal(computeDeliveryScore(240, 3, 5, 0.25), 236.25);
+  });
+
+  it('clamps at zero', () => {
+    assert.equal(computeDeliveryScore(5, 3, 100, 1), 0);
+  });
+
+  it('equals carriedReward when decayPerStep is zero', () => {
+    assert.equal(computeDeliveryScore(100, 5, 20, 0), 100);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // computeUtility

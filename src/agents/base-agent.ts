@@ -21,6 +21,7 @@ import { BeliefStore } from '../beliefs/belief-store.js';
 import { BeliefMapImpl } from '../beliefs/belief-map.js';
 import { ActionExecutor } from '../execution/action-executor.js';
 import { Deliberator } from '../deliberation/deliberator.js';
+import { computeDeliveryScore, computePickupScore } from '../deliberation/intention.js';
 import { PlanValidator } from '../planning/plan-validator.js';
 import type { IPlanner } from '../types.js';
 import { buildPlannerChain } from '../planning/planner-factory.js';
@@ -131,7 +132,7 @@ export abstract class BaseAgent implements IAgent {
       this.beliefs = new BeliefStore(map);
       this.beliefs.setCapacity(client.getServerCapacity() + 10);
       this.beliefs.setObservationDistance(
-        client.getParcelsObservationDistance(),
+        client.getObservationDistance(),
       );
       // Initialize base decay rate from server config so estimateRewardAt is
       // accurate from frame 1 instead of waiting for 2 empirical observations.
@@ -468,15 +469,33 @@ export abstract class BaseAgent implements IAgent {
         best.targetParcels.join(",");
       if (sameTarget && !this.executor.isIdle()) return;
 
-      // When carrying parcels, compare delivering now vs best pickup.
-      // Delivery utility is normalized (reward/steps) to be comparable with pickup utility.
+      // When carrying parcels, compare delivering now vs best pickup using
+      // portfolio-aware scores: both scores normalized by steps for scale-neutral comparison.
       if (self.carriedParcels.length > 0) {
         const deliveryTarget = this.beliefs.getNearestDeliveryZone(self.position);
         if (deliveryTarget) {
           const delivSteps = manhattanDistance(self.position, deliveryTarget);
           const totalCarried = self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0);
-          const deliveryUtility = delivSteps > 0 ? totalCarried / delivSteps : totalCarried;
-          if (deliveryUtility > best.utility) {
+          const numCarried = self.carriedParcels.length;
+          const decayPerStep = this._getDecayPerStep();
+
+          const delivScore = computeDeliveryScore(totalCarried, numCarried, delivSteps, decayPerStep);
+
+          // Recover projected parcel reward from utility (utility = projectedReward / steps).
+          // stepsToParcel + stepsFromParcelToDelivery (using same delivery zone for consistency).
+          const bestParcel = this.beliefs.getParcelBeliefs().find(p => p.id === best.targetParcels[0]);
+          const stepsToParcel = bestParcel ? manhattanDistance(self.position, bestParcel.position) : 0;
+          const stepsParcelToDelivery = bestParcel ? manhattanDistance(bestParcel.position, deliveryTarget) : 0;
+          const bestTotalSteps = stepsToParcel + stepsParcelToDelivery;
+          const projectedParcelReward = best.utility * bestTotalSteps;
+
+          const pickScore = computePickupScore(projectedParcelReward, bestTotalSteps, totalCarried, numCarried, decayPerStep);
+
+          // Normalize by steps for step-aware comparison (handles zero-decay case correctly).
+          const delivValue = delivSteps > 0 ? delivScore / delivSteps : Infinity;
+          const pickValue = bestTotalSteps > 0 ? pickScore / bestTotalSteps : 0;
+
+          if (delivValue >= pickValue) {
             await this._planDelivery();
             return;
           }
@@ -676,6 +695,18 @@ export abstract class BaseAgent implements IAgent {
     });
     this.lastFailedTile = null;
     this.executor.executePlan(plan);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Decay helper
+  // ---------------------------------------------------------------------------
+
+  /** Returns decayRate (reward/ms) * movementDurationMs (ms/step) = reward lost per step per parcel. */
+  private _getDecayPerStep(): number {
+    const tracker = this.beliefs?.getParcelTracker();
+    const decayRatePerMs = tracker?.getGlobalAverageDecayRate() ?? 0;
+    const movDurationMs = this.client.getMeasuredActionDurationMs();
+    return decayRatePerMs * movDurationMs;
   }
 
   // ---------------------------------------------------------------------------
