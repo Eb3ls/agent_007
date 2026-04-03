@@ -187,6 +187,24 @@ export class BfsPlanner implements IPlanner {
       if (result) bestSteps = result.steps;
     }
 
+    // Fallback: retry without dynamic obstacles — agents move, so a plan ignoring
+    // their current position may still be executable by the time it reaches them.
+    if (!bestSteps && avoidPositions && avoidPositions.length > 0) {
+      if (targetParcels.length <= 4) {
+        for (const perm of permutations([...targetParcels])) {
+          if (this._aborted) return fail('Aborted');
+          const result = buildPlanForOrder(currentPosition, perm, deliveryZones, beliefMap);
+          if (result && (bestSteps === null || result.totalSteps < bestSteps.length)) {
+            bestSteps = result.steps;
+          }
+        }
+      } else {
+        const ordered = nearestNeighborOrder(currentPosition, [...targetParcels]);
+        const result = buildPlanForOrder(currentPosition, ordered, deliveryZones, beliefMap);
+        if (result) bestSteps = result.steps;
+      }
+    }
+
     if (!bestSteps)                          return fail('No path found');
     if (bestSteps.length > maxPlanLength)    return fail(`Plan length ${bestSteps.length} exceeds maxPlanLength`);
 

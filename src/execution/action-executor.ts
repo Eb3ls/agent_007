@@ -18,11 +18,11 @@ import { actionToDirection } from './action-types.js';
 const SAFETY_MARGIN_MS = 100;
 
 /**
- * Number of consecutive move failures before emitting onReplanRequired.
- * After MAX_MOVE_RETRIES failed attempts, further retrying only accumulates
- * penalties (R07, R22). Signal replan instead.
+ * Number of consecutive move failures before giving up and triggering a replan.
+ * One retry is enough to handle transient NPC occupancy (NPC moves every frame ~50ms).
+ * After 2 total attempts, further retrying only accumulates penalties (R07, R22).
  */
-const MAX_MOVE_RETRIES = 3; // 3 retries → 4 total attempts before step failure
+const MAX_MOVE_RETRIES = 1; // 1 retry → 2 total attempts before step failure
 
 export class ActionExecutor implements IActionExecutor {
   private client: GameClient;
@@ -184,8 +184,8 @@ export class ActionExecutor implements IActionExecutor {
 
         if (!result) {
           if (attempt < MAX_MOVE_RETRIES && !this.cancelled && this.currentPlan !== null) {
-            // One retry: wait briefly for dynamic obstacle to clear (R07 transient case)
-            await new Promise(r => setTimeout(r, 100));
+            // One retry: wait one NPC frame for transient obstacle to clear (R07)
+            await new Promise(r => setTimeout(r, 60));
             if (this.cancelled || this.currentPlan === null) return false;
             return this.executeStep(step, attempt + 1);
           }

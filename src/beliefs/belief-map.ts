@@ -53,20 +53,22 @@ export class BeliefMapImpl implements BeliefMap {
 
   /**
    * R02 — directional tile entry restriction (not exit restriction).
-   * Tile ↑ (4): arrow points North → blocks entry from North (fromDir='up').
-   * Tile ↓ (5): arrow points South → blocks entry from South (fromDir='down').
-   * Tile ← (6): arrow points West  → blocks entry from West  (fromDir='left').
-   * Tile → (7): arrow points East  → blocks entry from East  (fromDir='right').
+   * Only one direction is blocked per tile type; all other entry directions are allowed.
+   *
+   * Tile ↑ (4): arrow North → blocks entry from North (fromDir='down', moving south into tile).
+   * Tile ↓ (5): arrow South → blocks entry from South (fromDir='up', moving north into tile).
+   * Tile ← (6): arrow West  → blocks entry from West  (fromDir='right', moving east into tile).
+   * Tile → (7): arrow East  → blocks entry from East  (fromDir='left', moving west into tile).
    * Non-walkable tiles always return false. All other walkable tiles return true.
    */
   canEnterFrom(x: number, y: number, from: Direction): boolean {
     const type = this.getTile(x, y);
     if (type === null || type === 0) return false;
     switch (type) {
-      case 4: return from !== 'down';
-      case 5: return from !== 'up';
-      case 6: return from !== 'right';
-      case 7: return from !== 'left';
+      case 4: return from !== 'down';  // ↑: blocks southward entry (from north)
+      case 5: return from !== 'up';    // ↓: blocks northward entry (from south)
+      case 6: return from !== 'right'; // ←: blocks eastward entry (from west)
+      case 7: return from !== 'left';  // →: blocks westward entry (from east)
       default: return true;
     }
   }

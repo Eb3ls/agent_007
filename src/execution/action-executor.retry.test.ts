@@ -37,11 +37,11 @@ describe("ActionExecutor — retry behavior", () => {
     });
 
     executor.executePlan(makeMovePlan());
-    await sleep(700);
+    await sleep(300);
 
-    // initial attempt + 3 retries = 4
-    assert.equal(attempts, 4);
-    assert.equal(client.moveHistory.length, 4);
+    // initial attempt + 1 retry = 2
+    assert.equal(attempts, 2);
+    assert.equal(client.moveHistory.length, 2);
     assert.ok(failed);
   });
 
@@ -53,7 +53,7 @@ describe("ActionExecutor — retry behavior", () => {
     client.move = async (dir) => {
       client.moveHistory.push(dir);
       attempts++;
-      return attempts >= 3;
+      return attempts >= 2;
     };
 
     const executor = new ActionExecutor(client);
@@ -63,9 +63,10 @@ describe("ActionExecutor — retry behavior", () => {
     });
 
     executor.executePlan(makeMovePlan());
-    await sleep(700);
+    await sleep(300);
 
-    assert.equal(attempts, 3);
+    // succeeds on 2nd attempt (attempts >= 2 is truthy)
+    assert.equal(attempts, 2);
     assert.ok(completed);
   });
 
