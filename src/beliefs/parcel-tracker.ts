@@ -34,7 +34,7 @@ export class ParcelTracker {
       this.records.set(parcelId, {
         lastReward: reward,
         lastTimestamp: timestamp,
-        decayRatePerMs: 0,
+        decayRatePerMs: this.baseDecayRatePerMs,
       });
       return;
     }
