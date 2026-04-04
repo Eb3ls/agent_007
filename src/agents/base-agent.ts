@@ -8,15 +8,20 @@ import { randomUUID } from 'crypto';
 import type {
   AgentConfig,
   AgentRole,
+  DelibBranch,
+  DelibTrigger,
+  EvalCandidate,
   GameClient,
   IAgent,
   Intention,
+  L1RecordD,
   ParcelBelief,
   Plan,
   PlanStep,
   Position,
 } from '../types.js';
 import { manhattanDistance, positionEquals } from '../types.js';
+import { EvalLogger } from '../evaluation/eval-logger.js';
 import { BeliefStore } from '../beliefs/belief-store.js';
 import { BeliefMapImpl } from '../beliefs/belief-map.js';
 import { ActionExecutor } from '../execution/action-executor.js';
@@ -75,6 +80,9 @@ export abstract class BaseAgent implements IAgent {
   private metrics: MetricsCollector | null = null;
   private metricsOutputPath = "";
 
+  // Evaluation logging
+  private evalLogger: EvalLogger | null = null;
+
   // State
   private currentIntention: Intention | null = null;
   private lastLoggedScore = -1;
@@ -85,6 +93,9 @@ export abstract class BaseAgent implements IAgent {
   private lastRevaluatedPosition: Position = { x: -1, y: -1 };
   private sigintHandler: (() => void) | null = null;
   private sigtermHandler: (() => void) | null = null;
+
+  // Trigger tracking for deliberation logging
+  private _deliberTrigger: DelibTrigger = 'timer';
 
   // Stagnation
   private stagnationMonitor: StagnationMonitor | null = null;
@@ -101,6 +112,11 @@ export abstract class BaseAgent implements IAgent {
   // ---------------------------------------------------------------------------
 
   protected abstract buildPlannerChain(): IPlanner;
+
+  /** Called by eval-runner to inject the logger before start(). */
+  setEvalLogger(logger: EvalLogger): void {
+    this.evalLogger = logger;
+  }
 
   // ---------------------------------------------------------------------------
   // IAgent lifecycle
@@ -181,7 +197,7 @@ export abstract class BaseAgent implements IAgent {
     client.onParcelsSensing((parcels) => {
       if (!this.beliefs) return;
       this.beliefs.updateParcels(parcels);
-      if (this.running) this._scheduleDeliberation();
+      if (this.running) this._scheduleDeliberation(false, 'sensing');
     });
 
     client.onAgentsSensing((agents) => {
@@ -203,7 +219,7 @@ export abstract class BaseAgent implements IAgent {
       // Re-announce presence to allies (they may have timed us out)
       this.allyTracker?.onReconnect();
       // Kick off a fresh deliberation cycle
-      if (this.running) this._scheduleDeliberation();
+      if (this.running) this._scheduleDeliberation(false, 'reconnect');
     });
   }
 
@@ -255,7 +271,7 @@ export abstract class BaseAgent implements IAgent {
       if (deliveredReward > 0)
         this.metrics?.recordParcelDelivered(deliveredReward);
       this.currentIntention = null;
-      this._scheduleDeliberation();
+      this._scheduleDeliberation(false, 'plan_complete');
     });
 
     this.executor.onStepFailed((step, idx, reason) => {
@@ -275,13 +291,13 @@ export abstract class BaseAgent implements IAgent {
         this.deliveryZoneCooldowns.set(key, Date.now() + 2000);
       }
       this.currentIntention = null;
-      this._scheduleDeliberation(/* planFailed= */ true);
+      this._scheduleDeliberation(/* planFailed= */ true, 'plan_failed');
     });
 
     this.executor.onReplanRequired((signal) => {
       this.log.warn({ kind: "replan_triggered", reason: signal.reason });
       this.currentIntention = null;
-      this._scheduleDeliberation(/* planFailed= */ true);
+      this._scheduleDeliberation(/* planFailed= */ true, 'plan_failed');
     });
 
     // Periodic replan check + stagnation detection
@@ -334,6 +350,7 @@ export abstract class BaseAgent implements IAgent {
       });
     }
 
+    this.evalLogger?.flush();
     this.client.disconnect();
   }
 
@@ -345,7 +362,8 @@ export abstract class BaseAgent implements IAgent {
    * Enqueue a deliberation pass (debounced by planning flag).
    * planFailed=true bypasses the shouldReplan threshold check.
    */
-  private _scheduleDeliberation(planFailed = false): void {
+  private _scheduleDeliberation(planFailed = false, trigger: DelibTrigger = 'timer'): void {
+    this._deliberTrigger = trigger;
     if (!this.running || !this.beliefs || this.planning) return;
     // Don't replan while a move is in-flight — new plan would use stale pre-move position
     if (!planFailed && this.executor?.getInFlightAction() !== null) return;
@@ -375,6 +393,21 @@ export abstract class BaseAgent implements IAgent {
     try {
       if (!this.beliefs || !this.running) return;
 
+      // --- L1 logging: capture state snapshot at deliberation start ---
+      const self0 = this.beliefs.getSelf();
+      const decayStep0 = this._getDecayPerStep();
+      const pos0: [number, number] = [Math.round(self0.position.x), Math.round(self0.position.y)];
+      const baseRecord = {
+        ts: Date.now(),
+        trigger: this._deliberTrigger,
+        pos: pos0,
+        score: self0.score ?? 0,
+        carried: self0.carriedParcels.length,
+        carriedR: self0.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0),
+        cap: this.beliefs.getCapacity(),
+        decayStep: decayStep0,
+      };
+
       const movementDurationMs = this.client.getMeasuredActionDurationMs();
       const tracker = this.beliefs.getParcelTracker();
 
@@ -388,7 +421,10 @@ export abstract class BaseAgent implements IAgent {
           && positionEquals(currentPos, this.lastRevaluatedPosition);
         this.lastParcelFingerprint = fingerprint;
         this.lastRevaluatedPosition = currentPos;
-        if (unchanged) return;
+        if (unchanged) {
+          this.evalLogger?.logD({ ...baseRecord, gateSkip: true });
+          return;
+        }
       }
 
       // Compute candidates once — passed to shouldReplan to avoid a second evaluate().
@@ -397,6 +433,13 @@ export abstract class BaseAgent implements IAgent {
       const evalResult = this.deliberator.evaluate(this.beliefs, movementDurationMs, tracker);
       const candidates = evalResult.intentions
         .filter(i => !i.targetParcels.some(id => claimedByOthers.has(id)));
+
+      // Build eval metadata for logging
+      const evalMeta = {
+        reachable: evalResult.reachable,
+        contestaDrop: evalResult.contestaDrop,
+        cands: evalResult.candidates as unknown as EvalCandidate[],
+      };
 
       const shouldReplan = this.deliberator.shouldReplan(
         this.currentIntention,
@@ -408,7 +451,54 @@ export abstract class BaseAgent implements IAgent {
       );
       const needsReplan = planFailed || shouldReplan || this.executor.isIdle();
 
-      if (!needsReplan) return;
+      if (!needsReplan) {
+        const replanReason = planFailed ? 'plan_failed' : 'better_option_or_target_gone';
+        this.evalLogger?.logD({
+          ...baseRecord,
+          gateSkip: false,
+          reachable: evalMeta.reachable,
+          contestaDrop: evalMeta.contestaDrop,
+          cands: evalMeta.cands,
+          replan: false,
+          replanReason,
+          curU: this.currentIntention?.utility ?? undefined,
+        });
+        return;
+      }
+
+      // Track mutable logging state
+      let branch: DelibBranch = 'no_action';
+      let portfolio: { delivV: number; pickV: number } | null = null;
+      let planMeta: { pl: string; ok: boolean; steps: number; ms: number } | null = null;
+      let validMeta: boolean | null = null;
+      let chosenIdx: number | null = null;
+      const claimsMeta: Array<{ p: string; d: number; r: 'won' | 'yield' }> = [];
+      const enemiesMeta = this.beliefs.getAgentBeliefs()
+        .filter(a => !a.isAlly)
+        .map(a => ({ pos: [Math.round(a.position.x), Math.round(a.position.y)] as [number, number], h: a.heading ?? '' }));
+
+      const replanReason = planFailed ? 'plan_failed' : (shouldReplan ? 'better_option_or_target_gone' : '');
+
+      // Helper to emit the full D record at any return point
+      const emitLog = (): void => {
+        this.evalLogger?.logD({
+          ...baseRecord,
+          gateSkip: false,
+          reachable: evalMeta.reachable,
+          contestaDrop: evalMeta.contestaDrop,
+          cands: evalMeta.cands,
+          replan: needsReplan,
+          replanReason,
+          curU: this.currentIntention?.utility ?? undefined,
+          branch,
+          portfolio,
+          plan: planMeta,
+          valid: validMeta,
+          chosen: chosenIdx,
+          claims: claimsMeta,
+          enemies: enemiesMeta,
+        } as Omit<L1RecordD, 't' | 'seq'>);
+      };
 
       // Cancel current plan if replan is warranted
       if (this.currentIntention !== null && (planFailed || shouldReplan)) {
@@ -429,6 +519,8 @@ export abstract class BaseAgent implements IAgent {
 
       // If at capacity, skip deliberation and deliver immediately
       if (self.carriedParcels.length >= this.beliefs.getCapacity()) {
+        branch = 'capacity_deliver';
+        emitLog();
         await this._planDelivery();
         return;
       }
@@ -437,6 +529,8 @@ export abstract class BaseAgent implements IAgent {
       if (self.carriedParcels.length > 0) {
         const reachable = this.beliefs.getReachableParcels();
         if (reachable.length === 0) {
+          branch = 'no_reachable_deliver';
+          emitLog();
           await this._planDelivery();
           return;
         }
@@ -445,6 +539,8 @@ export abstract class BaseAgent implements IAgent {
       // candidates already computed above — no second evaluate() needed
 
       if (candidates.length === 0) {
+        branch = 'no_action';
+        emitLog();
         if (self.carriedParcels.length > 0) await this._planDelivery();
         return;
       }
@@ -455,6 +551,8 @@ export abstract class BaseAgent implements IAgent {
       if (best.type === "explore") {
         // If carrying parcels, delivering is more valuable than exploring (utility > 0.10)
         if (self.carriedParcels.length > 0) {
+          branch = 'deliver_vs_pickup';
+          emitLog();
           await this._planDelivery();
           return;
         }
@@ -466,8 +564,11 @@ export abstract class BaseAgent implements IAgent {
             best.targetPosition,
           ) &&
           !this.executor.isIdle()
-        )
+        ) {
+          branch = 'explore';
+          emitLog();
           return;
+        }
         this.currentIntention = best;
         this.log.info({
           kind: "intention_set",
@@ -475,6 +576,8 @@ export abstract class BaseAgent implements IAgent {
           type: best.type,
           utility: best.utility,
         });
+        branch = 'explore';
+        emitLog();
         await this._planExplore(best.targetPosition);
         return;
       }
@@ -483,7 +586,10 @@ export abstract class BaseAgent implements IAgent {
       const sameTarget =
         this.currentIntention?.targetParcels.join(",") ===
         best.targetParcels.join(",");
-      if (sameTarget && !this.executor.isIdle()) return;
+      if (sameTarget && !this.executor.isIdle()) {
+        emitLog();
+        return;
+      }
 
       // When carrying parcels, compare delivering now vs best pickup using
       // portfolio-aware scores: both scores normalized by steps for scale-neutral comparison.
@@ -511,7 +617,11 @@ export abstract class BaseAgent implements IAgent {
           const delivValue = delivSteps > 0 ? delivScore / delivSteps : Infinity;
           const pickValue = bestTotalSteps > 0 ? pickScore / bestTotalSteps : 0;
 
+          portfolio = { delivV: delivValue, pickV: pickValue };
+
           if (delivValue >= pickValue) {
+            branch = 'deliver_vs_pickup';
+            emitLog();
             await this._planDelivery();
             return;
           }
@@ -531,6 +641,7 @@ export abstract class BaseAgent implements IAgent {
           if (parcel) {
             const dist = manhattanDistance(self.position, parcel.position);
             const result = await this.allyTracker.claimParcel(parcelId, dist);
+            claimsMeta.push({ p: parcelId, d: dist, r: result === 'yield' ? 'yield' : 'won' });
             if (result === "yield") {
               this.log.info({
                 kind: "intention_dropped",
@@ -606,11 +717,18 @@ export abstract class BaseAgent implements IAgent {
 
         const planStart = Date.now();
         const planResult = await this.planner.plan(planningRequest);
+        const planMs = Date.now() - planStart;
         this.metrics?.recordPlannerCall(
           this.planner.name,
-          Date.now() - planStart,
+          planMs,
           planResult.success,
         );
+        planMeta = {
+          pl: planResult.metadata.plannerName,
+          ok: planResult.success,
+          steps: planResult.plan?.steps.length ?? 0,
+          ms: planMs,
+        };
 
         if (!planResult.success || !planResult.plan) {
           this.log.warn({
@@ -631,6 +749,7 @@ export abstract class BaseAgent implements IAgent {
 
         // Validate
         const vr = this.validator.validate(planResult.plan, this.beliefs);
+        validMeta = vr.valid;
         if (!vr.valid) {
           this.log.warn({
             kind: "plan_failed",
@@ -644,6 +763,9 @@ export abstract class BaseAgent implements IAgent {
         // Stamp intention ID and execute
         const plan: Plan = { ...planResult.plan, intentionId: candidate.id };
         this.lastFailedTile = null; // fresh plan started — clear the failed-tile override
+        branch = 'pickup';
+        chosenIdx = evalMeta.cands.findIndex(c => c.tp[0] === candidate.targetParcels[0]);
+        emitLog();
         this.executor.executePlan(plan);
         break; // successfully planned and started execution
       }
