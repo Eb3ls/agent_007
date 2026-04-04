@@ -228,8 +228,9 @@ export function generateReport(logsBaseDir?: string): EvaluationReport {
 
   const minSPM = worstMapEntry.meanSPM;
   const maxSPM = bestMapEntry.meanSPM;
-  const bestWorstRatio = minSPM > 0 ? maxSPM / minSPM : 0;
-  const overfitDetected = bestWorstRatio > 5.0 && minSPM < 15 && gScore < 0.5;
+  // When minSPM=0, ratio is undefined; treat as infinite (worst possible gap).
+  const bestWorstRatio = minSPM > 0 ? maxSPM / minSPM : -1; // -1 means "infinite"
+  const overfitDetected = (bestWorstRatio < 0 || bestWorstRatio > 5.0) && minSPM < 15 && gScore < 0.5;
 
   const totalEpisodes = perMap.reduce((s, m) => s + m.runs, 0);
   const meanDelivPerEp = totalEpisodes > 0
