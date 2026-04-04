@@ -394,8 +394,8 @@ export abstract class BaseAgent implements IAgent {
       // Compute candidates once — passed to shouldReplan to avoid a second evaluate().
       const claimedByOthers =
         this.allyTracker?.getClaimedByOthers() ?? new Set<string>();
-      const candidates = this.deliberator
-        .evaluate(this.beliefs, movementDurationMs, tracker)
+      const evalResult = this.deliberator.evaluate(this.beliefs, movementDurationMs, tracker);
+      const candidates = evalResult.intentions
         .filter(i => !i.targetParcels.some(id => claimedByOthers.has(id)));
 
       const shouldReplan = this.deliberator.shouldReplan(
