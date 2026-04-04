@@ -74,16 +74,19 @@ async function pollServerReady(port: number, maxAttempts = 15, intervalMs = 500)
 }
 
 // ----------------------------------------------------------------
-// Find most recently created .jsonl file in a directory
+// Find the L1 file for a specific runIndex in a directory.
+// Filename format: run_${runIndex}_${startTs}.jsonl
+// Multiple runs of the same map can execute simultaneously, so we
+// must filter by runIndex, not just by mtime.
 // ----------------------------------------------------------------
 
-function findLatestL1File(dir: string): string | null {
+function findL1FileForRun(dir: string, runIndex: number): string | null {
   if (!fs.existsSync(dir)) return null;
 
   let files: string[];
   try {
     files = fs.readdirSync(dir)
-      .filter(f => f.endsWith('.jsonl'))
+      .filter(f => f.startsWith(`run_${runIndex}_`) && f.endsWith('.jsonl'))
       .map(f => path.join(dir, f));
   } catch {
     return null;
@@ -91,18 +94,11 @@ function findLatestL1File(dir: string): string | null {
 
   if (files.length === 0) return null;
 
-  let latest = files[0];
-  let latestMtime = fs.statSync(latest).mtimeMs;
-
-  for (const f of files.slice(1)) {
-    const mtime = fs.statSync(f).mtimeMs;
-    if (mtime > latestMtime) {
-      latestMtime = mtime;
-      latest = f;
-    }
-  }
-
-  return latest;
+  // If multiple files match (unlikely but possible after reruns), pick latest mtime
+  if (files.length === 1) return files[0];
+  return files.reduce((best, f) =>
+    fs.statSync(f).mtimeMs > fs.statSync(best).mtimeMs ? f : best,
+  );
 }
 
 // ----------------------------------------------------------------
@@ -182,9 +178,9 @@ async function runEpisode(
     await waitForExit(server, 5000);
     server = null;
 
-    // 8. Find L1 file
+    // 8. Find L1 file for this specific run
     const l1Dir = path.join(logsDir, 'L1', map.name);
-    const l1FilePath = findLatestL1File(l1Dir);
+    const l1FilePath = findL1FileForRun(l1Dir, runIndex);
 
     // 9. Generate L2 summary
     if (!l1FilePath) {
