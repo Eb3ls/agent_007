@@ -551,29 +551,41 @@ export abstract class BaseAgent implements IAgent {
         const deliveryZones = Array.from(
           this.beliefs.getMap().getDeliveryZones(),
         );
+        const map = this.beliefs.getMap();
         const agentObstacles = this.beliefs
           .getAgentBeliefs()
           .map((a) => a.position);
+        // Include the last failed tile as an extra obstacle in case sensing is stale
+        if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
+        // Add 1-step NPC heading prediction: also avoid where each NPC is moving.
+        // Only predict for recently-seen agents (heading stale after 500ms = 10 NPC steps).
+        const now = Date.now();
+        for (const agent of this.beliefs.getAgentBeliefs()) {
+          if (!agent.heading || now - agent.lastSeen > 500) continue;
+          const p = agent.position;
+          let nx = p.x, ny = p.y;
+          if (agent.heading === 'up')    ny += 1;
+          if (agent.heading === 'down')  ny -= 1;
+          if (agent.heading === 'left')  nx -= 1;
+          if (agent.heading === 'right') nx += 1;
+          if (map.isWalkable(nx, ny) && !agentObstacles.some(o => o.x === nx && o.y === ny)) {
+            agentObstacles.push({ x: nx, y: ny });
+          }
+        }
         const selfPos = {
           x: Math.round(self.position.x),
           y: Math.round(self.position.y),
         };
-        // lastFailedTile goes into BOTH avoidPositions (primary plan) AND persistentAvoid
-        // (BFS intermediate fallback). agentObstacles are dynamic and dropped in the final
-        // BFS fallback since agents will have moved; lastFailedTile is kept even there.
-        const persistentAvoid = this.lastFailedTile ? [this.lastFailedTile] : undefined;
-        const allAvoidPositions = persistentAvoid
-          ? [...agentObstacles, ...persistentAvoid]
-          : agentObstacles;
         const planningRequest = {
           currentPosition: selfPos,
           carriedParcels: self.carriedParcels as ReadonlyArray<ParcelBelief>,
           targetParcels,
           deliveryZones,
           beliefMap: this.beliefs.getMap(),
-          constraints: (allAvoidPositions.length > 0 || persistentAvoid)
-            ? { avoidPositions: allAvoidPositions, persistentAvoid }
-            : undefined,
+          constraints:
+            agentObstacles.length > 0
+              ? { avoidPositions: agentObstacles }
+              : undefined,
         };
 
         const planStart = Date.now();
@@ -635,35 +647,30 @@ export abstract class BaseAgent implements IAgent {
     const agentObstacles = this.beliefs
       .getAgentBeliefs()
       .map((a) => a.position);
+    if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
     const selfPos = {
       x: Math.round(self.position.x),
       y: Math.round(self.position.y),
     };
 
-    // Prefer the nearest delivery zone NOT occupied by an agent OR lastFailedTile
-    const allObstacles = this.lastFailedTile ? [...agentObstacles, this.lastFailedTile] : agentObstacles;
+    // Prefer the nearest delivery zone NOT currently occupied by an agent obstacle
     const allZones = Array.from(this.beliefs.getMap().getDeliveryZones());
     const sortedZones = allZones.sort(
       (a, b) => manhattanDistance(selfPos, a) - manhattanDistance(selfPos, b),
     );
     const unblockedZone = sortedZones.find(
-      z => !allObstacles.some(o => o.x === z.x && o.y === z.y),
+      z => !agentObstacles.some(o => o.x === z.x && o.y === z.y),
     );
     const delivery = unblockedZone ?? sortedZones[0] ?? null;
     if (!delivery) return;
 
-    // Primary: avoid agents AND lastFailedTile
     let path = findPath(
       selfPos,
       delivery,
       this.beliefs.getMap(),
-      allObstacles.length > 0 ? allObstacles : undefined,
+      agentObstacles.length > 0 ? agentObstacles : undefined,
     );
-    // Fallback 1: drop dynamic agents, keep lastFailedTile
-    if (!path && this.lastFailedTile) {
-      path = findPath(selfPos, delivery, this.beliefs.getMap(), [this.lastFailedTile]);
-    }
-    // Fallback 2: drop all obstacles (last resort)
+    // Retry without agent obstacles — agents move, corridor may open
     if (!path) path = findPath(selfPos, delivery, this.beliefs.getMap());
     if (!path) {
       this.log.warn({
@@ -743,8 +750,7 @@ export abstract class BaseAgent implements IAgent {
     const agentObstacles = this.beliefs
       .getAgentBeliefs()
       .map((a) => a.position);
-    // lastFailedTile is separate from agentObstacles — kept as obstacle even in fallback
-    const allObstacles = this.lastFailedTile ? [...agentObstacles, this.lastFailedTile] : agentObstacles;
+    if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
     const selfPos = {
       x: Math.round(self.position.x),
       y: Math.round(self.position.y),
@@ -753,12 +759,9 @@ export abstract class BaseAgent implements IAgent {
       selfPos,
       target,
       this.beliefs.getMap(),
-      allObstacles.length > 0 ? allObstacles : undefined,
+      agentObstacles.length > 0 ? agentObstacles : undefined,
     );
-    // Retry keeping only lastFailedTile (drop dynamic agent positions)
-    if (!path && this.lastFailedTile) {
-      path = findPath(selfPos, target, this.beliefs.getMap(), [this.lastFailedTile]);
-    }
+    // Fallback: drop all obstacles — agents move, so explore can proceed
     if (!path) path = findPath(selfPos, target, this.beliefs.getMap());
     if (!path || path.length <= 1) {
       this.currentIntention = null;
