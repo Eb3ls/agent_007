@@ -375,13 +375,17 @@ export class BeliefStore implements IBeliefStore {
     const unvisited = notCurrent.filter(t => !this.visitedSpawningTiles.has(`${t.x},${t.y}`));
     const candidates = unvisited.length > 0 ? unvisited : notCurrent;
 
-    let nearest: Position | null = null;
-    let minDist = Infinity;
-    for (const t of candidates) {
-      const d = manhattanDistance(from, t);
-      if (d < minDist) { minDist = d; nearest = t; }
+    // Sort by Manhattan distance, then verify reachability via pathfinding.
+    // On complex maps (mazes, narrow corridors) the nearest tile by Manhattan
+    // may be unreachable, causing infinite plan-fail loops.
+    const sorted = [...candidates].sort(
+      (a, b) => manhattanDistance(from, a) - manhattanDistance(from, b),
+    );
+    for (const t of sorted) {
+      if (findPath(from, t, this.map) !== null) return t;
     }
-    return nearest;
+    // Fallback: return nearest by Manhattan if none are reachable yet (map not fully built)
+    return sorted[0] ?? null;
   }
 
   setCapacity(n: number): void {
