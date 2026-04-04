@@ -558,17 +558,21 @@ export abstract class BaseAgent implements IAgent {
           x: Math.round(self.position.x),
           y: Math.round(self.position.y),
         };
-        // lastFailedTile goes into persistentAvoid so the BFS fallback still avoids it
-        // (unlike agentObstacles which are dropped in the fallback since agents have moved)
+        // lastFailedTile goes into BOTH avoidPositions (primary plan) AND persistentAvoid
+        // (BFS intermediate fallback). agentObstacles are dynamic and dropped in the final
+        // BFS fallback since agents will have moved; lastFailedTile is kept even there.
         const persistentAvoid = this.lastFailedTile ? [this.lastFailedTile] : undefined;
+        const allAvoidPositions = persistentAvoid
+          ? [...agentObstacles, ...persistentAvoid]
+          : agentObstacles;
         const planningRequest = {
           currentPosition: selfPos,
           carriedParcels: self.carriedParcels as ReadonlyArray<ParcelBelief>,
           targetParcels,
           deliveryZones,
           beliefMap: this.beliefs.getMap(),
-          constraints: (agentObstacles.length > 0 || persistentAvoid)
-            ? { avoidPositions: agentObstacles, persistentAvoid }
+          constraints: (allAvoidPositions.length > 0 || persistentAvoid)
+            ? { avoidPositions: allAvoidPositions, persistentAvoid }
             : undefined,
         };
 
@@ -648,17 +652,18 @@ export abstract class BaseAgent implements IAgent {
     const delivery = unblockedZone ?? sortedZones[0] ?? null;
     if (!delivery) return;
 
+    // Primary: avoid agents AND lastFailedTile
     let path = findPath(
       selfPos,
       delivery,
       this.beliefs.getMap(),
-      agentObstacles.length > 0 ? agentObstacles : undefined,
+      allObstacles.length > 0 ? allObstacles : undefined,
     );
-    // Retry keeping lastFailedTile blocked but dropping dynamic agent positions
+    // Fallback 1: drop dynamic agents, keep lastFailedTile
     if (!path && this.lastFailedTile) {
       path = findPath(selfPos, delivery, this.beliefs.getMap(), [this.lastFailedTile]);
     }
-    // Final retry with no obstacles
+    // Fallback 2: drop all obstacles (last resort)
     if (!path) path = findPath(selfPos, delivery, this.beliefs.getMap());
     if (!path) {
       this.log.warn({
