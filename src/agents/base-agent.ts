@@ -554,22 +554,22 @@ export abstract class BaseAgent implements IAgent {
         const agentObstacles = this.beliefs
           .getAgentBeliefs()
           .map((a) => a.position);
-        // Include the last failed tile as an extra obstacle in case sensing is stale
-        if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
         const selfPos = {
           x: Math.round(self.position.x),
           y: Math.round(self.position.y),
         };
+        // lastFailedTile goes into persistentAvoid so the BFS fallback still avoids it
+        // (unlike agentObstacles which are dropped in the fallback since agents have moved)
+        const persistentAvoid = this.lastFailedTile ? [this.lastFailedTile] : undefined;
         const planningRequest = {
           currentPosition: selfPos,
           carriedParcels: self.carriedParcels as ReadonlyArray<ParcelBelief>,
           targetParcels,
           deliveryZones,
           beliefMap: this.beliefs.getMap(),
-          constraints:
-            agentObstacles.length > 0
-              ? { avoidPositions: agentObstacles }
-              : undefined,
+          constraints: (agentObstacles.length > 0 || persistentAvoid)
+            ? { avoidPositions: agentObstacles, persistentAvoid }
+            : undefined,
         };
 
         const planStart = Date.now();
@@ -631,19 +631,19 @@ export abstract class BaseAgent implements IAgent {
     const agentObstacles = this.beliefs
       .getAgentBeliefs()
       .map((a) => a.position);
-    if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
     const selfPos = {
       x: Math.round(self.position.x),
       y: Math.round(self.position.y),
     };
 
-    // Prefer the nearest delivery zone NOT currently occupied by an agent obstacle
+    // Prefer the nearest delivery zone NOT occupied by an agent OR lastFailedTile
+    const allObstacles = this.lastFailedTile ? [...agentObstacles, this.lastFailedTile] : agentObstacles;
     const allZones = Array.from(this.beliefs.getMap().getDeliveryZones());
     const sortedZones = allZones.sort(
       (a, b) => manhattanDistance(selfPos, a) - manhattanDistance(selfPos, b),
     );
     const unblockedZone = sortedZones.find(
-      z => !agentObstacles.some(o => o.x === z.x && o.y === z.y),
+      z => !allObstacles.some(o => o.x === z.x && o.y === z.y),
     );
     const delivery = unblockedZone ?? sortedZones[0] ?? null;
     if (!delivery) return;
@@ -654,7 +654,11 @@ export abstract class BaseAgent implements IAgent {
       this.beliefs.getMap(),
       agentObstacles.length > 0 ? agentObstacles : undefined,
     );
-    // Retry without agent obstacles — agents move, corridor may open
+    // Retry keeping lastFailedTile blocked but dropping dynamic agent positions
+    if (!path && this.lastFailedTile) {
+      path = findPath(selfPos, delivery, this.beliefs.getMap(), [this.lastFailedTile]);
+    }
+    // Final retry with no obstacles
     if (!path) path = findPath(selfPos, delivery, this.beliefs.getMap());
     if (!path) {
       this.log.warn({
@@ -734,17 +738,23 @@ export abstract class BaseAgent implements IAgent {
     const agentObstacles = this.beliefs
       .getAgentBeliefs()
       .map((a) => a.position);
-    if (this.lastFailedTile) agentObstacles.push(this.lastFailedTile);
+    // lastFailedTile is separate from agentObstacles — kept as obstacle even in fallback
+    const allObstacles = this.lastFailedTile ? [...agentObstacles, this.lastFailedTile] : agentObstacles;
     const selfPos = {
       x: Math.round(self.position.x),
       y: Math.round(self.position.y),
     };
-    const path = findPath(
+    let path = findPath(
       selfPos,
       target,
       this.beliefs.getMap(),
-      agentObstacles.length > 0 ? agentObstacles : undefined,
+      allObstacles.length > 0 ? allObstacles : undefined,
     );
+    // Retry keeping only lastFailedTile (drop dynamic agent positions)
+    if (!path && this.lastFailedTile) {
+      path = findPath(selfPos, target, this.beliefs.getMap(), [this.lastFailedTile]);
+    }
+    if (!path) path = findPath(selfPos, target, this.beliefs.getMap());
     if (!path || path.length <= 1) {
       this.currentIntention = null;
       return;

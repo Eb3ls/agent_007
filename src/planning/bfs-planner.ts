@@ -157,8 +157,9 @@ export class BfsPlanner implements IPlanner {
     const startTime = Date.now();
 
     const { currentPosition, targetParcels, deliveryZones, beliefMap, constraints } = request;
-    const avoidPositions = constraints?.avoidPositions;
-    const timeoutMs      = constraints?.timeoutMs ?? Infinity;
+    const avoidPositions    = constraints?.avoidPositions;
+    const persistentAvoid   = constraints?.persistentAvoid;
+    const timeoutMs         = constraints?.timeoutMs ?? Infinity;
     const maxPlanLength  = constraints?.maxPlanLength ?? Infinity;
     const deadline       = startTime + timeoutMs;
 
@@ -199,20 +200,20 @@ export class BfsPlanner implements IPlanner {
       if (result) bestSteps = result.steps;
     }
 
-    // Fallback: retry without dynamic obstacles — agents move, so a plan ignoring
-    // their current position may still be executable by the time it reaches them.
+    // Fallback: retry dropping dynamic agent obstacles (they move) but keeping
+    // persistentAvoid (e.g. the tile that just failed — NPC likely still there).
     if (!bestSteps && avoidPositions && avoidPositions.length > 0) {
       if (targetParcels.length <= 4) {
         for (const perm of permutations([...targetParcels])) {
           if (this._aborted) return fail('Aborted');
-          const result = buildPlanForOrder(currentPosition, perm, deliveryZones, beliefMap);
+          const result = buildPlanForOrder(currentPosition, perm, deliveryZones, beliefMap, persistentAvoid);
           if (result && (bestSteps === null || result.totalSteps < bestSteps.length)) {
             bestSteps = result.steps;
           }
         }
       } else {
         const ordered = nearestNeighborOrder(currentPosition, [...targetParcels]);
-        const result = buildPlanForOrder(currentPosition, ordered, deliveryZones, beliefMap);
+        const result = buildPlanForOrder(currentPosition, ordered, deliveryZones, beliefMap, persistentAvoid);
         if (result) bestSteps = result.steps;
       }
     }

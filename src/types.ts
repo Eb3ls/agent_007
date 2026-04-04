@@ -226,7 +226,10 @@ export interface PlanningRequest {
 export interface PlanningConstraints {
   readonly maxPlanLength?: number;
   readonly timeoutMs?: number;
+  /** Dynamic obstacles (agent positions) — ignored in the BFS no-obstacle fallback since agents move. */
   readonly avoidPositions?: ReadonlyArray<Position>;
+  /** Persistent obstacles (e.g. lastFailedTile) — kept as obstacles even in the fallback. */
+  readonly persistentAvoid?: ReadonlyArray<Position>;
 }
 
 export interface PlanningResult {
