@@ -92,6 +92,10 @@ export abstract class BaseAgent implements IAgent {
   // Last tile that caused a step failure — injected as a dynamic obstacle on next replan
   private lastFailedTile: Position | null = null;
 
+  // Delivery zones that recently failed: key="x,y", value=expiry timestamp (2s cooldown).
+  // Prevents the agent from retrying the same contested delivery zone immediately.
+  private deliveryZoneCooldowns = new Map<string, number>();
+
   // ---------------------------------------------------------------------------
   // Abstract method — subclasses provide the planner chain
   // ---------------------------------------------------------------------------
@@ -264,6 +268,12 @@ export abstract class BaseAgent implements IAgent {
       });
       // Record the blocked tile so the next replan avoids it even if sensing is stale
       this.lastFailedTile = step.expectedPosition;
+      // If the blocked tile is a delivery zone, add a 2s cooldown so the next delivery
+      // plan picks a different zone rather than retrying the same contested one.
+      if (this.beliefs?.getMap().isDeliveryZone(step.expectedPosition.x, step.expectedPosition.y)) {
+        const key = `${step.expectedPosition.x},${step.expectedPosition.y}`;
+        this.deliveryZoneCooldowns.set(key, Date.now() + 2000);
+      }
       this.currentIntention = null;
       this._scheduleDeliberation(/* planFailed= */ true);
     });
@@ -443,6 +453,11 @@ export abstract class BaseAgent implements IAgent {
 
       // Handle explore intentions — no parcels to pick up, just move to target
       if (best.type === "explore") {
+        // If carrying parcels, delivering is more valuable than exploring (utility > 0.10)
+        if (self.carriedParcels.length > 0) {
+          await this._planDelivery();
+          return;
+        }
         // Skip if already executing an explore plan toward the same tile
         if (
           this.currentIntention?.type === "explore" &&
@@ -655,13 +670,17 @@ export abstract class BaseAgent implements IAgent {
     };
 
     // Prefer the nearest delivery zone NOT currently occupied by an agent obstacle
+    // and NOT in the 2s cooldown set (recently failed with NPC contest).
+    const now = Date.now();
     const allZones = Array.from(this.beliefs.getMap().getDeliveryZones());
     const sortedZones = allZones.sort(
       (a, b) => manhattanDistance(selfPos, a) - manhattanDistance(selfPos, b),
     );
-    const unblockedZone = sortedZones.find(
-      z => !agentObstacles.some(o => o.x === z.x && o.y === z.y),
-    );
+    const unblockedZone = sortedZones.find(z => {
+      if (agentObstacles.some(o => o.x === z.x && o.y === z.y)) return false;
+      const cooldown = this.deliveryZoneCooldowns.get(`${z.x},${z.y}`);
+      return !cooldown || now >= cooldown;
+    });
     const delivery = unblockedZone ?? sortedZones[0] ?? null;
     if (!delivery) return;
 

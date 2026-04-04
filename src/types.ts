@@ -475,6 +475,95 @@ export interface SessionEvent {
   readonly data: unknown;
 }
 
+// --- Evaluation & Decision Logging ---
+
+/** Compact candidate info for Level-1 decision records. */
+export interface EvalCandidate {
+  readonly type: 'pickup' | 'cluster' | 'explore';
+  readonly tp: ReadonlyArray<string>;   // target parcel IDs
+  readonly u: number;                   // utility score
+  readonly steps: number;               // estimated total steps
+  readonly projR: number;               // projected reward at delivery
+}
+
+/** Return value of Deliberator.evaluate() — includes metadata for L1 logging. */
+export interface EvaluationResult {
+  readonly intentions: ReadonlyArray<Intention>;   // sorted by utility desc, filtered
+  readonly reachable: number;                       // total reachable parcels (before contesa)
+  readonly contestaDrop: number;                    // parcels dropped by contesa filter
+  readonly candidates: ReadonlyArray<EvalCandidate>; // all candidates (incl. dropped), for logging
+}
+
+/** Trigger reason for a deliberation cycle. */
+export type DelibTrigger =
+  | 'sensing'
+  | 'timer'
+  | 'plan_failed'
+  | 'plan_complete'
+  | 'reconnect';
+
+/** Branch taken in _deliberateAndPlan after evaluation. */
+export type DelibBranch =
+  | 'gate_skip'
+  | 'capacity_deliver'
+  | 'no_reachable_deliver'
+  | 'explore'
+  | 'deliver_vs_pickup'
+  | 'pickup'
+  | 'no_action';
+
+/** Level-1 Type D — one per deliberation cycle (_deliberateAndPlan call). */
+export interface L1RecordD {
+  readonly t: 'D';
+  readonly ts: number;                  // unix ms
+  readonly seq: number;                 // monotonic counter per episode
+  readonly trigger: DelibTrigger;
+  readonly pos: [number, number];       // [x, y]
+  readonly score: number;
+  readonly carried: number;             // count
+  readonly carriedR: number;            // sum of estimatedReward
+  readonly cap: number;                 // capacity
+  readonly decayStep: number;           // decay per step per parcel
+  readonly gateSkip: boolean;           // true = fingerprint gate skipped full eval
+  // Fields below only present when gateSkip === false
+  readonly reachable?: number;
+  readonly contestaDrop?: number;
+  readonly cands?: ReadonlyArray<EvalCandidate>;
+  readonly replan?: boolean;
+  readonly replanReason?: string;
+  readonly curU?: number;               // current intention utility
+  readonly branch?: DelibBranch;
+  readonly portfolio?: { delivV: number; pickV: number } | null;
+  readonly claims?: ReadonlyArray<{ p: string; d: number; r: 'won' | 'yield' }>;
+  readonly plan?: { pl: string; ok: boolean; steps: number; ms: number } | null;
+  readonly valid?: boolean | null;
+  readonly chosen?: number | null;      // index into cands of chosen intention (-1 = none)
+  readonly enemies?: ReadonlyArray<{ pos: [number, number]; h: string }>;
+}
+
+/** Level-1 Type A — one per executed action step. */
+export interface L1RecordA {
+  readonly t: 'A';
+  readonly ts: number;
+  readonly seq: number;
+  readonly action: ActionType;
+  readonly ok: boolean;
+  readonly ms: number;                  // actual duration
+  readonly pos: [number, number];       // position AFTER action (or unchanged on failure)
+}
+
+/** Level-1 Type E — sparse events (deliveries, score updates, stagnation, etc.). */
+export interface L1RecordE {
+  readonly t: 'E';
+  readonly ts: number;
+  readonly seq: number;
+  readonly kind: string;                // mirrors LogEvent.kind
+  readonly data?: Record<string, unknown>;
+}
+
+/** Union of all Level-1 log records. */
+export type L1Record = L1RecordD | L1RecordA | L1RecordE;
+
 // --- GameClient (forward declaration) ---
 // The actual implementation is in src/client/game-client.ts.
 // This interface allows other modules to depend on the GameClient shape
