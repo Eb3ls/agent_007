@@ -627,8 +627,6 @@ export abstract class BaseAgent implements IAgent {
   private async _planDelivery(): Promise<void> {
     if (!this.beliefs) return;
     const self = this.beliefs.getSelf();
-    const delivery = this.beliefs.getNearestDeliveryZone(self.position);
-    if (!delivery) return;
 
     const agentObstacles = this.beliefs
       .getAgentBeliefs()
@@ -638,6 +636,18 @@ export abstract class BaseAgent implements IAgent {
       x: Math.round(self.position.x),
       y: Math.round(self.position.y),
     };
+
+    // Prefer the nearest delivery zone NOT currently occupied by an agent obstacle
+    const allZones = Array.from(this.beliefs.getMap().getDeliveryZones());
+    const sortedZones = allZones.sort(
+      (a, b) => manhattanDistance(selfPos, a) - manhattanDistance(selfPos, b),
+    );
+    const unblockedZone = sortedZones.find(
+      z => !agentObstacles.some(o => o.x === z.x && o.y === z.y),
+    );
+    const delivery = unblockedZone ?? sortedZones[0] ?? null;
+    if (!delivery) return;
+
     let path = findPath(
       selfPos,
       delivery,

@@ -44,16 +44,28 @@ function pathToSteps(path: Position[]): PlanStep[] {
   return steps;
 }
 
-/** Return the delivery zone with the smallest Manhattan distance from `from`. */
-function nearestDelivery(from: Position, zones: ReadonlyArray<Position>): Position | null {
+/**
+ * Return the delivery zone with the smallest Manhattan distance from `from`.
+ * When `avoidPositions` are provided, prefer zones not currently occupied
+ * by dynamic obstacles (NPCs) — falls back to nearest overall if all are blocked.
+ */
+function nearestDelivery(
+  from: Position,
+  zones: ReadonlyArray<Position>,
+  avoidPositions?: ReadonlyArray<Position>,
+): Position | null {
   if (zones.length === 0) return null;
-  let best = zones[0]!;
-  let bestD = manhattanDistance(from, best);
-  for (const z of zones.slice(1)) {
-    const d = manhattanDistance(from, z);
-    if (d < bestD) { bestD = d; best = z; }
+
+  // Sort all zones by Manhattan distance
+  const sorted = [...zones].sort((a, b) => manhattanDistance(from, a) - manhattanDistance(from, b));
+
+  if (avoidPositions && avoidPositions.length > 0) {
+    // Prefer the closest zone that is NOT occupied by a dynamic obstacle
+    const unblocked = sorted.find(z => !avoidPositions.some(o => o.x === z.x && o.y === z.y));
+    if (unblocked) return unblocked;
   }
-  return best;
+
+  return sorted[0]!; // fall back to nearest regardless
 }
 
 /**
@@ -83,7 +95,7 @@ function buildPlanForOrder(
     current = parcel.position;
   }
 
-  const delivery = nearestDelivery(current, deliveryZones);
+  const delivery = nearestDelivery(current, deliveryZones, avoidPositions);
   if (!delivery) return null;
 
   const path = findPath(current, delivery, map, avoidPositions);
