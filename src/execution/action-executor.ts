@@ -23,7 +23,7 @@ const SAFETY_MARGIN_MS = 100;
  * One retry is enough to handle transient NPC occupancy (NPC moves every frame ~50ms).
  * After 2 total attempts, further retrying only accumulates penalties (R07, R22).
  */
-const MAX_MOVE_RETRIES = 1; // 1 retry → 2 total attempts before step failure
+const MAX_MOVE_RETRIES = 3; // 3 retries → 4 total attempts; handles NPC tile-locking on narrow corridors
 
 export class ActionExecutor implements IActionExecutor {
   private client: GameClient;
@@ -199,12 +199,14 @@ export class ActionExecutor implements IActionExecutor {
 
         if (!result) {
           if (attempt < MAX_MOVE_RETRIES && !this.cancelled && this.currentPlan !== null) {
-            // One retry: wait one NPC frame for transient obstacle to clear (R07)
-            await new Promise(r => setTimeout(r, 60));
+            // Wait for NPC to clear the tile (R07): movement_duration ~50ms, 3 retries covers 2-3 tiles
+            await new Promise(r => setTimeout(r, 150));
             if (this.cancelled || this.currentPlan === null) return false;
             return this.executeStep(step, attempt + 1);
           }
-          // Exhausted retries — let runLoop emit onStepFailed for replanning
+          // Exhausted retries — signal collision-based replan (Pattern-3, R07)
+          this.replanEmitted = true;
+          for (const cb of this.replanRequiredCbs) cb({ reason: 'collision', failedStep: step, failureCount: attempt + 1 });
           return false;
         }
         return true;
