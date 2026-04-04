@@ -340,7 +340,8 @@ export abstract class BaseAgent implements IAgent {
     // Don't replan while a move is in-flight — new plan would use stale pre-move position
     if (!planFailed && this.executor?.getInFlightAction() !== null) return;
     if (planFailed) {
-      // Brief pause to let dynamic obstacles (NPCs) move away before replanning
+      // Brief pause to let dynamic obstacles (NPCs) move away before replanning.
+      // 150ms = 3 NPC steps at 50ms/step.
       setTimeout(() => {
         if (this.running) void this._deliberateAndPlan(planFailed);
       }, 150);
