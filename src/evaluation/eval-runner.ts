@@ -73,6 +73,19 @@ async function pollServerReady(port: number, maxAttempts = 15, intervalMs = 500)
   return false;
 }
 
+/**
+ * Fetch a JWT token from the server's /api/tokens endpoint.
+ * The server generates a new token for any provided name.
+ */
+async function fetchJwt(port: number, agentName: string): Promise<string> {
+  const url = `http://localhost:${port}/api/tokens?name=${encodeURIComponent(agentName)}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+  if (!res.ok) throw new Error(`Failed to fetch JWT from port ${port}: HTTP ${res.status}`);
+  const body = await res.json() as { token?: string };
+  if (!body.token) throw new Error(`No token in response from port ${port}`);
+  return body.token;
+}
+
 // ----------------------------------------------------------------
 // Find the L1 file for a specific runIndex in a directory.
 // Filename format: run_${runIndex}_${startTs}.jsonl
@@ -117,39 +130,48 @@ async function runEpisode(
 ): Promise<void> {
   const configPath = `/tmp/eval-config-${port}.json`;
 
-  // 1. Write temp config
-  const config = {
-    host: `http://localhost:${port}`,
-    token: 'eval-agent',
-    role: 'bdi',
-    planner: 'bfs',
-    logLevel: 'warn',
-    stagnationTimeoutMs: 15000,
-    recording: {
-      enabled: true,
-      outputPath: 'logs',
-    },
-  };
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-
   let server: ChildProcess | null = null;
   let agent: ChildProcess | null = null;
 
   try {
-    // 2. Spawn server
+    // 1. Spawn server
     server = spawn(
       'node',
       ['Deliveroo.js/backend/index.js', '--port', String(port), '--game', map.gamePath],
       { cwd: PROJECT_ROOT, stdio: 'ignore' },
     );
 
-    // 3. Poll until ready
+    // 2. Poll until ready
     const ready = await pollServerReady(port);
     if (!ready) {
       console.log(`[slot ${port}] warning: server on port ${port} not ready after 15 attempts, proceeding anyway`);
     }
 
-    // 4. Spawn agent
+    // 3. Fetch a JWT token from the server
+    let token: string;
+    try {
+      token = await fetchJwt(port, `eval-agent-${port}`);
+    } catch (err) {
+      console.log(`[slot ${port}] warning: could not fetch JWT (${err}), skipping episode`);
+      return;
+    }
+
+    // 4. Write temp config with the real JWT
+    const config = {
+      host: `http://localhost:${port}`,
+      token,
+      role: 'bdi',
+      planner: 'bfs',
+      logLevel: 'warn',
+      stagnationTimeoutMs: 15000,
+      recording: {
+        enabled: true,
+        outputPath: 'logs',
+      },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+    // 5. Spawn agent
     agent = spawn(
       'npx',
       ['tsx', 'src/main.ts', '--config', configPath],
@@ -165,24 +187,24 @@ async function runEpisode(
       },
     );
 
-    // 5. Wait duration
+    // 6. Wait duration
     await new Promise(r => setTimeout(r, durationMs));
 
-    // 6. Terminate agent
+    // 7. Terminate agent
     agent.kill('SIGTERM');
     await waitForExit(agent, 5000);
     agent = null;
 
-    // 7. Terminate server
+    // 8. Terminate server
     server.kill('SIGTERM');
     await waitForExit(server, 5000);
     server = null;
 
-    // 8. Find L1 file for this specific run
+    // 9. Find L1 file for this specific run
     const l1Dir = path.join(logsDir, 'L1', map.name);
     const l1FilePath = findL1FileForRun(l1Dir, runIndex);
 
-    // 9. Generate L2 summary
+    // 10. Generate L2 summary
     if (!l1FilePath) {
       console.log(`[slot ${port}] warning: no L1 file found for ${map.name} run ${runIndex}, skipping L2 generation`);
     } else {
@@ -193,7 +215,7 @@ async function runEpisode(
       }
     }
 
-    // 10. Progress log
+    // 11. Progress log
     episodesCompleted++;
     console.log(`[slot ${port}] done ${map.name} run ${runIndex + 1}/${Math.ceil(totalEpisodes / MAPS.length)} (episode ${episodesCompleted}/${totalEpisodes})`);
 

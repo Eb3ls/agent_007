@@ -191,6 +191,7 @@ export abstract class BaseAgent implements IAgent {
       if (self.score > 0 && self.score !== this.lastLoggedScore) {
         this.lastLoggedScore = self.score;
         this.log.info({ kind: "score_update", score: self.score });
+        this.evalLogger?.logE({ ts: Date.now(), kind: 'score_update', data: { score: self.score } });
       }
     });
 
@@ -207,6 +208,7 @@ export abstract class BaseAgent implements IAgent {
 
     client.onDisconnect(() => {
       this.log.warn({ kind: "connection_lost" });
+      this.evalLogger?.logE({ ts: Date.now(), kind: 'connection_lost' });
       // Cancel any in-flight action so it isn't replayed on reconnect
       if (this.executor) this.executor.cancelCurrentPlan();
       this.currentIntention = null;
@@ -248,6 +250,7 @@ export abstract class BaseAgent implements IAgent {
           return;
         const secondsSinceLastScore = Math.round(elapsedMs / 1000);
         this.log.warn({ kind: "stagnation_detected", secondsSinceLastScore });
+        this.evalLogger?.logE({ ts: Date.now(), kind: 'stagnation_detected', data: { secondsSinceLastScore } });
         this.metrics?.recordStagnation();
         // Abandon the stuck intention — next deliberation will explore or try a different parcel
         this.executor.cancelCurrentPlan();
@@ -265,11 +268,16 @@ export abstract class BaseAgent implements IAgent {
     });
 
     this.executor.onPlanComplete((plan) => {
-      const deliveredReward = plan.steps.some((s) => s.action === "putdown")
-        ? plan.estimatedReward
-        : 0;
-      if (deliveredReward > 0)
+      const hasPickup = plan.steps.some((s) => s.action === "pickup");
+      const hasDelivery = plan.steps.some((s) => s.action === "putdown");
+      const deliveredReward = hasDelivery ? plan.estimatedReward : 0;
+      if (hasPickup) {
+        this.evalLogger?.logE({ ts: Date.now(), kind: 'parcel_picked_up' });
+      }
+      if (deliveredReward > 0) {
         this.metrics?.recordParcelDelivered(deliveredReward);
+        this.evalLogger?.logE({ ts: Date.now(), kind: 'parcel_delivered', data: { reward: deliveredReward } });
+      }
       this.currentIntention = null;
       this._scheduleDeliberation(false, 'plan_complete');
     });
