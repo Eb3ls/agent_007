@@ -31,6 +31,15 @@ async function main(): Promise<void> {
   const agent: IAgent = config.role === 'llm' ? new LlmAgent() : new BdiAgent();
   await agent.init(client, config);
 
+  if (config.recording?.enabled && config.recording.outputPath) {
+    const mapName = process.env['EVAL_MAP_NAME'] ?? 'unknown';
+    const runIndex = parseInt(process.env['EVAL_RUN_INDEX'] ?? '0', 10);
+    const logsDir = process.env['EVAL_LOGS_DIR'] ?? 'logs';
+    const { EvalLogger } = await import('./evaluation/eval-logger.js');
+    const evalLog = new EvalLogger(mapName, runIndex, logsDir);
+    (agent as unknown as { setEvalLogger: (l: unknown) => void }).setEvalLogger(evalLog);
+  }
+
   try {
     await client.connect();
   } catch (err) {

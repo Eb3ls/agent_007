@@ -12,6 +12,7 @@ import type {
   PlanStep,
   ReplanSignal,
 } from '../types.js';
+import type { EvalLogger } from '../evaluation/eval-logger.js';
 import { actionToDirection } from './action-types.js';
 
 /** Safety margin added to measured action duration for timeout detection. */
@@ -31,6 +32,7 @@ export class ActionExecutor implements IActionExecutor {
   private inFlight: InFlightAction | null = null;
   private cancelled = false;
   private executing = false;
+  private evalLogger: EvalLogger | null = null;
 
   // Callbacks
   private stepCompleteCbs: Array<(step: PlanStep, index: number) => void> = [];
@@ -44,6 +46,10 @@ export class ActionExecutor implements IActionExecutor {
 
   constructor(client: GameClient) {
     this.client = client;
+  }
+
+  setEvalLogger(logger: EvalLogger): void {
+    this.evalLogger = logger;
   }
 
   executePlan(plan: Plan): void {
@@ -117,7 +123,16 @@ export class ActionExecutor implements IActionExecutor {
       const index = this.stepIndex;
 
       this.replanEmitted = false;
+      const stepStart = Date.now();
       const success = await this.executeStep(step);
+      const stepEnd = Date.now();
+      this.evalLogger?.logA({
+        ts: stepEnd,
+        action: step.action,
+        ok: success,
+        ms: stepEnd - stepStart,
+        pos: [step.expectedPosition.x, step.expectedPosition.y],
+      });
 
       // Check if plan was replaced during execution
       if (this.currentPlan !== plan) {
