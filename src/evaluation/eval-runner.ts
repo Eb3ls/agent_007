@@ -47,10 +47,23 @@ function parseArgs(): { durationSec: number; runs: number; parallel: number } {
 // Process utilities
 // ----------------------------------------------------------------
 
+function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    if (child.pid !== undefined) {
+      // Negative PID kills the entire process group (works on Linux/macOS)
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+    // Process may have already exited
+  }
+}
+
 async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
   return new Promise(resolve => {
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killGroup(child, 'SIGKILL');
       resolve();
     }, timeoutMs);
     child.once('exit', () => {
@@ -171,13 +184,15 @@ async function runEpisode(
     };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 
-    // 5. Spawn agent
+    // 5. Spawn agent (use tsx directly, not via npx, to ensure SIGTERM reaches the process)
+    const tsxBin = path.join(PROJECT_ROOT, 'node_modules/.bin/tsx');
     agent = spawn(
-      'npx',
-      ['tsx', 'src/main.ts', '--config', configPath],
+      tsxBin,
+      ['src/main.ts', '--config', configPath],
       {
         cwd: PROJECT_ROOT,
         stdio: 'ignore',
+        detached: true,   // create own process group so kill(-pid) reaches all children
         env: {
           ...process.env,
           EVAL_MAP_NAME: map.name,
@@ -186,17 +201,18 @@ async function runEpisode(
         },
       },
     );
+    agent.unref(); // don't prevent runner from exiting if agent outlives it unexpectedly
 
     // 6. Wait duration
     await new Promise(r => setTimeout(r, durationMs));
 
-    // 7. Terminate agent
-    agent.kill('SIGTERM');
+    // 7. Terminate agent (kill process group to ensure tsx + main.ts all exit)
+    killGroup(agent, 'SIGTERM');
     await waitForExit(agent, 5000);
     agent = null;
 
     // 8. Terminate server
-    server.kill('SIGTERM');
+    killGroup(server, 'SIGTERM');
     await waitForExit(server, 5000);
     server = null;
 
@@ -222,10 +238,10 @@ async function runEpisode(
   } finally {
     // Ensure processes are killed if something went wrong
     if (agent) {
-      agent.kill('SIGKILL');
+      killGroup(agent, 'SIGKILL');
     }
     if (server) {
-      server.kill('SIGKILL');
+      killGroup(server, 'SIGKILL');
     }
 
     // 11. Delete temp config

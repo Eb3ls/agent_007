@@ -116,6 +116,7 @@ export abstract class BaseAgent implements IAgent {
   /** Called by eval-runner to inject the logger before start(). */
   setEvalLogger(logger: EvalLogger): void {
     this.evalLogger = logger;
+    this.executor?.setEvalLogger(logger);
   }
 
   // ---------------------------------------------------------------------------
@@ -208,7 +209,10 @@ export abstract class BaseAgent implements IAgent {
 
     client.onDisconnect(() => {
       this.log.warn({ kind: "connection_lost" });
-      this.evalLogger?.logE({ ts: Date.now(), kind: 'connection_lost' });
+      // Only log as a real loss when not shutting down gracefully
+      if (this.running) {
+        this.evalLogger?.logE({ ts: Date.now(), kind: 'connection_lost' });
+      }
       // Cancel any in-flight action so it isn't replayed on reconnect
       if (this.executor) this.executor.cancelCurrentPlan();
       this.currentIntention = null;
@@ -460,7 +464,7 @@ export abstract class BaseAgent implements IAgent {
       const needsReplan = planFailed || shouldReplan || this.executor.isIdle();
 
       if (!needsReplan) {
-        const replanReason = planFailed ? 'plan_failed' : 'better_option_or_target_gone';
+        const replanReason = '';
         this.evalLogger?.logD({
           ...baseRecord,
           gateSkip: false,
@@ -485,7 +489,10 @@ export abstract class BaseAgent implements IAgent {
         .filter(a => !a.isAlly)
         .map(a => ({ pos: [Math.round(a.position.x), Math.round(a.position.y)] as [number, number], h: a.heading ?? '' }));
 
-      const replanReason = planFailed ? 'plan_failed' : (shouldReplan ? 'better_option_or_target_gone' : '');
+      const replanReason = planFailed ? 'plan_failed'
+        : shouldReplan ? 'better_option_or_target_gone'
+        : this.executor.isIdle() ? 'idle'
+        : '';
 
       // Helper to emit the full D record at any return point
       const emitLog = (): void => {
