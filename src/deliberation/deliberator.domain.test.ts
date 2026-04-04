@@ -93,7 +93,7 @@ describe('Deliberator — R15 filtra parcelle con reward <= 0', () => {
 
   it('non genera intenzioni per parcella con reward=0', () => {
     const p = makeParcel('p-zero', { reward: 0, estimatedReward: 0 });
-    const intentions = deliberator.evaluate(mockStore([p]));
+    const intentions = deliberator.evaluate(mockStore([p])).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(!ids.includes('p-zero'),
       'parcella con reward=0 non deve generare intenzioni');
@@ -101,7 +101,7 @@ describe('Deliberator — R15 filtra parcelle con reward <= 0', () => {
 
   it('non genera intenzioni per parcella con reward negativo (edge case)', () => {
     const p = makeParcel('p-neg', { reward: -1, estimatedReward: -1 });
-    const intentions = deliberator.evaluate(mockStore([p]));
+    const intentions = deliberator.evaluate(mockStore([p])).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(!ids.includes('p-neg'),
       'parcella con reward negativo non deve generare intenzioni');
@@ -109,7 +109,7 @@ describe('Deliberator — R15 filtra parcelle con reward <= 0', () => {
 
   it('genera intenzioni per parcella con reward=1 (> 0)', () => {
     const p = makeParcel('p-one', { reward: 1, estimatedReward: 1 });
-    const intentions = deliberator.evaluate(mockStore([p]));
+    const intentions = deliberator.evaluate(mockStore([p])).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(ids.includes('p-one'),
       'parcella con reward=1 deve generare intenzioni');
@@ -118,7 +118,7 @@ describe('Deliberator — R15 filtra parcelle con reward <= 0', () => {
   it('genera intenzioni solo per le parcelle con reward > 0 (mista)', () => {
     const pAlive = makeParcel('p-alive', { reward: 30 });
     const pDead = makeParcel('p-dead', { position: { x: 6, y: 4 }, reward: 0 });
-    const intentions = deliberator.evaluate(mockStore([pAlive, pDead]));
+    const intentions = deliberator.evaluate(mockStore([pAlive, pDead])).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(ids.includes('p-alive'));
     assert.ok(!ids.includes('p-dead'),
@@ -190,7 +190,7 @@ describe('Deliberator — R14 usa estimateRewardAt via ParcelTracker', () => {
       mockStore([pClose, pFar], { x: 4, y: 4 }),
       movDuration,
       tracker,
-    );
+    ).intentions;
 
     const farIntention = intentions.find(i => i.targetParcels[0] === 'p_far');
     assert.ok(farIntention, 'deve esserci un\'intenzione per p_far');
@@ -207,7 +207,7 @@ describe('Deliberator — R14 usa estimateRewardAt via ParcelTracker', () => {
     // estimatedReward già decrementato (non il reward corrente)
     const p = makeParcel('p1', { reward: 50, estimatedReward: 10 });
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(mockStore([p])); // no tracker
+    const intentions = deliberator.evaluate(mockStore([p])).intentions; // no tracker
     assert.ok(intentions.length >= 1);
     // utility = estimatedReward / steps: deve essere positivo
     assert.ok(intentions[0]!.utility > 0);
@@ -223,7 +223,7 @@ describe('Deliberator — R18 capacity soft threshold', () => {
     const p1 = makeParcel('p1', { position: { x: 5, y: 4 } });
     const p2 = makeParcel('p2', { position: { x: 6, y: 4 } });
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(mockStore([p1, p2], { x: 4, y: 4 }, Infinity));
+    const intentions = deliberator.evaluate(mockStore([p1, p2], { x: 4, y: 4 }, Infinity)).intentions;
     assert.ok(intentions.length >= 2, 'capacity Infinity non blocca');
   });
 
@@ -239,7 +239,7 @@ describe('Deliberator — R18 capacity soft threshold', () => {
       }),
     };
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
     // Cluster di 2 deve essere cappato a 1 → non cluster da 2 elementi
     const multiParcel = intentions.filter(i => i.targetParcels.length > 1);
     assert.equal(multiParcel.length, 0,
@@ -258,7 +258,7 @@ describe('Deliberator — R18 capacity soft threshold', () => {
       }),
     };
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
     assert.equal(intentions.length, 0,
       'capacity raggiunta: nessuna intenzione di pickup');
   });
@@ -273,7 +273,7 @@ describe('Deliberator — R19 explore intention senza parcelle', () => {
     const target: Position = { x: 1, y: 0 };
     const store = mockStore([], { x: 4, y: 4 }, Infinity, target);
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
 
     assert.equal(intentions.length, 1, 'deve esserci esattamente 1 intenzione');
     assert.equal(intentions[0]!.type, 'explore', 'tipo deve essere explore');
@@ -283,7 +283,7 @@ describe('Deliberator — R19 explore intention senza parcelle', () => {
   it('ritorna array vuoto quando no parcelle E no explore target', () => {
     const store = mockStore([], { x: 4, y: 4 }, Infinity, null);
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
     assert.equal(intentions.length, 0,
       'senza parcelle e senza explore target: array vuoto');
   });
@@ -293,7 +293,7 @@ describe('Deliberator — R19 explore intention senza parcelle', () => {
     const target: Position = { x: 1, y: 0 };
     const store = mockStore([p], { x: 4, y: 4 }, Infinity, target);
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
 
     const explores = intentions.filter(i => i.type === 'explore');
     assert.equal(explores.length, 0,
@@ -304,7 +304,7 @@ describe('Deliberator — R19 explore intention senza parcelle', () => {
     const target: Position = { x: 1, y: 0 };
     const store = mockStore([], { x: 4, y: 4 }, Infinity, target);
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
 
     assert.equal(intentions.length, 1);
     assert.equal(intentions[0]!.utility, 0.1,
@@ -317,7 +317,7 @@ describe('Deliberator — R19 explore intention senza parcelle', () => {
     const target: Position = { x: 3, y: 0 };
     const store = mockStore([p], { x: 4, y: 4 }, Infinity, target);
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
 
     const explores = intentions.filter(i => i.type === 'explore');
     assert.ok(explores.length >= 1,

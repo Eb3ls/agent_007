@@ -96,12 +96,12 @@ describe('Deliberator.evaluate — edge cases', () => {
       makeParcel({ id: 'p2', confidence: 0, position: { x: 6, y: 4 } }),
     ];
     const beliefs = mockStore(parcels);
-    assert.deepEqual(deliberator.evaluate(beliefs), []);
+    assert.deepEqual(deliberator.evaluate(beliefs).intentions, []);
   });
 
   it('returns a single intention for a single reachable parcel (no cluster)', () => {
     const p = makeParcel({ id: 'lone', position: { x: 5, y: 4 }, estimatedReward: 30 });
-    const intentions = deliberator.evaluate(mockStore([p]));
+    const intentions = deliberator.evaluate(mockStore([p])).intentions;
     // Should be exactly 1 intention (no cluster for a single parcel)
     assert.equal(intentions.length, 1);
     assert.deepEqual(intentions[0]!.targetParcels, ['lone']);
@@ -110,7 +110,7 @@ describe('Deliberator.evaluate — edge cases', () => {
   it('parcel at agent position has stepsToParcel = 0', () => {
     const selfPos: Position = { x: 4, y: 4 };
     const p = makeParcel({ id: 'here', position: selfPos, estimatedReward: 20 });
-    const intentions = deliberator.evaluate(mockStore([p], selfPos));
+    const intentions = deliberator.evaluate(mockStore([p], selfPos)).intentions;
     assert.ok(intentions.length > 0);
     const single = intentions.find(i => i.targetParcels.length === 1 && i.targetParcels[0] === 'here');
     assert.ok(single, 'single-parcel intention for parcel at agent position must exist');
@@ -124,7 +124,7 @@ describe('Deliberator.evaluate — edge cases', () => {
       makeParcel({ id: 'b', position: { x: 5, y: 4 }, estimatedReward: 50 }),
       makeParcel({ id: 'c', position: { x: 5, y: 4 }, estimatedReward: 10 }),
     ];
-    const intentions = deliberator.evaluate(mockStore(parcels));
+    const intentions = deliberator.evaluate(mockStore(parcels)).intentions;
     for (let i = 1; i < intentions.length; i++) {
       assert.ok(
         intentions[i - 1]!.utility >= intentions[i]!.utility,
@@ -139,7 +139,7 @@ describe('Deliberator.evaluate — edge cases', () => {
     const free     = makeParcel({ id: 'free', position: { x: 6, y: 4 }, estimatedReward: 15 });
 
     const beliefs = mockStore([carried, free], { x: 4, y: 4 }, selfId);
-    const intentions = deliberator.evaluate(beliefs);
+    const intentions = deliberator.evaluate(beliefs).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(!ids.includes('mine'), 'self-carried parcel must not appear in candidates');
     assert.ok(ids.includes('free'));
@@ -251,7 +251,7 @@ describe('Deliberator — shouldReplan con precomputedCandidates', () => {
     const intention = createSingleIntention(p, 1, 9, 20);
 
     const withoutPre = deliberator.shouldReplan(intention, store, false, 500);
-    const candidates = deliberator.evaluate(store, 500);
+    const candidates = deliberator.evaluate(store, 500).intentions;
     const withPre = deliberator.shouldReplan(intention, store, false, 500, undefined, candidates);
 
     assert.strictEqual(withPre, withoutPre,

@@ -98,7 +98,7 @@ describe('Deliberator.evaluate', () => {
 
   it('returns empty array when no reachable parcels and no explore target', () => {
     const beliefs = mockStore([]); // getExploreTarget returns null in default mock
-    assert.deepEqual(deliberator.evaluate(beliefs), []);
+    assert.deepEqual(deliberator.evaluate(beliefs).intentions, []);
   });
 
   it('returns explore intention when no reachable parcels but spawning tile exists', () => {
@@ -107,7 +107,7 @@ describe('Deliberator.evaluate', () => {
       ...mockStore([]),
       getExploreTarget: () => target,
     };
-    const results = deliberator.evaluate(beliefs);
+    const results = deliberator.evaluate(beliefs).intentions;
     assert.equal(results.length, 1);
     assert.equal(results[0]!.type, 'explore');
     assert.deepEqual(results[0]!.targetPosition, target);
@@ -124,7 +124,7 @@ describe('Deliberator.evaluate', () => {
     const p2 = makeParcel({ id: 'p2', position: { x: 4, y: 8 }, estimatedReward: 10 });
     const p3 = makeParcel({ id: 'p3', position: { x: 7, y: 4 }, estimatedReward: 30 });
 
-    const intentions = deliberator.evaluate(mockStore([p1, p2, p3]));
+    const intentions = deliberator.evaluate(mockStore([p1, p2, p3])).intentions;
 
     assert.ok(intentions.length >= 3, 'at least 3 single-parcel intentions');
     // Verify descending order
@@ -143,7 +143,7 @@ describe('Deliberator.evaluate', () => {
     const p1 = makeParcel({ id: 'p1', position: { x: 5, y: 4 }, estimatedReward: 20 });
     const p2 = makeParcel({ id: 'p2', position: { x: 6, y: 4 }, estimatedReward: 20 });
 
-    const intentions = deliberator.evaluate(mockStore([p1, p2]));
+    const intentions = deliberator.evaluate(mockStore([p1, p2])).intentions;
 
     const clusters = intentions.filter(i => i.targetParcels.length === 2);
     assert.ok(clusters.length >= 1, 'at least one cluster intention');
@@ -154,7 +154,7 @@ describe('Deliberator.evaluate', () => {
     const p1 = makeParcel({ id: 'p1', position: { x: 5, y: 4 }, estimatedReward: 20 });
     const p2 = makeParcel({ id: 'p2', position: { x: 6, y: 4 }, estimatedReward: 20 });
 
-    const intentions = deliberator.evaluate(mockStore([p1, p2]));
+    const intentions = deliberator.evaluate(mockStore([p1, p2])).intentions;
     const best = intentions[0]!;
 
     assert.equal(best.targetParcels.length, 2, 'cluster intention should be best');
@@ -164,7 +164,7 @@ describe('Deliberator.evaluate', () => {
     const carried = makeParcel({ id: 'c1', position: { x: 5, y: 4 }, carriedBy: 'other' });
     const free    = makeParcel({ id: 'f1', position: { x: 6, y: 4 }, estimatedReward: 10 });
 
-    const intentions = deliberator.evaluate(mockStore([carried, free]));
+    const intentions = deliberator.evaluate(mockStore([carried, free])).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(!ids.includes('c1'), 'carried parcel should not appear');
     assert.ok(ids.includes('f1'));
@@ -190,7 +190,7 @@ describe('Deliberator.evaluate', () => {
       }),
     };
 
-    const intentions = deliberator.evaluate(storeAtCapacity);
+    const intentions = deliberator.evaluate(storeAtCapacity).intentions;
     assert.equal(intentions.length, 0, 'no intentions when at capacity');
   });
 
@@ -220,7 +220,7 @@ describe('Deliberator.evaluate', () => {
     const enemy = makeAgent({ id: 'enemy1', position: { x: 7, y: 4 } });
     const store: IBeliefStore = { ...mockStore([contested, safe]), getAgentBeliefs: () => [enemy] };
 
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(!ids.includes('contested'), 'contested parcel should be filtered when enemy is closer');
     assert.ok(ids.includes('safe'), 'safe parcel should be kept');
@@ -233,7 +233,7 @@ describe('Deliberator.evaluate', () => {
     const enemy = makeAgent({ id: 'enemy1', position: { x: 8, y: 4 } });
     const store: IBeliefStore = { ...mockStore([safe]), getAgentBeliefs: () => [enemy] };
 
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(ids.includes('safe'), 'safe parcel should be kept when self is closer');
   });
@@ -245,7 +245,7 @@ describe('Deliberator.evaluate', () => {
     const enemy = makeAgent({ id: 'enemy1', position: { x: 6, y: 6 } });
     const store: IBeliefStore = { ...mockStore([tied]), getAgentBeliefs: () => [enemy] };
 
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(ids.includes('tied'), 'tied parcel should be kept (tie favors self)');
   });
@@ -257,7 +257,7 @@ describe('Deliberator.evaluate', () => {
     const enemy = makeAgent({ id: 'enemy1', position: { x: 8, y: 4 } }); // closer to p1 and p2
     const store: IBeliefStore = { ...mockStore([p1, p2]), getAgentBeliefs: () => [enemy] };
 
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
     // Should not return empty — fallback to all reachable
     assert.ok(intentions.length > 0, 'should not be empty when all parcels are contested');
     const ids = intentions.flatMap(i => i.targetParcels);
@@ -271,7 +271,7 @@ describe('Deliberator.evaluate', () => {
     const ally = makeAgent({ id: 'ally1', position: { x: 7, y: 4 }, isAlly: true });
     const store: IBeliefStore = { ...mockStore([p]), getAgentBeliefs: () => [ally] };
 
-    const intentions = deliberator.evaluate(store);
+    const intentions = deliberator.evaluate(store).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(ids.includes('p1'), 'parcel should not be filtered because of ally proximity');
   });
@@ -299,7 +299,7 @@ describe('Deliberator.evaluate', () => {
       }),
     };
 
-    const intentions = deliberator.evaluate(storePartialCapacity);
+    const intentions = deliberator.evaluate(storePartialCapacity).intentions;
     const clusterIntentions = intentions.filter(i => i.targetParcels.length > 1);
     for (const ci of clusterIntentions) {
       assert.ok(ci.targetParcels.length <= 2, `cluster size ${ci.targetParcels.length} exceeds remaining capacity 2`);
@@ -421,7 +421,7 @@ describe('Deliberator.evaluate — decay-aware utility via ParcelTracker', () =>
 
     const deliberator = new Deliberator();
     const store = mockStore([pNear, pFar]);
-    const intentions = deliberator.evaluate(store, movementDurationMs, tracker);
+    const intentions = deliberator.evaluate(store, movementDurationMs, tracker).intentions;
 
     // p_far projects to ~0 utility at delivery — filtered out; only p_near remains
     assert.ok(intentions.length >= 1, 'should have at least 1 intention');
@@ -435,7 +435,7 @@ describe('Deliberator.evaluate — decay-aware utility via ParcelTracker', () =>
   it('falls back to estimatedReward when no tracker provided (backward compat)', () => {
     const p = makeParcel({ id: 'p1', position: { x: 5, y: 4 }, estimatedReward: 30 });
     const deliberator = new Deliberator();
-    const intentions = deliberator.evaluate(mockStore([p])); // no tracker
+    const intentions = deliberator.evaluate(mockStore([p])).intentions; // no tracker
     assert.ok(intentions.length >= 1);
     // utility should be reward / steps = 30 / (1+4) = 6 ... just check it's non-zero
     assert.ok(intentions[0]!.utility > 0);

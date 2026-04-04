@@ -2,7 +2,7 @@
 // src/deliberation/deliberator.ts — Deliberator: intention selection & replan trigger (T12)
 // ============================================================
 
-import type { IBeliefStore, Intention } from '../types.js';
+import type { EvalCandidate, EvaluationResult, IBeliefStore, Intention } from '../types.js';
 import { manhattanDistance } from '../types.js';
 import type { ParcelTracker } from '../beliefs/parcel-tracker.js';
 import {
@@ -30,9 +30,9 @@ export class Deliberator {
    * When `tracker` and `movementDurationMs` are provided, parcel rewards are
    * projected to their estimated value at delivery time, accounting for decay.
    *
-   * Returns intentions sorted by utility descending.
+   * Returns an EvaluationResult with sorted intentions and metadata for L1 logging.
    */
-  evaluate(beliefs: IBeliefStore, movementDurationMs = 500, tracker?: ParcelTracker): Intention[] {
+  evaluate(beliefs: IBeliefStore, movementDurationMs = 500, tracker?: ParcelTracker): EvaluationResult {
     const allReachable = beliefs.getReachableParcels();
     // R15: filter out parcels with reward <= 0 before generating intentions.
     // Expired parcels remain in the belief set as obstacles/noise but must not be pursued.
@@ -41,15 +41,20 @@ export class Deliberator {
       // No parcels visible — explore toward nearest unvisited spawning tile.
       const selfPos = beliefs.getSelf().position;
       const target = beliefs.getExploreTarget(selfPos);
-      if (!target) return [];
-      return [createExploreIntention(target)];
+      if (!target) return { intentions: [], reachable: 0, contestaDrop: 0, candidates: [] };
+      const exploreIntent = createExploreIntention(target);
+      const exploreCandidate: EvalCandidate = {
+        type: 'explore', tp: [], u: exploreIntent.utility,
+        steps: manhattanDistance(selfPos, target), projR: 0,
+      };
+      return { intentions: [exploreIntent], reachable: 0, contestaDrop: 0, candidates: [exploreCandidate] };
     }
 
     const capacity = beliefs.getCapacity();
     const carried = beliefs.getSelf().carriedParcels.length;
     // Remaining space the agent can pick up; if full, no pickup intentions make sense.
     const remaining = capacity - carried;
-    if (remaining <= 0) return [];
+    if (remaining <= 0) return { intentions: [], reachable: reachable.length, contestaDrop: 0, candidates: [] };
 
     const selfPos = beliefs.getSelf().position;
     const intentions: Intention[] = [];
@@ -63,7 +68,11 @@ export class Deliberator {
       const mySteps = manhattanDistance(selfPos, parcel.position);
       return enemies.every(enemy => manhattanDistance(enemy.position, parcel.position) >= mySteps);
     });
+    const contestaDrop = reachable.length - uncontested.length;
     const candidates = uncontested.length > 0 ? uncontested : reachable;
+
+    // Build EvalCandidate list for logging (single + cluster)
+    const evalCandidates: EvalCandidate[] = [];
 
     // --- Single-parcel intentions ---
     for (const parcel of candidates) {
@@ -73,7 +82,12 @@ export class Deliberator {
       const projectedReward = tracker
         ? tracker.estimateRewardAt(parcel.id, now + (stepsToParcel + stepsToDelivery) * movementDurationMs)
         : parcel.estimatedReward;
-      intentions.push(createSingleIntention(parcel, stepsToParcel, stepsToDelivery, projectedReward));
+      const intent = createSingleIntention(parcel, stepsToParcel, stepsToDelivery, projectedReward);
+      intentions.push(intent);
+      evalCandidates.push({
+        type: 'pickup', tp: [parcel.id],
+        u: intent.utility, steps: stepsToParcel + stepsToDelivery, projR: projectedReward,
+      });
     }
 
     // --- Multi-parcel cluster intentions ---
@@ -98,9 +112,13 @@ export class Deliberator {
           )
         : undefined;
 
-      intentions.push(
-        createClusterIntention(ordered, stepsToFirst, interParcelSteps, stepsToDelivery, projectedRewards),
-      );
+      const intent = createClusterIntention(ordered, stepsToFirst, interParcelSteps, stepsToDelivery, projectedRewards);
+      intentions.push(intent);
+      const totalProjR = projectedRewards ? projectedRewards.reduce((s, r) => s + r, 0) : ordered.reduce((s, p) => s + p.estimatedReward, 0);
+      evalCandidates.push({
+        type: 'cluster', tp: ordered.map(p => p.id),
+        u: intent.utility, steps: stepsToFirst + interParcelSteps + stepsToDelivery, projR: totalProjR,
+      });
     }
 
     // Drop intentions whose projected reward is already 0 at delivery time — not worth pursuing.
@@ -109,11 +127,16 @@ export class Deliberator {
     const positive = intentions.filter(i => i.utility > 0);
     if (positive.length === 0) {
       const target = beliefs.getExploreTarget(selfPos);
-      if (!target) return [];
-      return [createExploreIntention(target)];
+      if (!target) return { intentions: [], reachable: reachable.length, contestaDrop, candidates: evalCandidates };
+      const exploreIntent = createExploreIntention(target);
+      const exploreCandidate: EvalCandidate = {
+        type: 'explore', tp: [], u: exploreIntent.utility,
+        steps: manhattanDistance(selfPos, target), projR: 0,
+      };
+      return { intentions: [exploreIntent], reachable: reachable.length, contestaDrop, candidates: [...evalCandidates, exploreCandidate] };
     }
     positive.sort((a, b) => b.utility - a.utility);
-    return positive;
+    return { intentions: positive, reachable: reachable.length, contestaDrop, candidates: evalCandidates };
   }
 
   /**
@@ -130,7 +153,7 @@ export class Deliberator {
     planFailed = false,
     movementDurationMs = 500,
     tracker?: ParcelTracker,
-    precomputedCandidates?: Intention[],
+    precomputedCandidates?: readonly Intention[],
   ): boolean {
     if (currentIntention === null) return false;
     if (planFailed) return true;
@@ -147,7 +170,7 @@ export class Deliberator {
     }
 
     // Check if a significantly better option exists
-    const candidates = precomputedCandidates ?? this.evaluate(beliefs, movementDurationMs, tracker);
+    const candidates = precomputedCandidates ?? this.evaluate(beliefs, movementDurationMs, tracker).intentions;
     const best = candidates[0];
     const currentRefreshed = candidates.find(
       c => c.targetParcels.join(',') === currentIntention.targetParcels.join(','),
