@@ -5,6 +5,7 @@
 import type { EvalCandidate, EvaluationResult, IBeliefStore, Intention } from '../types.js';
 import { manhattanDistance } from '../types.js';
 import type { ParcelTracker } from '../beliefs/parcel-tracker.js';
+import { posKey } from '../pathfinding/distance-map.js';
 import {
   createClusterIntention,
   createExploreIntention,
@@ -32,20 +33,33 @@ export class Deliberator {
    *
    * Returns an EvaluationResult with sorted intentions and metadata for L1 logging.
    */
-  evaluate(beliefs: IBeliefStore, movementDurationMs = 500, tracker?: ParcelTracker): EvaluationResult {
+  evaluate(
+    beliefs: IBeliefStore,
+    movementDurationMs = 500,
+    tracker?: ParcelTracker,
+    distanceMap?: Map<number, number>,
+  ): EvaluationResult {
     const allReachable = beliefs.getReachableParcels();
     // R15: filter out parcels with reward <= 0 before generating intentions.
     // Expired parcels remain in the belief set as obstacles/noise but must not be pursued.
     const reachable = allReachable.filter(p => p.reward > 0);
+
+    const mapWidth = beliefs.getMap().width;
+    // When a distance map is available, use exact BFS step counts from the agent's position.
+    // Falls back to Manhattan when the tile is unreachable (should not happen for reachable parcels).
+    const exactDist = (pos: { x: number; y: number }): number =>
+      distanceMap?.get(posKey(pos.x, pos.y, mapWidth)) ?? manhattanDistance(selfPos, pos);
+
+    const selfPos = beliefs.getSelf().position;
+
     if (reachable.length === 0) {
       // No parcels visible — explore toward nearest unvisited spawning tile.
-      const selfPos = beliefs.getSelf().position;
       const target = beliefs.getExploreTarget(selfPos);
       if (!target) return { intentions: [], reachable: 0, contestaDrop: 0, candidates: [] };
       const exploreIntent = createExploreIntention(target);
       const exploreCandidate: EvalCandidate = {
         type: 'explore', tp: [], u: exploreIntent.utility,
-        steps: manhattanDistance(selfPos, target), projR: 0,
+        steps: exactDist(target), projR: 0,
       };
       return { intentions: [exploreIntent], reachable: 0, contestaDrop: 0, candidates: [exploreCandidate] };
     }
@@ -56,16 +70,16 @@ export class Deliberator {
     const remaining = capacity - carried;
     if (remaining <= 0) return { intentions: [], reachable: reachable.length, contestaDrop: 0, candidates: [] };
 
-    const selfPos = beliefs.getSelf().position;
     const intentions: Intention[] = [];
     const now = Date.now();
 
     // --- Contesa filter: remove parcels where an enemy agent is strictly closer ---
-    // Uses Manhattan distance as a proxy for enemy path length (we don't know their obstacles).
+    // Agent distance uses exact BFS (we know our obstacles). Enemy distance stays Manhattan
+    // (we don't know their obstacles, so we can't be more accurate than that).
     // Falls back to all reachable parcels if every parcel is contested (avoid paralysis).
     const enemies = beliefs.getAgentBeliefs().filter(a => !a.isAlly);
     const uncontested = reachable.filter(parcel => {
-      const mySteps = manhattanDistance(selfPos, parcel.position);
+      const mySteps = exactDist(parcel.position);
       return enemies.every(enemy => manhattanDistance(enemy.position, parcel.position) >= mySteps);
     });
     const contestaDrop = reachable.length - uncontested.length;
@@ -76,8 +90,10 @@ export class Deliberator {
 
     // --- Single-parcel intentions ---
     for (const parcel of candidates) {
-      const stepsToParcel = manhattanDistance(selfPos, parcel.position);
+      const stepsToParcel = exactDist(parcel.position);
       const delivery = beliefs.getNearestDeliveryZone(parcel.position);
+      // stepsToDelivery: Manhattan from parcel to delivery zone (a reverse BFS would be needed
+      // for exact values; Manhattan is an acceptable proxy here since delivery zones are accessible).
       const stepsToDelivery = delivery ? manhattanDistance(parcel.position, delivery) : 0;
       const projectedReward = tracker
         ? tracker.estimateRewardAt(parcel.id, now + (stepsToParcel + stepsToDelivery) * movementDurationMs)
@@ -97,7 +113,7 @@ export class Deliberator {
       const capped = remaining < cluster.length ? cluster.slice(0, remaining) : cluster;
       if (capped.length < 2) continue; // single-parcel clusters already covered above
 
-      const { ordered, stepsToFirst, interParcelSteps } = orderParcelsByNearest(capped, selfPos);
+      const { ordered, stepsToFirst, interParcelSteps } = orderParcelsByNearest(capped, selfPos, distanceMap, mapWidth);
       const lastPos = ordered[ordered.length - 1]!.position;
       const delivery = beliefs.getNearestDeliveryZone(lastPos);
       const stepsToDelivery = delivery ? manhattanDistance(lastPos, delivery) : 0;

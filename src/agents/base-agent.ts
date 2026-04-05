@@ -31,6 +31,7 @@ import { PlanValidator } from '../planning/plan-validator.js';
 import type { IPlanner } from '../types.js';
 import { buildPlannerChain } from '../planning/planner-factory.js';
 import { findPath } from '../pathfinding/pathfinder.js';
+import { computeDistanceMap, posKey } from '../pathfinding/distance-map.js';
 import { createLogger, type Logger } from '../logging/logger.js';
 import { MetricsCollector } from '../metrics/metrics-collector.js';
 import { formatSummary } from '../metrics/metrics-snapshot.js';
@@ -271,14 +272,25 @@ export abstract class BaseAgent implements IAgent {
       this.beliefs?.clearDeliveredParcels();
     });
 
-    // During explore plans, check for newly visible parcels after each step.
-    // The inFlight guard in _scheduleDeliberation blocks sensing-triggered deliberation
-    // while a move is in-flight; this callback fires right after inFlight clears,
-    // before the next step starts, so it can interrupt explore if parcels appeared.
-    this.executor.onStepComplete((_step, _index) => {
-      if (this.currentIntention?.type === 'explore') {
-        this._scheduleDeliberation(false, 'sensing');
+    // Reactive hook: fires after each successful step (inFlight already cleared).
+    // 1. Opportunistic pickup: grab any parcel on the current tile at zero extra cost.
+    // 2. Deliberation: check for better options for all plan types (not just explore).
+    this.executor.setReactiveHook(async (step, _index) => {
+      if (!this.beliefs || !this.running) return;
+      // Only attempt pickup on move steps (not pickup/putdown steps themselves)
+      if (step.action !== 'pickup' && step.action !== 'putdown') {
+        const self = this.beliefs.getSelf();
+        if (self.carriedParcels.length < this.beliefs.getCapacity()) {
+          const here = step.expectedPosition;
+          const parcelHere = this.beliefs.getParcelBeliefs().find(
+            p => p.carriedBy === null && p.position.x === here.x && p.position.y === here.y,
+          );
+          if (parcelHere) {
+            await this.client.pickup();
+          }
+        }
       }
+      this._scheduleDeliberation(false, 'sensing');
     });
 
     this.executor.onPlanComplete((plan) => {
@@ -449,10 +461,19 @@ export abstract class BaseAgent implements IAgent {
         }
       }
 
+      // BFS distance map from current agent position — exact step costs to all tiles.
+      // Computed once per deliberation cycle; replaces Manhattan distance in evaluate().
+      const selfPosRounded = {
+        x: Math.round(self0.position.x),
+        y: Math.round(self0.position.y),
+      };
+      const distMap = computeDistanceMap(selfPosRounded, this.beliefs.getMap());
+      const mapWidth = this.beliefs.getMap().width;
+
       // Compute candidates once — passed to shouldReplan to avoid a second evaluate().
       const claimedByOthers =
         this.allyTracker?.getClaimedByOthers() ?? new Set<string>();
-      const evalResult = this.deliberator.evaluate(this.beliefs, movementDurationMs, tracker);
+      const evalResult = this.deliberator.evaluate(this.beliefs, movementDurationMs, tracker, distMap);
       const candidates = evalResult.intentions
         .filter(i => !i.targetParcels.some(id => claimedByOthers.has(id)));
 
@@ -621,7 +642,8 @@ export abstract class BaseAgent implements IAgent {
       if (self.carriedParcels.length > 0) {
         const deliveryTarget = this.beliefs.getNearestDeliveryZone(self.position);
         if (deliveryTarget) {
-          const delivSteps = manhattanDistance(self.position, deliveryTarget);
+          const delivSteps = distMap.get(posKey(deliveryTarget.x, deliveryTarget.y, mapWidth))
+            ?? manhattanDistance(self.position, deliveryTarget);
           const totalCarried = self.carriedParcels.reduce((s, p) => s + p.estimatedReward, 0);
           const numCarried = self.carriedParcels.length;
           const decayPerStep = this._getDecayPerStep();
@@ -631,7 +653,9 @@ export abstract class BaseAgent implements IAgent {
           // Recover projected parcel reward from utility (utility = projectedReward / steps).
           // stepsToParcel + stepsFromParcelToDelivery (using same delivery zone for consistency).
           const bestParcel = this.beliefs.getParcelBeliefs().find(p => p.id === best.targetParcels[0]);
-          const stepsToParcel = bestParcel ? manhattanDistance(self.position, bestParcel.position) : 0;
+          const stepsToParcel = bestParcel
+            ? (distMap.get(posKey(bestParcel.position.x, bestParcel.position.y, mapWidth)) ?? manhattanDistance(self.position, bestParcel.position))
+            : 0;
           const stepsParcelToDelivery = bestParcel ? manhattanDistance(bestParcel.position, deliveryTarget) : 0;
           const bestTotalSteps = stepsToParcel + stepsParcelToDelivery;
           const projectedParcelReward = best.utility * bestTotalSteps;
@@ -820,9 +844,13 @@ export abstract class BaseAgent implements IAgent {
     // and NOT in the 2s cooldown set (recently failed with NPC contest).
     const now = Date.now();
     const allZones = Array.from(this.beliefs.getMap().getDeliveryZones());
-    const sortedZones = allZones.sort(
-      (a, b) => manhattanDistance(selfPos, a) - manhattanDistance(selfPos, b),
-    );
+    const delivDistMap = computeDistanceMap(selfPos, this.beliefs.getMap());
+    const delivMapWidth = this.beliefs.getMap().width;
+    const sortedZones = allZones.sort((a, b) => {
+      const da = delivDistMap.get(posKey(a.x, a.y, delivMapWidth)) ?? manhattanDistance(selfPos, a);
+      const db = delivDistMap.get(posKey(b.x, b.y, delivMapWidth)) ?? manhattanDistance(selfPos, b);
+      return da - db;
+    });
     const unblockedZone = sortedZones.find(z => {
       if (agentObstacles.some(o => o.x === z.x && o.y === z.y)) return false;
       const cooldown = this.deliveryZoneCooldowns.get(`${z.x},${z.y}`);

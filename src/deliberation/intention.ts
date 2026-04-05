@@ -5,6 +5,7 @@
 import { randomUUID } from 'crypto';
 import type { Intention, ParcelBelief, Position } from '../types.js';
 import { manhattanDistance } from '../types.js';
+import { posKey } from '../pathfinding/distance-map.js';
 
 /** Max Manhattan distance between parcels to be grouped in a cluster. */
 export const CLUSTER_RADIUS = 3;
@@ -134,10 +135,16 @@ export function createExploreIntention(target: Position): Intention {
 /**
  * Sort parcels in nearest-neighbour order starting from `from`.
  * Returns the ordered list and the total inter-parcel steps.
+ *
+ * When `distanceMap` and `mapWidth` are provided, `stepsToFirst` is computed
+ * using the exact BFS distance from the agent to the first parcel.
+ * Inter-parcel distances always use Manhattan (BFS from each parcel would be O(N×W×H)).
  */
 export function orderParcelsByNearest(
   parcels: ReadonlyArray<ParcelBelief>,
   from: Position,
+  distanceMap?: Map<number, number>,
+  mapWidth?: number,
 ): { ordered: ParcelBelief[]; interParcelSteps: number; stepsToFirst: number } {
   if (parcels.length === 0) return { ordered: [], interParcelSteps: 0, stepsToFirst: 0 };
   const remaining = [...parcels];
@@ -158,7 +165,10 @@ export function orderParcelsByNearest(
     current = next.position;
   }
 
-  const stepsToFirst = manhattanDistance(from, ordered[0]!.position);
+  const first = ordered[0]!;
+  const stepsToFirst = (distanceMap !== undefined && mapWidth !== undefined)
+    ? (distanceMap.get(posKey(first.position.x, first.position.y, mapWidth)) ?? manhattanDistance(from, first.position))
+    : manhattanDistance(from, first.position);
   return { ordered, interParcelSteps, stepsToFirst };
 }
 
