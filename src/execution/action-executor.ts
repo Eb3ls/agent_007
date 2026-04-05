@@ -40,6 +40,7 @@ export class ActionExecutor implements IActionExecutor {
   private stepFailedCbs: Array<(step: PlanStep, index: number, reason: string) => void> = [];
   private replanRequiredCbs: Array<(signal: ReplanSignal) => void> = [];
   private putdownCbs: Array<(count: number) => void> = [];
+  private reactiveHook: ((step: PlanStep, index: number) => Promise<void>) | null = null;
 
   /** Set by executeStep when a replan signal has been emitted; cleared in runLoop. */
   private replanEmitted = false;
@@ -108,6 +109,15 @@ export class ActionExecutor implements IActionExecutor {
     this.putdownCbs.push(cb);
   }
 
+  /**
+   * Register an async hook called after each successful step, before advancing stepIndex.
+   * If the hook issues a new plan (via executePlan), the loop detects plan replacement
+   * and switches to the new plan immediately.
+   */
+  setReactiveHook(fn: (step: PlanStep, index: number) => Promise<void>): void {
+    this.reactiveHook = fn;
+  }
+
   // --- Internal execution loop ---
 
   private async runLoop(): Promise<void> {
@@ -146,6 +156,10 @@ export class ActionExecutor implements IActionExecutor {
 
       if (success) {
         for (const cb of this.stepCompleteCbs) cb(step, index);
+        if (this.reactiveHook) {
+          await this.reactiveHook(step, index);
+          if (this.cancelled || this.currentPlan !== plan) continue;
+        }
         this.stepIndex++;
       } else if (this.replanEmitted) {
         // onReplanRequired already fired inside executeStep — just clear and break.
