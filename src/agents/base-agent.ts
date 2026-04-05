@@ -271,6 +271,16 @@ export abstract class BaseAgent implements IAgent {
       this.beliefs?.clearDeliveredParcels();
     });
 
+    // During explore plans, check for newly visible parcels after each step.
+    // The inFlight guard in _scheduleDeliberation blocks sensing-triggered deliberation
+    // while a move is in-flight; this callback fires right after inFlight clears,
+    // before the next step starts, so it can interrupt explore if parcels appeared.
+    this.executor.onStepComplete((_step, _index) => {
+      if (this.currentIntention?.type === 'explore') {
+        this._scheduleDeliberation(false, 'sensing');
+      }
+    });
+
     this.executor.onPlanComplete((plan) => {
       const hasPickup = plan.steps.some((s) => s.action === "pickup");
       const hasDelivery = plan.steps.some((s) => s.action === "putdown");
