@@ -409,7 +409,7 @@ export class BeliefStore implements IBeliefStore {
   getReachableParcels(): ReadonlyArray<ParcelBelief> {
     const selfPos = this.self.position;
     const agentObstacles = Array.from(this.agents.values())
-      .filter(a => !(a.position.x === selfPos.x && a.position.y === selfPos.y))
+      .filter(a => a.confidence > 0.5 && !(a.position.x === selfPos.x && a.position.y === selfPos.y))
       .map(a => a.position);
     return Array.from(this.parcels.values()).filter(p => {
       if (p.carriedBy !== null) return false;
