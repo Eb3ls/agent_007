@@ -371,14 +371,24 @@ export class BeliefStore implements IBeliefStore {
     const notCurrent = spawning.filter(t => !(t.x === from.x && t.y === from.y));
     if (notCurrent.length === 0) return null; // only one tile and we're on it
 
-    // Prefer nearest unvisited tile; fall back to all non-current tiles if everything visited
+    // Prefer nearest unvisited tile; fall back to all non-current tiles if everything visited.
+    // When all visited, reset the set so the next sweep starts fresh (prevents oscillation).
     const unvisited = notCurrent.filter(t => !this.visitedSpawningTiles.has(`${t.x},${t.y}`));
+    if (unvisited.length === 0) this.visitedSpawningTiles.clear();
     const candidates = unvisited.length > 0 ? unvisited : notCurrent;
+
+    // Prefer targets at least observation_distance away to maximise new area scanned per visit.
+    // On a map with obs_dist=5, adjacent tiles share ~90% of their visible area;
+    // spacing by obs_dist ensures mostly-fresh coverage each hop.
+    // Fallback to all candidates if none are far enough (e.g. small maps).
+    const minDist = this.observationDistance > 0 ? this.observationDistance : 5;
+    const spaced = candidates.filter(t => manhattanDistance(from, t) >= minDist);
+    const pool = spaced.length > 0 ? spaced : candidates;
 
     // Sort by Manhattan distance, then verify reachability via pathfinding.
     // On complex maps (mazes, narrow corridors) the nearest tile by Manhattan
     // may be unreachable, causing infinite plan-fail loops.
-    const sorted = [...candidates].sort(
+    const sorted = [...pool].sort(
       (a, b) => manhattanDistance(from, a) - manhattanDistance(from, b),
     );
     for (const t of sorted) {
