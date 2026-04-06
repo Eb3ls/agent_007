@@ -306,3 +306,88 @@ describe('pathfinder', () => {
     }
   });
 });
+
+// ============================================================
+// crate-pushing pathfinding tests (Group B)
+// ============================================================
+
+describe('pathfinder — crate pushing semantics', () => {
+  // Helper: encode a crate position as a Set key (posKey = y * width + x).
+  function crateSet(positions: Array<{ x: number; y: number }>, width: number): Set<number> {
+    const s = new Set<number>();
+    for (const p of positions) s.add(p.y * width + p.x);
+    return s;
+  }
+
+  // Helper: build a horizontal 1-row map from an array of TileTypes.
+  function makeRow(types: TileType[]): BeliefMapImpl {
+    return new BeliefMapImpl(
+      types.map((type, x) => tile(x, 0, type)),
+      types.length,
+      1,
+    );
+  }
+
+  // B1 — push valido: cassa con crate-slide (8) libero dietro
+  it('B1: finds path through a pushable crate when slide destination is free', () => {
+    // Map: [3, 3, 8, 8, 8]  (all walkable; tiles 2-4 are crate-slide)
+    // Crate at (2,0). Target (3,0).
+    // Agent at (0,0) → (1,0) → pushes crate from (2,0) to (3,0) → enters (2,0) → (3,0).
+    const map = makeRow([3, 3, 8, 8, 8]);
+    const crates = crateSet([{ x: 2, y: 0 }], map.width);
+    const path = findPath({ x: 0, y: 0 }, { x: 3, y: 0 }, map, undefined, crates);
+    assert.ok(path !== null, 'B1: path should exist when crate can be pushed right');
+    assert.deepEqual(path[0], { x: 0, y: 0 });
+    assert.deepEqual(path[path.length - 1], { x: 3, y: 0 });
+  });
+
+  // B2 — cassa intrappolata: tile beyond crate is a wall (type 0) → impassable
+  it('B2: returns null when crate push destination is a wall', () => {
+    // Map: [3, 3, 3, 0]  (last tile is wall)
+    // Crate at (2,0). Push would move it to (3,0) = wall → not type 8 → blocked.
+    const map = makeRow([3, 3, 3, 0]);
+    const crates = crateSet([{ x: 2, y: 0 }], map.width);
+    const path = findPath({ x: 0, y: 0 }, { x: 2, y: 0 }, map, undefined, crates);
+    // Target is (2,0) — occupied by crate. To reach it, the crate must be pushed
+    // to (3,0) which is a wall → push blocked → no path.
+    assert.equal(path, null, 'B2: path must be null when crate push destination is a wall');
+  });
+
+  // B3 — cassa con spawner (type 9) dietro → non pushabile
+  it('B3: returns null when crate push destination is a crate-spawner (type 9)', () => {
+    // Map: [3, 3, 9, 3]  — spawner at (2,0), walkable at (3,0)
+    // Crate at (1,0). To pass through (1,0) the crate must be pushed to (2,0) = type 9.
+    // Type 9 is not type 8 → push not allowed → path to (3,0) is null.
+    const map = makeRow([3, 3, 9, 3]);
+    const crates = crateSet([{ x: 1, y: 0 }], map.width);
+    const path = findPath({ x: 0, y: 0 }, { x: 3, y: 0 }, map, undefined, crates);
+    assert.equal(path, null, 'B3: path must be null when crate push destination is a spawner tile');
+  });
+
+  // B4 — cassa con altra cassa dietro → non pushabile
+  it('B4: returns null when crate push destination is occupied by another crate', () => {
+    // Map: [3, 8, 8, 8, 3]  (crate-slide tiles 1-3)
+    // Crates at (1,0) and (2,0).
+    // Push of crate at (1,0) would move it to (2,0) — already occupied → blocked.
+    // No other route exists (1-row map).
+    const map = makeRow([3, 8, 8, 8, 3]);
+    const crates = crateSet([{ x: 1, y: 0 }, { x: 2, y: 0 }], map.width);
+    const path = findPath({ x: 0, y: 0 }, { x: 4, y: 0 }, map, undefined, crates);
+    assert.equal(path, null, 'B4: path must be null when the only push destination is blocked by another crate');
+  });
+
+  // B5 — senza cratePositions, cassa passata come dynamicObstacle → impassabile
+  it('B5: returns null when crate is passed as a dynamic obstacle (no push semantics)', () => {
+    // Same layout as B1, but the crate is passed as a dynamicObstacle instead of cratePositions.
+    // Without push semantics, the crate tile is simply blocked.
+    const map = makeRow([3, 3, 8, 8, 8]);
+    const path = findPath(
+      { x: 0, y: 0 },
+      { x: 3, y: 0 },
+      map,
+      [{ x: 2, y: 0 }], // dynamic obstacle — no push allowed
+      undefined,          // no cratePositions → no push semantics
+    );
+    assert.equal(path, null, 'B5: path must be null when crate is a dynamic obstacle (old behaviour)');
+  });
+});
