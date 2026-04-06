@@ -68,6 +68,7 @@ function mockBeliefs(
     getReachableParcels: () => parcels.filter(p => p.carriedBy === null),
     getCrateObstacles: () => [],
     getCrateBeliefs: () => new Map(),
+    getCratePositionSet: () => new Set(),
     toSnapshot: () => ({
       agentId: 'agent-self',
       timestamp: Date.now(),

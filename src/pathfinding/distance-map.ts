@@ -5,12 +5,9 @@
 // ============================================================
 
 import type { BeliefMap, Position } from '../types.js';
-import { getNeighbors } from './grid-utils.js';
+import { getNeighbors, posKey } from './grid-utils.js';
 
-/** Encode a position as a single integer key (same scheme as pathfinder.ts). */
-export function posKey(x: number, y: number, width: number): number {
-  return y * width + x;
-}
+export { posKey };
 
 /**
  * BFS flood-fill from `from` on the given map.

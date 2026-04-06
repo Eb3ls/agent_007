@@ -483,8 +483,9 @@ export abstract class BaseAgent implements IAgent {
         x: Math.round(self0.position.x),
         y: Math.round(self0.position.y),
       };
-      const distMap = computeDistanceMap(selfPosRounded, this.beliefs.getMap());
       const mapWidth = this.beliefs.getMap().width;
+      const cratePositions = this.beliefs.getCratePositionSet(mapWidth);
+      const distMap = computeDistanceMap(selfPosRounded, this.beliefs.getMap(), undefined, cratePositions);
 
       // Compute candidates once — passed to shouldReplan to avoid a second evaluate().
       const claimedByOthers =
@@ -855,13 +856,19 @@ export abstract class BaseAgent implements IAgent {
       x: Math.round(self.position.x),
       y: Math.round(self.position.y),
     };
+    const delivMapWidth = this.beliefs.getMap().width;
+    const cratePositions = this.beliefs.getCratePositionSet(delivMapWidth);
 
     // Prefer the nearest delivery zone NOT currently occupied by an agent obstacle
     // and NOT in the 2s cooldown set (recently failed with NPC contest).
     const now = Date.now();
     const allZones = Array.from(this.beliefs.getMap().getDeliveryZones());
-    const delivDistMap = computeDistanceMap(selfPos, this.beliefs.getMap());
-    const delivMapWidth = this.beliefs.getMap().width;
+    const delivDistMap = computeDistanceMap(
+      selfPos,
+      this.beliefs.getMap(),
+      agentObstacles.length > 0 ? agentObstacles : undefined,
+      cratePositions,
+    );
     const sortedZones = allZones.sort((a, b) => {
       const da = delivDistMap.get(posKey(a.x, a.y, delivMapWidth)) ?? manhattanDistance(selfPos, a);
       const db = delivDistMap.get(posKey(b.x, b.y, delivMapWidth)) ?? manhattanDistance(selfPos, b);
@@ -880,9 +887,10 @@ export abstract class BaseAgent implements IAgent {
       delivery,
       this.beliefs.getMap(),
       agentObstacles.length > 0 ? agentObstacles : undefined,
+      cratePositions,
     );
     // Retry without agent obstacles — agents move, corridor may open
-    if (!path) path = findPath(selfPos, delivery, this.beliefs.getMap());
+    if (!path) path = findPath(selfPos, delivery, this.beliefs.getMap(), undefined, cratePositions);
     if (!path) {
       this.log.warn({
         kind: "plan_failed",
@@ -966,14 +974,17 @@ export abstract class BaseAgent implements IAgent {
       x: Math.round(self.position.x),
       y: Math.round(self.position.y),
     };
+    const exploreMapWidth = this.beliefs.getMap().width;
+    const cratePositions = this.beliefs.getCratePositionSet(exploreMapWidth);
     let path = findPath(
       selfPos,
       target,
       this.beliefs.getMap(),
       agentObstacles.length > 0 ? agentObstacles : undefined,
+      cratePositions,
     );
-    // Fallback: drop all obstacles — agents move, so explore can proceed
-    if (!path) path = findPath(selfPos, target, this.beliefs.getMap());
+    // Fallback: drop all agent obstacles — agents move, so explore can proceed
+    if (!path) path = findPath(selfPos, target, this.beliefs.getMap(), undefined, cratePositions);
     if (!path || path.length <= 1) {
       this.currentIntention = null;
       return;

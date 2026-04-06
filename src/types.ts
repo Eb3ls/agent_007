@@ -164,8 +164,10 @@ export interface IBeliefStore {
   getMap(): BeliefMap;
   getNearestDeliveryZone(from: Position): Position | null;
   getReachableParcels(): ReadonlyArray<ParcelBelief>;
+  /** @deprecated use getCratePositionSet */
   getCrateObstacles(): ReadonlyArray<Position>;
   getCrateBeliefs(): ReadonlyMap<string, CrateBelief>;
+  getCratePositionSet(mapWidth: number): ReadonlySet<number>;
   /** Maximum number of parcels the agent can carry simultaneously. Infinity if unconstrained. */
   getCapacity(): number;
   /**

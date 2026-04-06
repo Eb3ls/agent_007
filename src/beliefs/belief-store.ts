@@ -411,12 +411,21 @@ export class BeliefStore implements IBeliefStore {
     return this.parcelTracker;
   }
 
+  /** @deprecated use getCratePositionSet */
   getCrateObstacles(): ReadonlyArray<Position> {
     return Array.from(this.crates.values()).map(c => c.position);
   }
 
   getCrateBeliefs(): ReadonlyMap<string, CrateBelief> {
     return this.crates;
+  }
+
+  getCratePositionSet(mapWidth: number): ReadonlySet<number> {
+    const set = new Set<number>();
+    for (const c of this.crates.values()) {
+      set.add(c.position.y * mapWidth + c.position.x);
+    }
+    return set;
   }
 
   getExploreTarget(from: Position): Position | null {
@@ -467,16 +476,22 @@ export class BeliefStore implements IBeliefStore {
     const agentObstacles = Array.from(this.agents.values())
       .filter(a => a.confidence > 0.5 && !(a.position.x === selfPos.x && a.position.y === selfPos.y))
       .map(a => a.position);
-    const crateObstacles = Array.from(this.crates.values()).map(c => c.position);
+    const cratePositions = this.getCratePositionSet(this.map.width);
     return Array.from(this.parcels.values()).filter(p => {
       if (p.carriedBy !== null) return false;
       if (p.confidence <= 0) return false;
-      // Exclude the parcel's own tile from obstacles: an agent standing on a parcel
+      // Exclude the parcel's own tile from agent obstacles: an agent standing on a parcel
       // tile should not make the parcel appear unreachable (they will move away).
-      const obstaclesForParcel = [...agentObstacles, ...crateObstacles].filter(
+      const obstaclesForParcel = agentObstacles.filter(
         o => !(o.x === p.position.x && o.y === p.position.y),
       );
-      const path = findPath(selfPos, p.position, this.map, obstaclesForParcel);
+      const path = findPath(
+        selfPos,
+        p.position,
+        this.map,
+        obstaclesForParcel.length > 0 ? obstaclesForParcel : undefined,
+        cratePositions,
+      );
       return path !== null;
     });
   }

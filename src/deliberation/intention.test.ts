@@ -428,6 +428,7 @@ function buildMockStoreWithParcels(
     getReachableParcels: () => parcels,
     getCrateObstacles: () => [],
     getCrateBeliefs: () => new Map(),
+    getCratePositionSet: () => new Set(),
     toSnapshot: () => ({ agentId: 'agent-self', timestamp: Date.now(), selfPosition: selfPos, parcels: [], agents: [] }),
     getCapacity: () => Infinity,
     getExploreTarget: () => null,

@@ -69,6 +69,7 @@ function mockStore(
     getReachableParcels: () => parcels.filter(p => p.carriedBy === null && p.confidence > 0),
     getCrateObstacles: () => [],
     getCrateBeliefs: () => new Map(),
+    getCratePositionSet: () => new Set(),
     toSnapshot: () => ({
       agentId: selfId,
       timestamp: Date.now(),
