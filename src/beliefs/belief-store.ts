@@ -9,11 +9,13 @@ import type {
   BeliefChangeType,
   BeliefMap,
   BeliefSnapshot,
+  CrateBelief,
   Direction,
   IBeliefStore,
   ParcelBelief,
   Position,
   RawAgentSensing,
+  RawCrateSensing,
   RawParcelSensing,
   RawSelfSensing,
   SelfBelief,
@@ -28,11 +30,15 @@ const STALE_THRESHOLD_MS = 5_000;
 /** Agent confidence decays to 0 over this duration after last seen. */
 const AGENT_CONFIDENCE_DECAY_MS = 10_000;
 
+/** Crates not seen for longer than this are removed (ghost crate prevention). */
+const CRATE_STALE_TTL_MS = 30_000;
+
 export class BeliefStore implements IBeliefStore {
   private map: BeliefMap;
   private self: SelfBelief;
   private parcels = new Map<string, ParcelBelief>();
   private agents = new Map<string, AgentBelief>();
+  private crates = new Map<string, CrateBelief>();
   private allyIds = new Set<string>();
   private callbacks: Array<(changeType: BeliefChangeType) => void> = [];
   private capacity = Infinity;
@@ -242,6 +248,45 @@ export class BeliefStore implements IBeliefStore {
     this.emit('agents_changed');
   }
 
+  updateCrates(crates: ReadonlyArray<RawCrateSensing>): void {
+    const now = Date.now();
+    const sensedIds = new Set<string>();
+    const selfPos = this.self.position;
+
+    for (const raw of crates) {
+      sensedIds.add(raw.id);
+      this.crates.set(raw.id, {
+        id: raw.id,
+        position: { x: Math.round(raw.x), y: Math.round(raw.y) },
+        lastSeen: now,
+      });
+    }
+
+    // Belief revision: remove crates confirmed absent within observation range.
+    // Crates outside range may still be present — keep them until re-observed.
+    const effectiveRange = this.observationDistance > 0 ? this.observationDistance : 5;
+    for (const [id, belief] of this.crates) {
+      if (sensedIds.has(id)) continue;
+      const dist = manhattanDistance(selfPos, belief.position);
+      const inRange = this.observationDistance > 0
+        ? dist < this.observationDistance
+        : dist <= effectiveRange;
+      if (inRange) {
+        this.crates.delete(id);
+      }
+    }
+
+    // Remove stale crates not seen within TTL (prevents ghost crates).
+    // Must use Array.from() to avoid mutation during iteration.
+    for (const [id, belief] of Array.from(this.crates.entries())) {
+      if (now - belief.lastSeen > CRATE_STALE_TTL_MS) {
+        this.crates.delete(id);
+      }
+    }
+
+    this.emit('crates_changed');
+  }
+
   removeParcel(id: string): void {
     this.parcels.delete(id);
     this.parcelTracker.forget(id);
@@ -261,17 +306,20 @@ export class BeliefStore implements IBeliefStore {
   /**
    * Clear stale beliefs after a disconnect.
    * Agent positions are unknown after disconnect, so all agent beliefs are removed.
+   * Crate positions may have changed during disconnect, so all crate beliefs are removed.
    * On-ground parcel beliefs are marked low-confidence so fresh sensing overrides them;
    * carried-parcel beliefs are left intact (they are still valid).
    */
   clearStaleBeliefs(): void {
     this.agents.clear();
+    this.crates.clear();
     this.prevAgentPositions.clear();
     for (const [id, belief] of this.parcels) {
       if (belief.carriedBy !== null) continue;
       this.parcels.set(id, { ...belief, confidence: 0.3 });
     }
     this.emit('agents_changed');
+    this.emit('crates_changed');
     this.emit('parcels_changed');
   }
 
@@ -363,6 +411,10 @@ export class BeliefStore implements IBeliefStore {
     return this.parcelTracker;
   }
 
+  getCrateObstacles(): ReadonlyArray<Position> {
+    return Array.from(this.crates.values()).map(c => c.position);
+  }
+
   getExploreTarget(from: Position): Position | null {
     const spawning = this.map.getSpawningTiles();
     if (spawning.length === 0) return null;
@@ -411,12 +463,13 @@ export class BeliefStore implements IBeliefStore {
     const agentObstacles = Array.from(this.agents.values())
       .filter(a => a.confidence > 0.5 && !(a.position.x === selfPos.x && a.position.y === selfPos.y))
       .map(a => a.position);
+    const crateObstacles = Array.from(this.crates.values()).map(c => c.position);
     return Array.from(this.parcels.values()).filter(p => {
       if (p.carriedBy !== null) return false;
       if (p.confidence <= 0) return false;
       // Exclude the parcel's own tile from obstacles: an agent standing on a parcel
       // tile should not make the parcel appear unreachable (they will move away).
-      const obstaclesForParcel = agentObstacles.filter(
+      const obstaclesForParcel = [...agentObstacles, ...crateObstacles].filter(
         o => !(o.x === p.position.x && o.y === p.position.y),
       );
       const path = findPath(selfPos, p.position, this.map, obstaclesForParcel);
