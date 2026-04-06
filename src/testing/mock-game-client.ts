@@ -9,6 +9,7 @@ import type {
   RawSelfSensing,
   RawParcelSensing,
   RawAgentSensing,
+  RawCrateSensing,
   InterAgentMessage,
   GameClient,
 } from '../types.js';
@@ -42,6 +43,7 @@ type MapCallback = (tiles: ReadonlyArray<Tile>, width: number, height: number) =
 type YouCallback = (self: RawSelfSensing) => void;
 type ParcelsCallback = (parcels: ReadonlyArray<RawParcelSensing>) => void;
 type AgentsCallback = (agents: ReadonlyArray<RawAgentSensing>) => void;
+type CratesCallback = (crates: ReadonlyArray<RawCrateSensing>) => void;
 type MessageCallback = (from: string, msg: InterAgentMessage) => void;
 type VoidCallback = () => void;
 
@@ -51,6 +53,7 @@ export class MockGameClient implements GameClient {
   private youCallbacks: YouCallback[] = [];
   private parcelsCallbacks: ParcelsCallback[] = [];
   private agentsCallbacks: AgentsCallback[] = [];
+  private cratesCallbacks: CratesCallback[] = [];
   private messageCallbacks: MessageCallback[] = [];
   private disconnectCallbacks: VoidCallback[] = [];
   private reconnectCallbacks: VoidCallback[] = [];
@@ -157,6 +160,10 @@ export class MockGameClient implements GameClient {
     this.agentsCallbacks.push(cb);
   }
 
+  onCratesSensing(cb: CratesCallback): void {
+    this.cratesCallbacks.push(cb);
+  }
+
   onMessage(cb: MessageCallback): void {
     this.messageCallbacks.push(cb);
   }
@@ -207,6 +214,10 @@ export class MockGameClient implements GameClient {
 
   emitAgentsSensing(agents: ReadonlyArray<RawAgentSensing>): void {
     for (const cb of this.agentsCallbacks) cb(agents);
+  }
+
+  emitCratesSensing(crates: ReadonlyArray<RawCrateSensing>): void {
+    for (const cb of this.cratesCallbacks) cb(crates);
   }
 
   emitMessage(from: string, msg: InterAgentMessage): void {

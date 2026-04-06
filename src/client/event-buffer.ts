@@ -7,6 +7,7 @@ import type {
   RawSelfSensing,
   RawParcelSensing,
   RawAgentSensing,
+  RawCrateSensing,
   InterAgentMessage,
 } from '../types.js';
 
@@ -15,6 +16,7 @@ export type BufferedEvent =
   | { kind: 'you'; self: RawSelfSensing }
   | { kind: 'parcels'; parcels: ReadonlyArray<RawParcelSensing> }
   | { kind: 'agents'; agents: ReadonlyArray<RawAgentSensing> }
+  | { kind: 'crates'; crates: ReadonlyArray<RawCrateSensing> }
   | { kind: 'message'; from: string; msg: InterAgentMessage };
 
 /**

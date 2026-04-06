@@ -13,6 +13,7 @@ import type {
   RawSelfSensing,
   RawParcelSensing,
   RawAgentSensing,
+  RawCrateSensing,
   InterAgentMessage,
 } from '../types.js';
 
@@ -22,7 +23,7 @@ interface SensingPayload {
   positions?: Array<{ x: number; y: number }>;
   agents?: Array<{ id: string; name: string; x: number; y: number; score: number }>;
   parcels?: Array<{ id: string; x: number; y: number; carriedBy?: string | null; reward: number }>;
-  crates?: unknown[];
+  crates?: Array<{ id: string; x: number; y: number }>;
 }
 
 // --- Callback types ---
@@ -31,6 +32,7 @@ type MapCallback = (tiles: ReadonlyArray<Tile>, width: number, height: number) =
 type YouCallback = (self: RawSelfSensing) => void;
 type ParcelsCallback = (parcels: ReadonlyArray<RawParcelSensing>) => void;
 type AgentsCallback = (agents: ReadonlyArray<RawAgentSensing>) => void;
+type CratesCallback = (crates: ReadonlyArray<RawCrateSensing>) => void;
 type MessageCallback = (from: string, msg: InterAgentMessage) => void;
 type VoidCallback = () => void;
 
@@ -58,6 +60,7 @@ export class GameClient {
   private youCallbacks: YouCallback[] = [];
   private parcelsCallbacks: ParcelsCallback[] = [];
   private agentsCallbacks: AgentsCallback[] = [];
+  private cratesCallbacks: CratesCallback[] = [];
   private messageCallbacks: MessageCallback[] = [];
   private disconnectCallbacks: VoidCallback[] = [];
   private reconnectCallbacks: VoidCallback[] = [];
@@ -151,6 +154,18 @@ export class GameClient {
       } else {
         this.dispatchAgents(agents);
       }
+
+      const crates: RawCrateSensing[] = (data.crates ?? []).map(c => ({
+        id: c.id,
+        x: c.x,
+        y: c.y,
+      }));
+      const cratesEvent: BufferedEvent = { kind: 'crates', crates };
+      if (!this.eventBuffer.isDrained()) {
+        this.eventBuffer.push(cratesEvent);
+      } else {
+        this.dispatchCrates(crates);
+      }
     });
 
     // Inter-agent messages
@@ -205,6 +220,10 @@ export class GameClient {
 
   private dispatchAgents(agents: ReadonlyArray<RawAgentSensing>): void {
     for (const cb of this.agentsCallbacks) cb(agents);
+  }
+
+  private dispatchCrates(crates: ReadonlyArray<RawCrateSensing>): void {
+    for (const cb of this.cratesCallbacks) cb(crates);
   }
 
   private dispatchMessage(from: string, msg: InterAgentMessage): void {
@@ -316,6 +335,10 @@ export class GameClient {
     this.agentsCallbacks.push(cb);
   }
 
+  onCratesSensing(cb: CratesCallback): void {
+    this.cratesCallbacks.push(cb);
+  }
+
   onMessage(cb: MessageCallback): void {
     this.messageCallbacks.push(cb);
   }
@@ -344,6 +367,9 @@ export class GameClient {
           break;
         case 'agents':
           this.dispatchAgents(event.agents);
+          break;
+        case 'crates':
+          this.dispatchCrates(event.crates);
           break;
         case 'message':
           this.dispatchMessage(event.from, event.msg);
