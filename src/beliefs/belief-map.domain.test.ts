@@ -18,93 +18,111 @@ function tile(x: number, y: number, type: TileType): Tile {
   return { x, y, type };
 }
 
-// --- Mappa con tutti i tipi di tile (0–7) ---
+// --- Mappa con tutti i tipi di tile (0–9) ---
 //
-// Layout 5x2:
-//   y=1:  type4  type5  type6  type7  type3
-//   y=0:  type0  type1  type2  type3  type3
+// Layout 5x3:
+//   y=2:  type4  type5  type6  type7  type3
+//   y=1:  type0  type1  type2  type3  type3
+//   y=0:  type8  type9  type3  type3  type3
 //
 function makeAllTypesMap(): BeliefMapImpl {
   const tiles: Tile[] = [
-    tile(0, 0, 0), tile(1, 0, 1), tile(2, 0, 2), tile(3, 0, 3), tile(4, 0, 3),
-    tile(0, 1, 4), tile(1, 1, 5), tile(2, 1, 6), tile(3, 1, 7), tile(4, 1, 3),
+    tile(0, 0, 8), tile(1, 0, 9), tile(2, 0, 3), tile(3, 0, 3), tile(4, 0, 3),
+    tile(0, 1, 0), tile(1, 1, 1), tile(2, 1, 2), tile(3, 1, 3), tile(4, 1, 3),
+    tile(0, 2, 4), tile(1, 2, 5), tile(2, 2, 6), tile(3, 2, 7), tile(4, 2, 3),
   ];
-  return new BeliefMapImpl(tiles, 5, 2);
+  return new BeliefMapImpl(tiles, 5, 3);
 }
 
-// --- R01: tutti i tipi tile (0–7) sono gestiti da getTileType() ---
+// --- R01: tutti i tipi tile (0–9) sono gestiti da getTileType() ---
 
-describe('BeliefMapImpl — R01 tutti i tipi tile (0–7)', () => {
+describe('BeliefMapImpl — R01 tutti i tipi tile (0–9)', () => {
   const map = makeAllTypesMap();
 
   it('tipo 0 (muro): getTile ritorna 0', () => {
-    assert.equal(map.getTile(0, 0), 0);
+    assert.equal(map.getTile(0, 1), 0);
   });
 
   it('tipo 1 (spawning): getTile ritorna 1', () => {
-    assert.equal(map.getTile(1, 0), 1);
+    assert.equal(map.getTile(1, 1), 1);
   });
 
   it('tipo 2 (delivery): getTile ritorna 2', () => {
-    assert.equal(map.getTile(2, 0), 2);
+    assert.equal(map.getTile(2, 1), 2);
   });
 
   it('tipo 3 (normale): getTile ritorna 3', () => {
-    assert.equal(map.getTile(3, 0), 3);
+    assert.equal(map.getTile(3, 1), 3);
   });
 
   it('tipo 4 (↑ direzionale): getTile ritorna 4', () => {
-    assert.equal(map.getTile(0, 1), 4);
+    assert.equal(map.getTile(0, 2), 4);
   });
 
   it('tipo 5 (↓ direzionale): getTile ritorna 5', () => {
-    assert.equal(map.getTile(1, 1), 5);
+    assert.equal(map.getTile(1, 2), 5);
   });
 
   it('tipo 6 (← direzionale): getTile ritorna 6', () => {
-    assert.equal(map.getTile(2, 1), 6);
+    assert.equal(map.getTile(2, 2), 6);
   });
 
   it('tipo 7 (→ direzionale): getTile ritorna 7', () => {
-    assert.equal(map.getTile(3, 1), 7);
+    assert.equal(map.getTile(3, 2), 7);
+  });
+
+  it('tipo 8 (crate-slide): getTile ritorna 8', () => {
+    assert.equal(map.getTile(0, 0), 8);
+  });
+
+  it('tipo 9 (crate-spawner): getTile ritorna 9', () => {
+    assert.equal(map.getTile(1, 0), 9);
   });
 });
 
-// --- RI01/RI02: tile tipo 1 e 2 sono walkable; solo tipo 0 è non-walkable ---
+// --- RI01/RI02: tile tipo 1-8 sono walkable; tipo 0 e 9 sono non-walkable ---
 
 describe('BeliefMapImpl — RI01/RI02 walkability', () => {
   const map = makeAllTypesMap();
 
   it('tipo 1 (spawning) è walkable', () => {
-    assert.equal(map.isWalkable(1, 0), true);
-  });
-
-  it('tipo 2 (delivery) è walkable', () => {
-    assert.equal(map.isWalkable(2, 0), true);
-  });
-
-  it('tipo 3 (normale) è walkable', () => {
-    assert.equal(map.isWalkable(3, 0), true);
-  });
-
-  it('tipo 4 (↑) è walkable (senza vincoli di entrata)', () => {
-    assert.equal(map.isWalkable(0, 1), true);
-  });
-
-  it('tipo 5 (↓) è walkable (senza vincoli di entrata)', () => {
     assert.equal(map.isWalkable(1, 1), true);
   });
 
-  it('tipo 6 (←) è walkable (senza vincoli di entrata)', () => {
+  it('tipo 2 (delivery) è walkable', () => {
     assert.equal(map.isWalkable(2, 1), true);
   });
 
-  it('tipo 7 (→) è walkable (senza vincoli di entrata)', () => {
+  it('tipo 3 (normale) è walkable', () => {
     assert.equal(map.isWalkable(3, 1), true);
   });
 
-  it('solo tipo 0 è non-walkable', () => {
-    assert.equal(map.isWalkable(0, 0), false);
+  it('tipo 4 (↑) è walkable (senza vincoli di entrata)', () => {
+    assert.equal(map.isWalkable(0, 2), true);
+  });
+
+  it('tipo 5 (↓) è walkable (senza vincoli di entrata)', () => {
+    assert.equal(map.isWalkable(1, 2), true);
+  });
+
+  it('tipo 6 (←) è walkable (senza vincoli di entrata)', () => {
+    assert.equal(map.isWalkable(2, 2), true);
+  });
+
+  it('tipo 7 (→) è walkable (senza vincoli di entrata)', () => {
+    assert.equal(map.isWalkable(3, 2), true);
+  });
+
+  it('tipo 8 (crate-slide) è walkable', () => {
+    assert.equal(map.isWalkable(0, 0), true);
+  });
+
+  it('tipo 0 (muro) non è walkable', () => {
+    assert.equal(map.isWalkable(0, 1), false);
+  });
+
+  it('tipo 9 (crate-spawner) NON è walkable', () => {
+    assert.equal(map.isWalkable(1, 0), false);
   });
 });
 
@@ -176,49 +194,49 @@ describe('BeliefMapImpl — R02 canEnterFrom (tile direzionali)', () => {
     });
   });
 
-  describe('tipo 6 (←) a (2,1)', () => {
+  describe('tipo 6 (←) a (2,2)', () => {
     const map6 = makeAllTypesMap();
-    // tile (2,1) = type 6 (←)
+    // tile (2,2) = type 6 (←)
 
-    it('blocca entrata da Ovest (from=right): non si può entrare da (1,1)', () => {
-      assert.equal(map6.canEnterFrom(2, 1, 'right'), false,
+    it('blocca entrata da Ovest (from=right): non si può entrare da (1,2)', () => {
+      assert.equal(map6.canEnterFrom(2, 2, 'right'), false,
         'tile ← (6): blocca entrata from=right (provenienza Ovest)');
     });
 
-    it('permette entrata da Est (from=left): da (3,1) verso (2,1)', () => {
-      assert.equal(map6.canEnterFrom(2, 1, 'left'), true,
+    it('permette entrata da Est (from=left): da (3,2) verso (2,2)', () => {
+      assert.equal(map6.canEnterFrom(2, 2, 'left'), true,
         'tile ← (6): permette entrata from=left (provenienza Est)');
     });
 
     it('permette entrata da Sud (from=up)', () => {
-      assert.equal(map6.canEnterFrom(2, 1, 'up'), true);
+      assert.equal(map6.canEnterFrom(2, 2, 'up'), true);
     });
 
     it('permette entrata da Nord (from=down)', () => {
-      assert.equal(map6.canEnterFrom(2, 1, 'down'), true);
+      assert.equal(map6.canEnterFrom(2, 2, 'down'), true);
     });
   });
 
-  describe('tipo 7 (→) a (3,1)', () => {
+  describe('tipo 7 (→) a (3,2)', () => {
     const map7 = makeAllTypesMap();
-    // tile (3,1) = type 7 (→)
+    // tile (3,2) = type 7 (→)
 
-    it('blocca entrata da Est (from=left): non si può entrare da (4,1)', () => {
-      assert.equal(map7.canEnterFrom(3, 1, 'left'), false,
+    it('blocca entrata da Est (from=left): non si può entrare da (4,2)', () => {
+      assert.equal(map7.canEnterFrom(3, 2, 'left'), false,
         'tile → (7): blocca entrata from=left (provenienza Est)');
     });
 
-    it('permette entrata da Ovest (from=right): da (2,1) verso (3,1)', () => {
-      assert.equal(map7.canEnterFrom(3, 1, 'right'), true,
+    it('permette entrata da Ovest (from=right): da (2,2) verso (3,2)', () => {
+      assert.equal(map7.canEnterFrom(3, 2, 'right'), true,
         'tile → (7): permette entrata from=right (provenienza Ovest)');
     });
 
     it('permette entrata da Sud (from=up)', () => {
-      assert.equal(map7.canEnterFrom(3, 1, 'up'), true);
+      assert.equal(map7.canEnterFrom(3, 2, 'up'), true);
     });
 
     it('permette entrata da Nord (from=down)', () => {
-      assert.equal(map7.canEnterFrom(3, 1, 'down'), true);
+      assert.equal(map7.canEnterFrom(3, 2, 'down'), true);
     });
   });
 
@@ -279,6 +297,24 @@ describe('BeliefMapImpl — R02 canEnterFrom (tile direzionali)', () => {
       assert.equal(map.canEnterFrom(3, 0, 'down'), true);
     });
   });
+
+  // Tipo 9 (crate-spawner) non è walkable
+  describe('tipo 9 (crate-spawner): non è walkable da nessuna direzione', () => {
+    const allTypesMap = makeAllTypesMap();
+    // makeAllTypesMap ha tipo 9 a (1, 0)
+
+    it('canEnterFrom tipo 9 ritorna false da qualsiasi direzione', () => {
+      const dirs: Direction[] = ['up', 'down', 'left', 'right'];
+      for (const dir of dirs) {
+        assert.equal(allTypesMap.canEnterFrom(1, 0, dir), false,
+          `tipo 9: canEnterFrom should be false from ${dir}`);
+      }
+    });
+
+    it('isWalkable tipo 9 ritorna false', () => {
+      assert.equal(allTypesMap.isWalkable(1, 0), false);
+    });
+  });
 });
 
 // --- R19: getSpawningTiles() ritorna solo tile tipo 1 ---
@@ -290,7 +326,7 @@ describe('BeliefMapImpl — R19/R21 getSpawningTiles e getDeliveryZones', () => 
   it('R19: getSpawningTiles ritorna solo tile tipo 1', () => {
     const spawns = map.getSpawningTiles();
     assert.equal(spawns.length, 1, 'solo una tile tipo 1 nella mappa test');
-    assert.deepEqual(spawns[0], { x: 1, y: 0 });
+    assert.deepEqual(spawns[0], { x: 1, y: 1 });
     // Verifica che nessun tile direzionale (4-7) sia incluso
     for (const s of spawns) {
       assert.equal(map.getTile(s.x, s.y), 1, `tile (${s.x},${s.y}) deve essere tipo 1`);
@@ -300,7 +336,7 @@ describe('BeliefMapImpl — R19/R21 getSpawningTiles e getDeliveryZones', () => 
   it('R21: getDeliveryZones ritorna solo tile tipo 2', () => {
     const zones = map.getDeliveryZones();
     assert.equal(zones.length, 1, 'solo una tile tipo 2 nella mappa test');
-    assert.deepEqual(zones[0], { x: 2, y: 0 });
+    assert.deepEqual(zones[0], { x: 2, y: 1 });
     // Verifica che nessun tile direzionale sia incluso
     for (const z of zones) {
       assert.equal(map.getTile(z.x, z.y), 2, `tile (${z.x},${z.y}) deve essere tipo 2`);

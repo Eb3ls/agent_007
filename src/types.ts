@@ -9,8 +9,10 @@
 // 4: one-way ↑ (can only be entered moving up,    dy=+1),
 // 5: one-way ↓ (can only be entered moving down,  dy=-1),
 // 6: one-way ← (can only be entered moving left,  dx=-1),
-// 7: one-way → (can only be entered moving right, dx=+1)
-export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+// 7: one-way → (can only be entered moving right, dx=+1),
+// 8: crate-slide (tile '5', accepts a pushed crate),
+// 9: crate-spawner (tile '5!', NOT walkable)
+export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export interface Tile {
   readonly x: number;

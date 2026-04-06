@@ -40,6 +40,7 @@ type VoidCallback = () => void;
 
 function parseTileType(raw: string | number): TileType {
   const s = String(raw).trim();
+  if (s === '5!') return 9;  // crate spawner — MUST check before parseInt
   if (s === "↑") return 4; // one-way up    (enter moving up)
   if (s === "↓") return 5; // one-way down  (enter moving down)
   if (s === "←") return 6; // one-way left  (enter moving left)
@@ -47,7 +48,7 @@ function parseTileType(raw: string | number): TileType {
   const n = parseInt(s, 10);
   if (n === 0 || n === 1 || n === 2 || n === 3) return n;
   if (n === 4) return 1; // base/spawn tile — parcel-spawning (same as internal type 1)
-  if (n === 5) return 5; // one-way ↓ — covers "5" and "5!" (parseInt strips suffix)
+  if (n === 5) return 8; // crate-slide floor
   return 0; // unknown — treat as non-walkable
 }
 

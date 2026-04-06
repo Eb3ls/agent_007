@@ -47,8 +47,8 @@ export class BeliefMapImpl implements BeliefMap {
 
   isWalkable(x: number, y: number): boolean {
     const type = this.getTile(x, y);
-    // Types 1–7 are walkable (directional constraints handled via canEnterFrom); 0 and null are not
-    return type !== null && type !== 0;
+    // Types 1–8 are walkable; 0, 9 (crate-spawner), and null are not
+    return type !== null && type !== 0 && type !== 9;
   }
 
   /**
@@ -63,7 +63,7 @@ export class BeliefMapImpl implements BeliefMap {
    */
   canEnterFrom(x: number, y: number, from: Direction): boolean {
     const type = this.getTile(x, y);
-    if (type === null || type === 0) return false;
+    if (type === null || type === 0 || type === 9) return false;
     switch (type) {
       case 4: return from !== 'down';  // ↑: blocks southward entry (from north)
       case 5: return from !== 'up';    // ↓: blocks northward entry (from south)
