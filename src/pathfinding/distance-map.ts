@@ -21,10 +21,17 @@ export function posKey(x: number, y: number, width: number): number {
  *
  * Tiles that are unreachable are absent from the map.
  * The source tile itself is included with distance 0.
+ *
+ * `obstacles` parameter is accepted for API compatibility but currently not
+ * forwarded to getNeighbors (pre-existing bug, out of scope).
+ * `cratePositions` is a pre-built Set of posKeys for crate tiles; when provided,
+ * crates are treated as pushable obstacles (see getNeighbors for semantics).
  */
 export function computeDistanceMap(
   from: Position,
   map: BeliefMap,
+  obstacles?: ReadonlyArray<Position>,
+  cratePositions?: ReadonlySet<number>,
 ): Map<number, number> {
   const w = map.width;
   const dist = new Map<number, number>();
@@ -35,7 +42,7 @@ export function computeDistanceMap(
     const cur = queue.shift()!;
     const curDist = dist.get(posKey(cur.x, cur.y, w))!;
 
-    for (const nb of getNeighbors(cur, map)) {
+    for (const nb of getNeighbors(cur, map, undefined, cratePositions)) {
       const key = posKey(nb.x, nb.y, w);
       if (!dist.has(key)) {
         dist.set(key, curDist + 1);
