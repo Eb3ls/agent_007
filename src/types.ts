@@ -49,6 +49,18 @@ export interface RawAgentSensing {
   readonly score: number;
 }
 
+export interface RawCrateSensing {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface CrateBelief {
+  readonly id: string;
+  readonly position: Position;
+  readonly lastSeen: number;
+}
+
 export interface RawSelfSensing {
   readonly id: string;
   readonly name: string;
@@ -113,6 +125,7 @@ export interface BeliefMap {
 export type BeliefChangeType =
   | 'parcels_changed'
   | 'agents_changed'
+  | 'crates_changed'
   | 'self_moved'
   | 'self_score_changed'
   | 'remote_belief_merged';
@@ -138,6 +151,7 @@ export interface IBeliefStore {
   updateSelf(self: RawSelfSensing): void;
   updateParcels(parcels: ReadonlyArray<RawParcelSensing>): void;
   updateAgents(agents: ReadonlyArray<RawAgentSensing>): void;
+  updateCrates(crates: ReadonlyArray<RawCrateSensing>): void;
   mergeRemoteBelief(snapshot: BeliefSnapshot): void;
   removeParcel(id: string): void;
   clearDeliveredParcels(): void;
@@ -148,6 +162,8 @@ export interface IBeliefStore {
   getMap(): BeliefMap;
   getNearestDeliveryZone(from: Position): Position | null;
   getReachableParcels(): ReadonlyArray<ParcelBelief>;
+  getCrateObstacles(): ReadonlyArray<Position>;
+  getCrateBeliefs(): ReadonlyMap<string, CrateBelief>;
   /** Maximum number of parcels the agent can carry simultaneously. Infinity if unconstrained. */
   getCapacity(): number;
   /**
@@ -585,6 +601,7 @@ export interface GameClient {
   onYou(cb: (self: RawSelfSensing) => void): void;
   onParcelsSensing(cb: (parcels: ReadonlyArray<RawParcelSensing>) => void): void;
   onAgentsSensing(cb: (agents: ReadonlyArray<RawAgentSensing>) => void): void;
+  onCratesSensing(cb: (crates: ReadonlyArray<RawCrateSensing>) => void): void;
   onMessage(cb: (from: string, msg: InterAgentMessage) => void): void;
   onDisconnect(cb: () => void): void;
   onReconnect(cb: () => void): void;

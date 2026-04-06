@@ -52,6 +52,7 @@ function mockStore(
     updateSelf: () => {},
     updateParcels: () => {},
     updateAgents: () => {},
+    updateCrates: () => {},
     mergeRemoteBelief: () => {},
     getSelf: () => ({
       id: selfId,
@@ -66,6 +67,8 @@ function mockStore(
     getMap: () => new BeliefMapImpl(FIXTURE_MAP_TILES, FIXTURE_MAP_WIDTH, FIXTURE_MAP_HEIGHT),
     getNearestDeliveryZone: (from) => nearestDelivery(from),
     getReachableParcels: () => parcels.filter(p => p.carriedBy === null && p.confidence > 0),
+    getCrateObstacles: () => [],
+    getCrateBeliefs: () => new Map(),
     toSnapshot: () => ({
       agentId: selfId,
       timestamp: Date.now(),

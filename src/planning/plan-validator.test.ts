@@ -51,6 +51,7 @@ function mockBeliefs(
     updateSelf: () => {},
     updateParcels: () => {},
     updateAgents: () => {},
+    updateCrates: () => {},
     mergeRemoteBelief: () => {},
     getSelf: () => ({
       id: 'agent-self',
@@ -65,6 +66,8 @@ function mockBeliefs(
     getMap: () => fixtureMap,
     getNearestDeliveryZone: () => zones[0]!,
     getReachableParcels: () => parcels.filter(p => p.carriedBy === null),
+    getCrateObstacles: () => [],
+    getCrateBeliefs: () => new Map(),
     toSnapshot: () => ({
       agentId: 'agent-self',
       timestamp: Date.now(),

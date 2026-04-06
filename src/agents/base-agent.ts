@@ -208,6 +208,12 @@ export abstract class BaseAgent implements IAgent {
       this.beliefs.updateAgents(agents);
     });
 
+    client.onCratesSensing((crates) => {
+      if (!this.beliefs) return;
+      this.beliefs.updateCrates(crates);
+      if (this.running) this._scheduleDeliberation(false, 'sensing');
+    });
+
     client.onDisconnect(() => {
       this.log.warn({ kind: "connection_lost" });
       // Only log as a real loss when not shutting down gracefully
@@ -414,10 +420,20 @@ export abstract class BaseAgent implements IAgent {
 
   private _computeParcelFingerprint(): string {
     const parcels = this.beliefs!.getParcelBeliefs();
-    return parcels
+    const parcelFingerprint = parcels
       .map(p => `${p.id}:${p.carriedBy ?? ''}`)
       .sort()
       .join('|');
+
+    // Include crate positions in the fingerprint: changes to crates trigger re-evaluation
+    const crateBeliefs = this.beliefs!.getCrateBeliefs();
+    const crateFingerprint = crateBeliefs.size.toString() +
+      Array.from(crateBeliefs.values())
+        .map(c => `${c.position.x},${c.position.y}`)
+        .sort()
+        .join('|');
+
+    return `${parcelFingerprint}|crates:${crateFingerprint}`;
   }
 
   private async _deliberateAndPlan(planFailed = false): Promise<void> {

@@ -401,6 +401,7 @@ function buildMockStoreWithParcels(
     updateSelf: () => {},
     updateParcels: () => {},
     updateAgents: () => {},
+    updateCrates: () => {},
     mergeRemoteBelief: () => {},
     getSelf: () => ({
       id: 'agent-self',
@@ -425,6 +426,8 @@ function buildMockStoreWithParcels(
       return best;
     },
     getReachableParcels: () => parcels,
+    getCrateObstacles: () => [],
+    getCrateBeliefs: () => new Map(),
     toSnapshot: () => ({ agentId: 'agent-self', timestamp: Date.now(), selfPosition: selfPos, parcels: [], agents: [] }),
     getCapacity: () => Infinity,
     getExploreTarget: () => null,

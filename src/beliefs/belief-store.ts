@@ -415,6 +415,10 @@ export class BeliefStore implements IBeliefStore {
     return Array.from(this.crates.values()).map(c => c.position);
   }
 
+  getCrateBeliefs(): ReadonlyMap<string, CrateBelief> {
+    return this.crates;
+  }
+
   getExploreTarget(from: Position): Position | null {
     const spawning = this.map.getSpawningTiles();
     if (spawning.length === 0) return null;
