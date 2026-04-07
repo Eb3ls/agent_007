@@ -38,6 +38,7 @@ export class Deliberator {
     movementDurationMs = 500,
     tracker?: ParcelTracker,
     distanceMap?: Map<number, number>,
+    deliveryDistMap?: Map<number, number>,
   ): EvaluationResult {
     const allReachable = beliefs.getReachableParcels();
     // R15: filter out parcels with reward <= 0 before generating intentions.
@@ -94,7 +95,10 @@ export class Deliberator {
       const delivery = beliefs.getNearestDeliveryZone(parcel.position);
       // stepsToDelivery: Manhattan from parcel to delivery zone (a reverse BFS would be needed
       // for exact values; Manhattan is an acceptable proxy here since delivery zones are accessible).
-      const stepsToDelivery = delivery ? manhattanDistance(parcel.position, delivery) : 0;
+      const stepsToDelivery = delivery
+        ? (deliveryDistMap?.get(posKey(parcel.position.x, parcel.position.y, mapWidth))
+            ?? manhattanDistance(parcel.position, delivery))
+        : 0;
       const projectedReward = tracker
         ? tracker.estimateRewardAt(parcel.id, now + (stepsToParcel + stepsToDelivery) * movementDurationMs)
         : parcel.estimatedReward;
@@ -116,7 +120,10 @@ export class Deliberator {
       const { ordered, stepsToFirst, interParcelSteps } = orderParcelsByNearest(capped, selfPos, distanceMap, mapWidth);
       const lastPos = ordered[ordered.length - 1]!.position;
       const delivery = beliefs.getNearestDeliveryZone(lastPos);
-      const stepsToDelivery = delivery ? manhattanDistance(lastPos, delivery) : 0;
+      const stepsToDelivery = delivery
+        ? (deliveryDistMap?.get(posKey(lastPos.x, lastPos.y, mapWidth))
+            ?? manhattanDistance(lastPos, delivery))
+        : 0;
 
       // Project each parcel's reward to the estimated delivery time (same for all in cluster).
       const projectedRewards = tracker
@@ -151,7 +158,13 @@ export class Deliberator {
       };
       return { intentions: [exploreIntent], reachable: reachable.length, contestaDrop, candidates: [...evalCandidates, exploreCandidate] };
     }
-    positive.sort((a, b) => b.utility - a.utility);
+    // Stable sort: primary key is utility desc, tiebreak by targetParcels id string.
+    // Without the tiebreak, equal-utility intentions swap order each cycle → oscillation.
+    positive.sort((a, b) => {
+      const du = b.utility - a.utility;
+      if (du !== 0) return du;
+      return a.targetParcels.join(',') < b.targetParcels.join(',') ? -1 : 1;
+    });
     return { intentions: positive, reachable: reachable.length, contestaDrop, candidates: evalCandidates };
   }
 
@@ -191,8 +204,22 @@ export class Deliberator {
     const currentRefreshed = candidates.find(
       c => c.targetParcels.join(',') === currentIntention.targetParcels.join(','),
     );
-    const referenceUtility = currentRefreshed?.utility ?? currentIntention.utility;
-    if (best && best.utility > REPLAN_UTILITY_THRESHOLD * referenceUtility) {
+    if (!currentRefreshed) {
+      // Target is absent from candidates. Three sub-cases:
+      // (a) No candidates at all → nothing better → keep current intention.
+      if (!best) return false;
+      // (b) We are carrying the target parcel ourselves (delivery plan) → keep going.
+      const targetIsCarriedBySelf = currentIntention.targetParcels.some(id => {
+        const p = parcelMap.get(id);
+        return p?.carriedBy === selfId;
+      });
+      if (targetIsCarriedBySelf) return false;
+      // (c) Target was filtered (claimed by ally, decayed to 0, became contested) and
+      //     a real candidate exists → replan rather than comparing against a utility
+      //     value that was never updated and will suppress replanning indefinitely.
+      return true;
+    }
+    if (best && best.utility > REPLAN_UTILITY_THRESHOLD * currentRefreshed.utility) {
       return true;
     }
 

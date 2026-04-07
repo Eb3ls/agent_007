@@ -30,10 +30,30 @@ export function computeDistanceMap(
   obstacles?: ReadonlyArray<Position>,
   cratePositions?: ReadonlySet<number>,
 ): Map<number, number> {
+  return computeMultiSourceDistanceMap([from], map, cratePositions);
+}
+
+/**
+ * Multi-source BFS: simultaneous flood-fill from all `sources`.
+ * The resulting map gives the minimum number of steps from ANY source to each tile.
+ * Used to compute "distance to nearest delivery zone" for all tiles at once.
+ */
+export function computeMultiSourceDistanceMap(
+  sources: ReadonlyArray<Position>,
+  map: BeliefMap,
+  cratePositions?: ReadonlySet<number>,
+): Map<number, number> {
   const w = map.width;
   const dist = new Map<number, number>();
-  const queue: Position[] = [from];
-  dist.set(posKey(from.x, from.y, w), 0);
+  const queue: Position[] = [];
+
+  for (const src of sources) {
+    const key = posKey(src.x, src.y, w);
+    if (!dist.has(key)) {
+      dist.set(key, 0);
+      queue.push(src);
+    }
+  }
 
   while (queue.length > 0) {
     const cur = queue.shift()!;

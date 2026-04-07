@@ -190,6 +190,34 @@ describe('BeliefStore', () => {
       assert.ok(events.includes('parcels_changed'));
     });
 
+    // BUG-1: positions[] forwarding — confirmed-vacant semantics
+    it('removes parcel when its tile is in observedPositions but not in parcels (BUG-1)', () => {
+      // Add a parcel at (3,4)
+      store.updateParcels([{ id: 'gone', x: 3, y: 4, carriedBy: null, reward: 50 }]);
+      assert.equal(store.getParcelBeliefs().length, 1);
+
+      // Next frame: server observed (3,4) but parcel is gone; positions[] confirms this.
+      store.updateParcels(
+        [], // no parcels sensed
+        [{ x: 3, y: 4 }], // positions[] confirms tile was observed
+      );
+      const ids = store.getParcelBeliefs().map(p => p.id);
+      assert.ok(!ids.includes('gone'), 'parcel must be removed when positions[] confirms tile was observed empty');
+    });
+
+    it('retains parcel when its tile is NOT in observedPositions (tile not observed)', () => {
+      // Add a parcel at (8,8) — far away
+      store.updateParcels([{ id: 'distant', x: 8, y: 8, carriedBy: null, reward: 50 }]);
+
+      // positions[] only covers tiles near the agent — (8,8) not included
+      store.updateParcels(
+        [],
+        [{ x: 4, y: 4 }, { x: 4, y: 5 }, { x: 5, y: 4 }], // near tiles only
+      );
+      const ids = store.getParcelBeliefs().map(p => p.id);
+      assert.ok(ids.includes('distant'), 'parcel at unobserved tile must be retained');
+    });
+
     it('estimates decay rate from consecutive observations', () => {
       const p1v1: RawParcelSensing[] = [
         { id: 'decay-test', x: 4, y: 5, carriedBy: null, reward: 50 },
@@ -270,15 +298,16 @@ describe('BeliefStore', () => {
       assert.ok(events.includes('agents_changed'));
     });
 
-    it('retains last integer position when fractional coords arrive mid-move', () => {
+    it('snaps to destination tile when fractional coords arrive mid-move', () => {
       // Agent last seen at tile (3, 3) — simulate mid-move with fractional coords.
       store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 3, y: 3, score: 0 }]);
-      // Mid-move: x=3.6 would Math.round to 4 (wrong — agent is still leaving 3).
+      // Mid-move: x=3.6 → Math.round → 4. We intentionally snap to the destination
+      // tile for collision-avoidance: the pathfinder must block the tile the agent
+      // is heading to, not the one they are leaving.
       store.updateAgents([{ id: 'agent-a', name: 'Alice', x: 3.6, y: 3, score: 0 }]);
       const alice = store.getAgentBeliefs().find(a => a.id === 'agent-a');
       assert.ok(alice);
-      // Must NOT snap to tile 4; must retain last stable integer position (3, 3).
-      assert.deepEqual(alice.position, { x: 3, y: 3 });
+      assert.deepEqual(alice.position, { x: 4, y: 3 });
     });
 
     it('updates position once agent arrives at integer tile after mid-move', () => {

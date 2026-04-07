@@ -31,7 +31,7 @@ import { PlanValidator } from '../planning/plan-validator.js';
 import type { IPlanner } from '../types.js';
 import { buildPlannerChain } from '../planning/planner-factory.js';
 import { findPath } from '../pathfinding/pathfinder.js';
-import { computeDistanceMap, posKey } from '../pathfinding/distance-map.js';
+import { computeDistanceMap, computeMultiSourceDistanceMap, posKey } from '../pathfinding/distance-map.js';
 import { createLogger, type Logger } from '../logging/logger.js';
 import { MetricsCollector } from '../metrics/metrics-collector.js';
 import { formatSummary } from '../metrics/metrics-snapshot.js';
@@ -504,10 +504,17 @@ export abstract class BaseAgent implements IAgent {
       const cratePositions = this.beliefs.getCratePositionSet(mapWidth);
       const distMap = computeDistanceMap(selfPosRounded, this.beliefs.getMap(), undefined, cratePositions);
 
+      // Multi-source BFS from all delivery zones: gives exact "steps to nearest delivery"
+      // from any tile, used by deliberator to replace Manhattan stepsToDelivery.
+      const deliveryZones = Array.from(this.beliefs.getMap().getDeliveryZones());
+      const deliveryDistMap = deliveryZones.length > 0
+        ? computeMultiSourceDistanceMap(deliveryZones, this.beliefs.getMap(), cratePositions)
+        : undefined;
+
       // Compute candidates once — passed to shouldReplan to avoid a second evaluate().
       const claimedByOthers =
         this.allyTracker?.getClaimedByOthers() ?? new Set<string>();
-      const evalResult = this.deliberator.evaluate(this.beliefs, movementDurationMs, tracker, distMap);
+      const evalResult = this.deliberator.evaluate(this.beliefs, movementDurationMs, tracker, distMap, deliveryDistMap);
       const candidates = evalResult.intentions
         .filter(i => !i.targetParcels.some(id => claimedByOthers.has(id)));
 

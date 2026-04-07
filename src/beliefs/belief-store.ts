@@ -248,12 +248,12 @@ export class BeliefStore implements IBeliefStore {
       // Store raw float position for heading computation on the next update.
       this.prevAgentPositions.set(raw.id, { x: raw.x, y: raw.y });
 
-      // Use stable integer position — skip fractional mid-move coordinates to avoid
-      // placing the agent on a tile they're actually leaving (Math.round can snap
-      // to the destination tile while the agent is still on the source tile).
-      const stablePosition = (Number.isInteger(raw.x) && Number.isInteger(raw.y))
-        ? { x: raw.x, y: raw.y }
-        : existing?.position ?? { x: Math.round(raw.x), y: Math.round(raw.y) };
+      // Round fractional mid-move coordinates to the nearest integer tile.
+      // This snaps to the destination tile as the agent approaches it, which is
+      // correct for collision-avoidance: we need to block the tile the NPC is heading
+      // to, not the one they're leaving. The pathfinder's obstacle list is updated
+      // each sensing frame (~10 Hz), so a briefly-wrong source-tile block is harmless.
+      const stablePosition = { x: Math.round(raw.x), y: Math.round(raw.y) };
 
       this.agents.set(raw.id, {
         id: raw.id,

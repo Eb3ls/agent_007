@@ -19,11 +19,11 @@ import { actionToDirection } from './action-types.js';
 const SAFETY_MARGIN_MS = 100;
 
 /**
- * Number of consecutive move failures before giving up and triggering a replan.
- * One retry is enough to handle transient NPC occupancy (NPC moves every frame ~50ms).
- * After 2 total attempts, further retrying only accumulates penalties (R07, R22).
+ * Number of retries after an initial move failure.
+ * 1 retry → 2 total attempts: enough to handle a single-frame NPC occupancy.
+ * More retries accumulate penalties (R07, R22) without meaningful benefit.
  */
-const MAX_MOVE_RETRIES = 3; // 3 retries → 4 total attempts; handles NPC tile-locking on narrow corridors
+const MAX_MOVE_RETRIES = 1;
 
 export class ActionExecutor implements IActionExecutor {
   private client: GameClient;
@@ -83,6 +83,11 @@ export class ActionExecutor implements IActionExecutor {
 
   getCurrentStepIndex(): number {
     return this.stepIndex;
+  }
+
+  /** Returns the next step in the current plan (after the one in progress), or null. */
+  getNextPlannedStep(): PlanStep | null {
+    return this.currentPlan?.steps[this.stepIndex + 1] ?? null;
   }
 
   onStepComplete(cb: (step: PlanStep, index: number) => void): void {
@@ -193,7 +198,7 @@ export class ActionExecutor implements IActionExecutor {
     }
   }
 
-  private async executeStep(step: PlanStep, attempt = 0): Promise<boolean> {
+  private async executeStep(step: PlanStep, attempt = 0, activePlan = this.currentPlan): Promise<boolean> {
     const direction = actionToDirection(step.action);
     const expectedDurationMs = this.client.getMeasuredActionDurationMs();
 
@@ -212,15 +217,17 @@ export class ActionExecutor implements IActionExecutor {
         );
 
         if (!result) {
-          if (attempt < MAX_MOVE_RETRIES && !this.cancelled && this.currentPlan !== null) {
-            // Wait for NPC to clear the tile (R07): movement_duration ~50ms, 3 retries covers 2-3 tiles
+          if (attempt < MAX_MOVE_RETRIES && !this.cancelled && this.currentPlan === activePlan) {
+            // Wait one frame for NPC to clear the tile before retrying (R07).
+            // Use activePlan identity (not null-check) so a plan replacement during
+            // the 150ms wait is detected: the new plan must not inherit this retry.
             await new Promise(r => setTimeout(r, 150));
-            if (this.cancelled || this.currentPlan === null) return false;
-            return this.executeStep(step, attempt + 1);
+            if (this.cancelled || this.currentPlan !== activePlan) return false;
+            return this.executeStep(step, attempt + 1, activePlan);
           }
-          // Exhausted retries — signal collision-based replan (Pattern-3, R07)
-          this.replanEmitted = true;
-          for (const cb of this.replanRequiredCbs) cb({ reason: 'collision', failedStep: step, failureCount: attempt + 1 });
+          // Retries exhausted — return false so runLoop fires onStepFailed.
+          // onStepFailed lets base-agent record lastFailedTile as a dynamic obstacle.
+          // onReplanRequired is reserved for sensing-driven collision detection.
           return false;
         }
         return true;
