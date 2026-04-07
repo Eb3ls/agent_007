@@ -9,7 +9,6 @@ import type {
   BeliefChangeType,
   BeliefMap,
   BeliefSnapshot,
-  Direction,
   IBeliefStore,
   ParcelBelief,
   Position,
@@ -18,15 +17,15 @@ import type {
   RawSelfSensing,
   SelfBelief,
 } from '../types.js';
-import { manhattanDistance, positionEquals } from '../types.js';
+import { manhattanDistance } from '../types.js';
 import { findPath } from '../pathfinding/pathfinder.js';
 import { ParcelTracker } from './parcel-tracker.js';
+import { SelfBeliefUpdater } from './self-belief-updater.js';
+import { ParcelBeliefUpdater } from './parcel-belief-updater.js';
+import { AgentBeliefUpdater } from './agent-belief-updater.js';
 
 /** Parcels not seen for longer than this are marked stale (confidence drops). */
 const STALE_THRESHOLD_MS = 5_000;
-
-/** Agent confidence decays to 0 over this duration after last seen. */
-const AGENT_CONFIDENCE_DECAY_MS = 10_000;
 
 export class BeliefStore implements IBeliefStore {
   private map: BeliefMap;
@@ -45,6 +44,11 @@ export class BeliefStore implements IBeliefStore {
   // Track previous agent positions for heading estimation
   private prevAgentPositions = new Map<string, Position>();
 
+  // Belief updaters (separate for extensibility)
+  private selfUpdater: SelfBeliefUpdater;
+  private parcelUpdater: ParcelBeliefUpdater;
+  private agentUpdater: AgentBeliefUpdater;
+
   constructor(map: BeliefMap) {
     this.map = map;
     this.self = {
@@ -55,183 +59,47 @@ export class BeliefStore implements IBeliefStore {
       penalty: 0,
       carriedParcels: [],
     };
+
+    // Initialize updaters
+    this.selfUpdater = new SelfBeliefUpdater(map);
+    this.parcelUpdater = new ParcelBeliefUpdater(map, this.parcelTracker);
+    this.agentUpdater = new AgentBeliefUpdater();
   }
 
   // --- Mutation methods ---
 
   updateSelf(raw: RawSelfSensing): void {
-    const prevPos = this.self.position;
-    const prevScore = this.self.score;
+    const result = this.selfUpdater.update(raw, this.self, this.parcels, this.visitedSpawningTiles);
+    this.self = result.belief;
 
-    // Parcels carried by self
-    const carried = Array.from(this.parcels.values()).filter(
-      p => p.carriedBy === raw.id,
-    );
-
-    // Server sends float coordinates during movement animation.
-    // Only update position when the agent is on a stable integer tile;
-    // otherwise keep the last known integer position to avoid planning from mid-air.
-    const stablePosition = (Number.isInteger(raw.x) && Number.isInteger(raw.y))
-      ? { x: raw.x, y: raw.y }
-      : this.self.position;
-
-    this.self = {
-      id: raw.id,
-      name: raw.name,
-      position: stablePosition,
-      score: raw.score,
-      penalty: raw.penalty ?? this.self.penalty,
-      carriedParcels: carried,
-    };
-
-    // Track visited spawning tiles for exploration
-    if (this.map.isSpawningTile(stablePosition.x, stablePosition.y)) {
-      this.visitedSpawningTiles.add(`${stablePosition.x},${stablePosition.y}`);
-    }
-
-    if (!positionEquals(prevPos, this.self.position)) {
+    if (result.positionChanged) {
       this.emit('self_moved');
     }
-    if (prevScore !== raw.score) {
+    if (result.scoreChanged) {
       this.emit('self_score_changed');
     }
   }
 
   updateParcels(parcels: ReadonlyArray<RawParcelSensing>): void {
-    const now = Date.now();
-    const sensedIds = new Set<string>();
-
-    for (const raw of parcels) {
-      sensedIds.add(raw.id);
-      this.parcelTracker.observe(raw.id, raw.reward, now);
-      const existing = this.parcels.get(raw.id);
-
-      // Estimate decay rate from consecutive observations
-      let decayRate = existing?.decayRatePerMs ?? 0;
-      if (existing && raw.reward < existing.reward && existing.reward > 0) {
-        const dt = now - existing.lastSeen;
-        if (dt > 0) {
-          decayRate = (existing.reward - raw.reward) / dt;
-        }
-      }
-
-      this.parcels.set(raw.id, {
-        id: raw.id,
-        position: { x: raw.x, y: raw.y },
-        carriedBy: raw.carriedBy,
-        reward: raw.reward,
-        estimatedReward: raw.reward,
-        lastSeen: now,
-        confidence: 1.0,
-        decayRatePerMs: decayRate,
-      });
-    }
-
-    // Belief revision: remove parcels that should be visible but aren't sensed.
-    // Use PARCELS_OBSERVATION_DISTANCE when known; otherwise fall back to a
-    // heuristic based on the farthest sensed parcel distance.
-    const selfPos = this.self.position;
-    let effectiveRange: number;
-    if (this.observationDistance > 0) {
-      effectiveRange = this.observationDistance;
-    } else {
-      let maxSensedDist = 0;
-      for (const raw of parcels) {
-        const d = manhattanDistance(selfPos, { x: raw.x, y: raw.y });
-        if (d > maxSensedDist) maxSensedDist = d;
-      }
-      effectiveRange = parcels.length > 0 ? maxSensedDist : 1;
-    }
-
-    for (const [id, belief] of this.parcels) {
-      if (sensedIds.has(id)) continue;
-      if (belief.carriedBy !== null) continue; // carried parcels don't appear in sensing
-
-      const dist = manhattanDistance(selfPos, belief.position);
-      if (dist <= effectiveRange) {
-        this.parcels.delete(id);
-      } else {
-        // Mark stale parcels with decaying confidence
-        const age = now - belief.lastSeen;
-        if (age > STALE_THRESHOLD_MS) {
-          const confidence = Math.max(
-            0,
-            1 - (age - STALE_THRESHOLD_MS) / STALE_THRESHOLD_MS,
-          );
-          const estimatedReward = Math.max(
-            0,
-            belief.reward - belief.decayRatePerMs * age,
-          );
-          this.parcels.set(id, {
-            ...belief,
-            confidence,
-            estimatedReward,
-          });
-        }
-      }
-    }
-
+    const result = this.parcelUpdater.update(
+      parcels,
+      this.parcels,
+      this.self.position,
+      this.observationDistance,
+    );
+    this.parcels = result.parcels;
     this.emit('parcels_changed');
   }
 
   updateAgents(agents: ReadonlyArray<RawAgentSensing>): void {
-    const now = Date.now();
-    const sensedIds = new Set<string>();
-
-    for (const raw of agents) {
-      sensedIds.add(raw.id);
-      const existing = this.agents.get(raw.id);
-
-      // Estimate heading from raw float delta for accuracy (avoids false equality
-      // when comparing integer belief position against a new fractional raw position).
-      const prevRaw = this.prevAgentPositions.get(raw.id);
-      let heading: Direction | null = null;
-      if (prevRaw && (prevRaw.x !== raw.x || prevRaw.y !== raw.y)) {
-        const dx = raw.x - prevRaw.x;
-        const dy = raw.y - prevRaw.y;
-        if (Math.abs(dx) >= Math.abs(dy)) {
-          heading = dx > 0 ? 'right' : 'left';
-        } else {
-          heading = dy > 0 ? 'up' : 'down';
-        }
-      } else if (existing) {
-        heading = existing.heading;
-      }
-
-      // Store raw float position for heading computation on the next update.
-      this.prevAgentPositions.set(raw.id, { x: raw.x, y: raw.y });
-
-      // Use stable integer position — skip fractional mid-move coordinates to avoid
-      // placing the agent on a tile they're actually leaving (Math.round can snap
-      // to the destination tile while the agent is still on the source tile).
-      const stablePosition = (Number.isInteger(raw.x) && Number.isInteger(raw.y))
-        ? { x: raw.x, y: raw.y }
-        : existing?.position ?? { x: Math.round(raw.x), y: Math.round(raw.y) };
-
-      this.agents.set(raw.id, {
-        id: raw.id,
-        name: raw.name,
-        position: stablePosition,
-        score: raw.score,
-        lastSeen: now,
-        confidence: 1.0,
-        heading,
-        isAlly: this.allyIds.has(raw.id),
-      });
-    }
-
-    // Decay confidence of agents no longer sensed
-    for (const [id, belief] of this.agents) {
-      if (sensedIds.has(id)) continue;
-      const age = now - belief.lastSeen;
-      if (age > AGENT_CONFIDENCE_DECAY_MS) {
-        this.agents.delete(id);
-      } else {
-        const confidence = Math.max(0, 1 - age / AGENT_CONFIDENCE_DECAY_MS);
-        this.agents.set(id, { ...belief, confidence });
-      }
-    }
-
+    const result = this.agentUpdater.update(
+      agents,
+      this.agents,
+      this.prevAgentPositions,
+      this.allyIds,
+    );
+    this.agents = result.agents;
+    this.prevAgentPositions = result.prevPositions;
     this.emit('agents_changed');
   }
 
