@@ -5,6 +5,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type {
+  AgentBelief,
   IBeliefStore,
   ParcelBelief,
   Plan,
@@ -41,9 +42,23 @@ function makeParcel(id: string, pos: Position, carriedBy: string | null = null):
   };
 }
 
+function makeAgent(pos: Position, confidence = 1.0): AgentBelief {
+  return {
+    id: `agent-${pos.x}-${pos.y}`,
+    name: 'enemy',
+    position: pos,
+    score: 0,
+    lastSeen: Date.now(),
+    confidence,
+    heading: null,
+    isAlly: false,
+  };
+}
+
 function mockBeliefs(
   parcels: ReadonlyArray<ParcelBelief>,
   selfPos: Position,
+  agents: ReadonlyArray<AgentBelief> = [],
 ): IBeliefStore {
   const zones = FIXTURE_DELIVERY_ZONES as Position[];
 
@@ -62,7 +77,7 @@ function mockBeliefs(
       carriedParcels: [],
     } satisfies SelfBelief),
     getParcelBeliefs: () => parcels,
-    getAgentBeliefs: () => [],
+    getAgentBeliefs: () => agents,
     getMap: () => fixtureMap,
     getNearestDeliveryZone: () => zones[0]!,
     getReachableParcels: () => parcels.filter(p => p.carriedBy === null),
@@ -80,6 +95,7 @@ function mockBeliefs(
     getExploreTarget: () => null,
     removeParcel: () => {},
     clearDeliveredParcels: () => {},
+    markParcelCarried: () => {},
     onUpdate: () => {},
   };
 }
@@ -273,5 +289,61 @@ describe('PlanValidator', () => {
       const vr = validator.validate(plan, beliefs);
       assert.ok(vr.valid, `delivery zone (${zone.x},${zone.y}) should be valid: ${vr.reason}`);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // (BUG-4) Agent obstacle checking in move steps
+  // -------------------------------------------------------------------------
+
+  it('fails when a high-confidence agent blocks the first move destination', () => {
+    // Agent at (5, 4) — the destination of the move step
+    const dest: Position = { x: 5, y: 4 };
+    const plan = makePlan([
+      { action: 'move_right', expectedPosition: dest },
+    ]);
+    const beliefs = mockBeliefs([], { x: 4, y: 4 }, [makeAgent(dest, 1.0)]);
+    const vr = validator.validate(plan, beliefs);
+
+    assert.equal(vr.valid, false);
+    assert.ok(vr.reason?.includes('agent-occupied'), vr.reason);
+    assert.ok(vr.reason?.includes(`(${dest.x},${dest.y})`), vr.reason);
+  });
+
+  it('accepts plan when agent blocks a mid-route tile (step > 0): agents move during execution', () => {
+    // Plan: move right to (5,4) then up to (5,5). Agent at (5,5) = step 1.
+    // Mid-route agent blocking is NOT checked: agent may have moved before we get there.
+    // Only the immediate first step is checked to prevent instant collisions.
+    const agent: AgentBelief = makeAgent({ x: 5, y: 5 }, 0.9);
+    const plan = makePlan([
+      { action: 'move_right', expectedPosition: { x: 5, y: 4 } },
+      { action: 'move_up',    expectedPosition: { x: 5, y: 5 } },
+    ]);
+    const beliefs = mockBeliefs([], { x: 4, y: 4 }, [agent]);
+    const vr = validator.validate(plan, beliefs);
+
+    // Mid-route agent should not cause rejection (only step 0 is checked)
+    assert.ok(vr.valid, `mid-route agent must not reject: ${vr.reason}`);
+  });
+
+  it('accepts plan when agent confidence is too low (≤0.5)', () => {
+    // Low-confidence agent at first move destination — should not block
+    const dest: Position = { x: 5, y: 4 };
+    const plan = makePlan([
+      { action: 'move_right', expectedPosition: dest },
+    ]);
+    const beliefs = mockBeliefs([], { x: 4, y: 4 }, [makeAgent(dest, 0.4)]);
+    const vr = validator.validate(plan, beliefs);
+
+    assert.ok(vr.valid, `low-confidence agent should not block: ${vr.reason}`);
+  });
+
+  it('accepts plan when no agents are present', () => {
+    const plan = makePlan([
+      { action: 'move_right', expectedPosition: { x: 5, y: 4 } },
+    ]);
+    const beliefs = mockBeliefs([], { x: 4, y: 4 }, []);
+    const vr = validator.validate(plan, beliefs);
+
+    assert.ok(vr.valid, vr.reason);
   });
 });

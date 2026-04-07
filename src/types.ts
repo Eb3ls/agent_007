@@ -5,13 +5,18 @@
 
 // --- Game Primitives ---
 
-// 0: non-walkable/wall, 1: parcel-spawning, 2: delivery zone, 3: walkable,
-// 4: one-way ↑ (can only be entered moving up,    dy=+1),
-// 5: one-way ↓ (can only be entered moving down,  dy=-1),
-// 6: one-way ← (can only be entered moving left,  dx=-1),
-// 7: one-way → (can only be entered moving right, dx=+1),
-// 8: crate-slide (tile '5', accepts a pushed crate),
-// 9: crate-spawner (tile '5!', NOT walkable)
+// Server R01 wire codes → internal TileType mapping (see game-client.ts parseTileType):
+//   server '0' → 0: non-walkable/wall
+//   server '1' → 1: parcel-spawning floor
+//   server '2' → 2: delivery zone
+//   server '3' → 3: plain walkable floor
+//   server '4' → 3: base tile (plain walkable, NOT a spawner — different from '1')
+//   server '5' → 8: crate-slide floor
+//   server '5!'→ 9: crate-spawner (NOT walkable)
+//   server '↑' → 4: one-way ↑ (entry allowed only when moving up,    dy=+1)
+//   server '↓' → 5: one-way ↓ (entry allowed only when moving down,  dy=-1)
+//   server '←' → 6: one-way ← (entry allowed only when moving left,  dx=-1)
+//   server '→' → 7: one-way → (entry allowed only when moving right, dx=+1)
 export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export interface Tile {
@@ -151,12 +156,14 @@ export interface BeliefSnapshot {
 
 export interface IBeliefStore {
   updateSelf(self: RawSelfSensing): void;
-  updateParcels(parcels: ReadonlyArray<RawParcelSensing>): void;
+  updateParcels(parcels: ReadonlyArray<RawParcelSensing>, observedPositions?: ReadonlyArray<{ x: number; y: number }>): void;
   updateAgents(agents: ReadonlyArray<RawAgentSensing>): void;
   updateCrates(crates: ReadonlyArray<RawCrateSensing>): void;
   mergeRemoteBelief(snapshot: BeliefSnapshot): void;
   removeParcel(id: string): void;
   clearDeliveredParcels(): void;
+  /** Immediately mark parcels as carried by carrierId (optimistic update before next sensing). */
+  markParcelCarried(ids: ReadonlyArray<string>, carrierId: string): void;
 
   getSelf(): SelfBelief;
   getParcelBeliefs(): ReadonlyArray<ParcelBelief>;
@@ -603,7 +610,7 @@ export interface GameClient {
   consumeReply(seq: number): ((data: unknown) => void) | undefined;
   onMap(cb: (tiles: ReadonlyArray<Tile>, width: number, height: number) => void): void;
   onYou(cb: (self: RawSelfSensing) => void): void;
-  onParcelsSensing(cb: (parcels: ReadonlyArray<RawParcelSensing>) => void): void;
+  onParcelsSensing(cb: (parcels: ReadonlyArray<RawParcelSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void): void;
   onAgentsSensing(cb: (agents: ReadonlyArray<RawAgentSensing>) => void): void;
   onCratesSensing(cb: (crates: ReadonlyArray<RawCrateSensing>) => void): void;
   onMessage(cb: (from: string, msg: InterAgentMessage) => void): void;

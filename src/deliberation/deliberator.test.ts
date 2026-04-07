@@ -85,6 +85,7 @@ function mockStore(
     getExploreTarget: () => null,
     removeParcel: () => {},
     clearDeliveredParcels: () => {},
+    markParcelCarried: () => {},
     onUpdate: () => {},
   };
 }
@@ -443,5 +444,26 @@ describe('Deliberator.evaluate — decay-aware utility via ParcelTracker', () =>
     assert.ok(intentions.length >= 1);
     // utility should be reward / steps = 30 / (1+4) = 6 ... just check it's non-zero
     assert.ok(intentions[0]!.utility > 0);
+  });
+
+  // BUG-23: stable sort — equal-utility intentions must produce deterministic order
+  it('produces deterministic ordering when two parcels have identical utility (BUG-23)', () => {
+    // Two parcels equidistant from (4,4): one at (5,4), one at (3,4) — same Manhattan dist=1.
+    // Same reward → identical utility. Sort must be stable by id, not arbitrary.
+    const p1 = makeParcel({ id: 'zzz-parcel', position: { x: 5, y: 4 }, reward: 10, estimatedReward: 10 });
+    const p2 = makeParcel({ id: 'aaa-parcel', position: { x: 3, y: 4 }, reward: 10, estimatedReward: 10 });
+    const deliberator = new Deliberator();
+
+    // Run evaluate 5 times — result must be the same each time
+    const firstRun = deliberator.evaluate(mockStore([p1, p2])).intentions;
+    for (let i = 0; i < 5; i++) {
+      const run = deliberator.evaluate(mockStore([p1, p2])).intentions;
+      // If ordering were unstable, it could flip between runs
+      assert.equal(
+        run[0]?.targetParcels[0],
+        firstRun[0]?.targetParcels[0],
+        `sort must be stable: got ${run[0]?.targetParcels[0]} expected ${firstRun[0]?.targetParcels[0]} on run ${i}`,
+      );
+    }
   });
 });

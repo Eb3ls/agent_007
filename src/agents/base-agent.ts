@@ -89,6 +89,8 @@ export abstract class BaseAgent implements IAgent {
   private lastLoggedScore = -1;
   private running = false;
   private planning = false;
+  /** Set when _scheduleDeliberation fires while planning=true — triggers a re-run on finally. */
+  private _deliberationPending = false;
   private deliberateTimer: ReturnType<typeof setInterval> | null = null;
   private lastParcelFingerprint = '';
   private lastRevaluatedPosition: Position = { x: -1, y: -1 };
@@ -197,9 +199,9 @@ export abstract class BaseAgent implements IAgent {
       }
     });
 
-    client.onParcelsSensing((parcels) => {
+    client.onParcelsSensing((parcels, observedPositions) => {
       if (!this.beliefs) return;
-      this.beliefs.updateParcels(parcels);
+      this.beliefs.updateParcels(parcels, observedPositions);
       if (this.running) this._scheduleDeliberation(false, 'sensing');
     });
 
@@ -283,8 +285,11 @@ export abstract class BaseAgent implements IAgent {
     // 2. Deliberation: check for better options for all plan types (not just explore).
     this.executor.setReactiveHook(async (step, _index) => {
       if (!this.beliefs || !this.running) return;
-      // Only attempt pickup on move steps (not pickup/putdown steps themselves)
-      if (step.action !== 'pickup' && step.action !== 'putdown') {
+      // Only attempt pickup on move steps (not pickup/putdown steps themselves).
+      // Skip if the next planned step is already a pickup — avoid calling pickup twice
+      // on the same tile (opportunistic + explicit).
+      const nextStep = this.executor.getNextPlannedStep();
+      if (step.action !== 'pickup' && step.action !== 'putdown' && nextStep?.action !== 'pickup') {
         const self = this.beliefs.getSelf();
         if (self.carriedParcels.length < this.beliefs.getCapacity()) {
           const here = step.expectedPosition;
@@ -293,6 +298,14 @@ export abstract class BaseAgent implements IAgent {
           );
           if (parcelHere) {
             await this.client.pickup();
+            // Optimistic belief update: mark the parcel as carried immediately so
+            // capacity checks and deliberation in the same tick see the correct state.
+            // The next sensing frame will reconcile with ground truth.
+            const selfId = this.beliefs.getSelf().id;
+            const onTile = this.beliefs.getParcelBeliefs()
+              .filter(p => p.carriedBy === null && p.position.x === here.x && p.position.y === here.y)
+              .map(p => p.id);
+            if (onTile.length > 0) this.beliefs.markParcelCarried(onTile, selfId);
           }
         }
       }
@@ -404,7 +417,11 @@ export abstract class BaseAgent implements IAgent {
    */
   private _scheduleDeliberation(planFailed = false, trigger: DelibTrigger = 'timer'): void {
     this._deliberTrigger = trigger;
-    if (!this.running || !this.beliefs || this.planning) return;
+    if (!this.running || !this.beliefs || this.planning) {
+      // Deliberation is in-flight: set a pending flag so the finally block re-runs it.
+      if (this.planning) this._deliberationPending = true;
+      return;
+    }
     // Don't replan while a move is in-flight — new plan would use stale pre-move position
     if (!planFailed && this.executor?.getInFlightAction() !== null) return;
     if (planFailed) {
@@ -509,7 +526,10 @@ export abstract class BaseAgent implements IAgent {
         tracker,
         candidates,
       );
-      const needsReplan = planFailed || shouldReplan || this.executor.isIdle();
+      // Also force a replan when at full capacity: the capacity check at line ~590 must be
+      // reachable even while the executor is mid-plan (e.g., after a reactive pickup filled us up).
+      const atCapacity = this.beliefs.getSelf().carriedParcels.length >= this.beliefs.getCapacity();
+      const needsReplan = planFailed || shouldReplan || this.executor.isIdle() || atCapacity;
 
       if (!needsReplan) {
         const replanReason = '';
@@ -837,6 +857,11 @@ export abstract class BaseAgent implements IAgent {
       }
     } finally {
       this.planning = false;
+      // If a deliberation was requested while we were planning, re-run now.
+      if (this._deliberationPending) {
+        this._deliberationPending = false;
+        this._scheduleDeliberation(false, this._deliberTrigger);
+      }
     }
   }
 

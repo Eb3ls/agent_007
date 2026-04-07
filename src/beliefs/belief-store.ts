@@ -103,7 +103,10 @@ export class BeliefStore implements IBeliefStore {
     }
   }
 
-  updateParcels(parcels: ReadonlyArray<RawParcelSensing>): void {
+  updateParcels(
+    parcels: ReadonlyArray<RawParcelSensing>,
+    observedPositions?: ReadonlyArray<{ x: number; y: number }>,
+  ): void {
     const now = Date.now();
     const sensedIds = new Set<string>();
 
@@ -133,58 +136,89 @@ export class BeliefStore implements IBeliefStore {
       });
     }
 
-    // Belief revision: remove parcels that should be visible but aren't sensed.
-    // Use observation_distance when known; otherwise fall back to a
-    // heuristic based on the farthest sensed parcel distance.
+    // Belief revision: remove parcels confirmed absent by the server's observation list.
+    //
+    // Two strategies (in order of preference):
+    //   1. positions[] provided (BUG-1 fix): use the server's authoritative "observed tiles" set.
+    //      A parcel is removed only when its tile was observed this frame but the parcel is absent.
+    //   2. Heuristic: use observationDistance or the farthest sensed parcel distance.
+    //      Less precise but works when positions[] is unavailable.
     const selfPos = this.self.position;
-    let effectiveRange: number;
-    if (this.observationDistance > 0) {
-      effectiveRange = this.observationDistance;
-    } else {
-      let maxSensedDist = 0;
-      for (const raw of parcels) {
-        const d = manhattanDistance(selfPos, { x: raw.x, y: raw.y });
-        if (d > maxSensedDist) maxSensedDist = d;
+
+    if (observedPositions && observedPositions.length > 0) {
+      // Strategy 1: use confirmed observed positions (BUG-1 fix).
+      // Build a set of "x,y" keys for fast lookup.
+      const observedKeys = new Set(observedPositions.map(p => `${Math.round(p.x)},${Math.round(p.y)}`));
+
+      for (const [id, belief] of this.parcels) {
+        if (sensedIds.has(id)) continue;
+        if (belief.carriedBy !== null) continue; // carried parcels are invisible in sensing
+
+        const posKey = `${belief.position.x},${belief.position.y}`;
+        if (observedKeys.has(posKey)) {
+          // Server observed this tile and didn't report the parcel → it's gone.
+          this.parcels.delete(id);
+        } else {
+          // Tile was not in the server's observation set — parcel may still be there.
+          // Decay confidence if stale.
+          const age = now - belief.lastSeen;
+          if (age > STALE_THRESHOLD_MS) {
+            const confidence = Math.max(0, 1 - (age - STALE_THRESHOLD_MS) / STALE_THRESHOLD_MS);
+            const estimatedReward = Math.max(0, belief.reward - belief.decayRatePerMs * age);
+            this.parcels.set(id, { ...belief, confidence, estimatedReward });
+          }
+        }
       }
-      effectiveRange = parcels.length > 0 ? maxSensedDist : 1;
-    }
-
-    for (const [id, belief] of this.parcels) {
-      if (sensedIds.has(id)) continue;
-      if (belief.carriedBy !== null) continue; // carried parcels don't appear in sensing
-
-      const dist = manhattanDistance(selfPos, belief.position);
-      // R10: when observationDistance is configured by the server, the boundary
-      // is exclusive (dist < observationDistance). When using the heuristic
-      // (effectiveRange = maxSensedDist), the boundary is inclusive.
-      const inRange =
-        this.observationDistance > 0
-          ? dist < this.observationDistance
-          : dist <= effectiveRange;
-      if (inRange) {
-        this.parcels.delete(id);
+    } else {
+      // Strategy 2: heuristic fallback when positions[] is not available.
+      let effectiveRange: number;
+      if (this.observationDistance > 0) {
+        effectiveRange = this.observationDistance;
       } else {
-        // Mark stale parcels with decaying confidence
-        const age = now - belief.lastSeen;
-        if (age > STALE_THRESHOLD_MS) {
-          const confidence = Math.max(
-            0,
-            1 - (age - STALE_THRESHOLD_MS) / STALE_THRESHOLD_MS,
-          );
-          const estimatedReward = Math.max(
-            0,
-            belief.reward - belief.decayRatePerMs * age,
-          );
-          this.parcels.set(id, {
-            ...belief,
-            confidence,
-            estimatedReward,
-          });
+        let maxSensedDist = 0;
+        for (const raw of parcels) {
+          const d = manhattanDistance(selfPos, { x: raw.x, y: raw.y });
+          if (d > maxSensedDist) maxSensedDist = d;
+        }
+        effectiveRange = parcels.length > 0 ? maxSensedDist : 1;
+      }
+
+      for (const [id, belief] of this.parcels) {
+        if (sensedIds.has(id)) continue;
+        if (belief.carriedBy !== null) continue;
+
+        const dist = manhattanDistance(selfPos, belief.position);
+        // R10: exclusive boundary when using configured observationDistance.
+        const inRange =
+          this.observationDistance > 0
+            ? dist < this.observationDistance
+            : dist <= effectiveRange;
+        if (inRange) {
+          this.parcels.delete(id);
+        } else {
+          const age = now - belief.lastSeen;
+          if (age > STALE_THRESHOLD_MS) {
+            const confidence = Math.max(0, 1 - (age - STALE_THRESHOLD_MS) / STALE_THRESHOLD_MS);
+            const estimatedReward = Math.max(0, belief.reward - belief.decayRatePerMs * age);
+            this.parcels.set(id, { ...belief, confidence, estimatedReward });
+          }
         }
       }
     }
 
     this.emit('parcels_changed');
+  }
+
+  markParcelCarried(ids: ReadonlyArray<string>, carrierId: string): void {
+    let changed = false;
+    for (const id of ids) {
+      const existing = this.parcels.get(id);
+      if (existing && existing.carriedBy !== carrierId) {
+        this.parcels.set(id, { ...existing, carriedBy: carrierId });
+        changed = true;
+      }
+    }
+    if (changed) this.emit('parcels_changed');
   }
 
   updateAgents(agents: ReadonlyArray<RawAgentSensing>): void {
@@ -388,10 +422,22 @@ export class BeliefStore implements IBeliefStore {
     const zones = this.map.getDeliveryZones();
     if (zones.length === 0) return null;
 
+    // Build a set of tile positions currently occupied by high-confidence agents.
+    // Prefer delivery zones not blocked by a known agent to avoid a guaranteed putdown failure.
+    const blockedKeys = new Set(
+      Array.from(this.agents.values())
+        .filter(a => a.confidence > 0.5)
+        .map(a => `${a.position.x},${a.position.y}`),
+    );
+
+    // Try unblocked zones first; fall back to all zones if every zone is occupied.
+    const candidates = zones.filter(z => !blockedKeys.has(`${z.x},${z.y}`));
+    const pool = candidates.length > 0 ? candidates : zones;
+
     let nearest: Position | null = null;
     let minDist = Infinity;
 
-    for (const zone of zones) {
+    for (const zone of pool) {
       const dist = manhattanDistance(from, zone);
       if (dist < minDist) {
         minDist = dist;

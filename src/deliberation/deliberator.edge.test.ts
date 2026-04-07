@@ -81,6 +81,7 @@ function mockStore(
     getExploreTarget: () => null,
     removeParcel: () => {},
     clearDeliveredParcels: () => {},
+    markParcelCarried: () => {},
     onUpdate: () => {},
   };
 }

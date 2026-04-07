@@ -30,7 +30,7 @@ interface SensingPayload {
 
 type MapCallback = (tiles: ReadonlyArray<Tile>, width: number, height: number) => void;
 type YouCallback = (self: RawSelfSensing) => void;
-type ParcelsCallback = (parcels: ReadonlyArray<RawParcelSensing>) => void;
+type ParcelsCallback = (parcels: ReadonlyArray<RawParcelSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void;
 type AgentsCallback = (agents: ReadonlyArray<RawAgentSensing>) => void;
 type CratesCallback = (crates: ReadonlyArray<RawCrateSensing>) => void;
 type MessageCallback = (from: string, msg: InterAgentMessage) => void;
@@ -47,7 +47,7 @@ function parseTileType(raw: string | number): TileType {
   if (s === "→") return 7; // one-way right (enter moving right)
   const n = parseInt(s, 10);
   if (n === 0 || n === 1 || n === 2 || n === 3) return n;
-  if (n === 4) return 1; // base/spawn tile — parcel-spawning (same as internal type 1)
+  if (n === 4) return 3; // base tile — plain walkable, NOT a parcel spawner (server '4' ≠ '1')
   if (n === 5) return 8; // crate-slide floor
   return 0; // unknown — treat as non-walkable
 }
@@ -128,6 +128,11 @@ export class GameClient {
     // Unified sensing event (server sends 'sensing' with {positions, agents, parcels, crates})
     // The legacy 'parcels sensing' / 'agents sensing' events are no longer emitted by the server.
     (this.api as unknown as { on(event: string, cb: (data: SensingPayload) => void): void }).on('sensing', (data) => {
+      // positions[] is the authoritative set of tiles the server observed this frame.
+      // Forward it alongside parcels so BeliefStore can use confirmed-vacant semantics
+      // instead of the observation-distance heuristic (BUG-1).
+      const positions: ReadonlyArray<{ x: number; y: number }> = data.positions ?? [];
+
       const parcels: RawParcelSensing[] = (data.parcels ?? []).map(p => ({
         id: p.id,
         x: p.x,
@@ -135,11 +140,11 @@ export class GameClient {
         carriedBy: p.carriedBy ?? null,
         reward: p.reward,
       }));
-      const parcelsEvent: BufferedEvent = { kind: 'parcels', parcels };
+      const parcelsEvent: BufferedEvent = { kind: 'parcels', parcels, observedPositions: positions };
       if (!this.eventBuffer.isDrained()) {
         this.eventBuffer.push(parcelsEvent);
       } else {
-        this.dispatchParcels(parcels);
+        this.dispatchParcels(parcels, positions);
       }
 
       const agents: RawAgentSensing[] = (data.agents ?? []).map(a => ({
@@ -215,8 +220,8 @@ export class GameClient {
     for (const cb of this.youCallbacks) cb(self);
   }
 
-  private dispatchParcels(parcels: ReadonlyArray<RawParcelSensing>): void {
-    for (const cb of this.parcelsCallbacks) cb(parcels);
+  private dispatchParcels(parcels: ReadonlyArray<RawParcelSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }> = []): void {
+    for (const cb of this.parcelsCallbacks) cb(parcels, observedPositions);
   }
 
   private dispatchAgents(agents: ReadonlyArray<RawAgentSensing>): void {
@@ -364,7 +369,7 @@ export class GameClient {
           this.dispatchYou(event.self);
           break;
         case 'parcels':
-          this.dispatchParcels(event.parcels);
+          this.dispatchParcels(event.parcels, event.observedPositions ?? []);
           break;
         case 'agents':
           this.dispatchAgents(event.agents);

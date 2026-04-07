@@ -49,6 +49,7 @@ function mockBeliefs(parcels: ReadonlyArray<ParcelBelief>, selfPos: Position): I
     getExploreTarget: () => null,
     removeParcel: () => {},
     clearDeliveredParcels: () => {},
+    markParcelCarried: () => {},
     onUpdate: () => {},
   };
 }
