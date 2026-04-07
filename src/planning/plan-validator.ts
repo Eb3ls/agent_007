@@ -34,6 +34,15 @@ export class PlanValidator {
       if (p.carriedBy === null) parcelAtPos.set(key(p.position), p.id);
     }
 
+    // High-confidence agent positions — treat as blocked tiles during validation.
+    // Only includes agents we have seen recently (confidence > 0.5).
+    // This catches PDDL plans built on stale snapshots where agents have moved into the route.
+    const agentKeys = new Set(
+      beliefs.getAgentBeliefs()
+        .filter(a => a.confidence > 0.5)
+        .map(a => key(a.position)),
+    );
+
     // --- Pre-check (1): every pickup position has a live parcel ---
     for (let i = 0; i < plan.steps.length; i++) {
       const step = plan.steps[i]!;
@@ -67,6 +76,14 @@ export class PlanValidator {
         }
         if (!map.isWalkable(dest.x, dest.y)) {
           return { valid: false, reason: `step ${i} moves to non-walkable tile (${dest.x},${dest.y})` };
+        }
+        // Only check agent blocking on the FIRST move step (the one the agent is about to take).
+        // Subsequent steps are not checked: agents move, so a plan routing through a tile that
+        // is occupied NOW may be perfectly valid by the time the agent reaches it.
+        // Checking all steps would cause infinite replan loops when BFS falls back to an
+        // obstacle-free path through a temporarily-blocked tile.
+        if (i === 0 && agentKeys.has(key(dest))) {
+          return { valid: false, reason: `step ${i} moves to agent-occupied tile (${dest.x},${dest.y})` };
         }
         pos = dest;
 

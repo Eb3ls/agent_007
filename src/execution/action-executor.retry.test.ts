@@ -73,8 +73,8 @@ describe("ActionExecutor — retry behavior", () => {
   it("emits onPutdown with delivered count when putdown returns parcels", async () => {
     const client = new MockGameClient({
       putdownResult: [
-        { id: "p1", x: 0, y: 0, carriedBy: null, reward: 0 },
-        { id: "p2", x: 0, y: 0, carriedBy: null, reward: 0 },
+        { id: "p1" },
+        { id: "p2" },
       ],
     });
 

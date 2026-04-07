@@ -158,7 +158,7 @@ export interface IBeliefStore {
   updateSelf(self: RawSelfSensing): void;
   updateParcels(parcels: ReadonlyArray<RawParcelSensing>, observedPositions?: ReadonlyArray<{ x: number; y: number }>): void;
   updateAgents(agents: ReadonlyArray<RawAgentSensing>): void;
-  updateCrates(crates: ReadonlyArray<RawCrateSensing>): void;
+  updateCrates(crates: ReadonlyArray<RawCrateSensing>, observedPositions?: ReadonlyArray<{ x: number; y: number }>): void;
   mergeRemoteBelief(snapshot: BeliefSnapshot): void;
   removeParcel(id: string): void;
   clearDeliveredParcels(): void;
@@ -600,8 +600,8 @@ export interface GameClient {
   connect(): Promise<void>;
   disconnect(): void;
   move(direction: Direction): Promise<boolean>;
-  pickup(): Promise<ReadonlyArray<RawParcelSensing>>;
-  putdown(): Promise<ReadonlyArray<RawParcelSensing>>;
+  pickup(): Promise<ReadonlyArray<{ id: string }>>;
+  putdown(): Promise<ReadonlyArray<{ id: string }>>;
   sendMessage(toId: string, msg: InterAgentMessage): void;
   broadcastMessage(msg: InterAgentMessage): void;
   /** Send a targeted message and await a direct reply from the recipient. */
@@ -612,7 +612,7 @@ export interface GameClient {
   onYou(cb: (self: RawSelfSensing) => void): void;
   onParcelsSensing(cb: (parcels: ReadonlyArray<RawParcelSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void): void;
   onAgentsSensing(cb: (agents: ReadonlyArray<RawAgentSensing>) => void): void;
-  onCratesSensing(cb: (crates: ReadonlyArray<RawCrateSensing>) => void): void;
+  onCratesSensing(cb: (crates: ReadonlyArray<RawCrateSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void): void;
   onMessage(cb: (from: string, msg: InterAgentMessage) => void): void;
   onDisconnect(cb: () => void): void;
   onReconnect(cb: () => void): void;

@@ -145,7 +145,7 @@ export class BeliefStore implements IBeliefStore {
     //      Less precise but works when positions[] is unavailable.
     const selfPos = this.self.position;
 
-    if (observedPositions && observedPositions.length > 0) {
+    if (observedPositions !== undefined) {
       // Strategy 1: use confirmed observed positions (BUG-1 fix).
       // Build a set of "x,y" keys for fast lookup.
       const observedKeys = new Set(observedPositions.map(p => `${Math.round(p.x)},${Math.round(p.y)}`));
@@ -282,7 +282,7 @@ export class BeliefStore implements IBeliefStore {
     this.emit('agents_changed');
   }
 
-  updateCrates(crates: ReadonlyArray<RawCrateSensing>): void {
+  updateCrates(crates: ReadonlyArray<RawCrateSensing>, observedPositions?: ReadonlyArray<{ x: number; y: number }>): void {
     const now = Date.now();
     const sensedIds = new Set<string>();
     const selfPos = this.self.position;
@@ -296,17 +296,29 @@ export class BeliefStore implements IBeliefStore {
       });
     }
 
-    // Belief revision: remove crates confirmed absent within observation range.
-    // Crates outside range may still be present — keep them until re-observed.
-    const effectiveRange = this.observationDistance > 0 ? this.observationDistance : 5;
-    for (const [id, belief] of this.crates) {
-      if (sensedIds.has(id)) continue;
-      const dist = manhattanDistance(selfPos, belief.position);
-      const inRange = this.observationDistance > 0
-        ? dist < this.observationDistance
-        : dist <= effectiveRange;
-      if (inRange) {
-        this.crates.delete(id);
+    // Belief revision: remove crates confirmed absent.
+    if (observedPositions !== undefined) {
+      // Strategy 1: server's authoritative observed-tile set.
+      const observedKeys = new Set(observedPositions.map(p => `${Math.round(p.x)},${Math.round(p.y)}`));
+      for (const [id, belief] of this.crates) {
+        if (sensedIds.has(id)) continue;
+        const posKey = `${belief.position.x},${belief.position.y}`;
+        if (observedKeys.has(posKey)) {
+          this.crates.delete(id);
+        }
+      }
+    } else {
+      // Strategy 2: heuristic fallback using observation range.
+      const effectiveRange = this.observationDistance > 0 ? this.observationDistance : 5;
+      for (const [id, belief] of this.crates) {
+        if (sensedIds.has(id)) continue;
+        const dist = manhattanDistance(selfPos, belief.position);
+        const inRange = this.observationDistance > 0
+          ? dist < this.observationDistance
+          : dist <= effectiveRange;
+        if (inRange) {
+          this.crates.delete(id);
+        }
       }
     }
 
@@ -374,6 +386,8 @@ export class BeliefStore implements IBeliefStore {
           confidence: 0.7, // remote beliefs have lower confidence
           decayRatePerMs: existing?.decayRatePerMs ?? 0,
         });
+        // Register remote parcel with tracker so estimateRewardAt works for deliberation.
+        this.parcelTracker.observe(rp.id, rp.reward, snapshot.timestamp);
       }
     }
 

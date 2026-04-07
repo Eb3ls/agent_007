@@ -210,9 +210,9 @@ export abstract class BaseAgent implements IAgent {
       this.beliefs.updateAgents(agents);
     });
 
-    client.onCratesSensing((crates) => {
+    client.onCratesSensing((crates, observedPositions) => {
       if (!this.beliefs) return;
-      this.beliefs.updateCrates(crates);
+      this.beliefs.updateCrates(crates, observedPositions);
       if (this.running) this._scheduleDeliberation(false, 'sensing');
     });
 
@@ -437,10 +437,13 @@ export abstract class BaseAgent implements IAgent {
 
   private _computeParcelFingerprint(): string {
     const parcels = this.beliefs!.getParcelBeliefs();
+    // Include a coarse 2-second time bucket so decaying parcels trigger re-evaluation
+    // even when their id/carriedBy state hasn't changed (M4).
+    const timeBucket = Math.floor(Date.now() / 2000);
     const parcelFingerprint = parcels
       .map(p => `${p.id}:${p.carriedBy ?? ''}`)
       .sort()
-      .join('|');
+      .join('|') + `|t:${timeBucket}`;
 
     // Include crate positions in the fingerprint: changes to crates trigger re-evaluation
     const crateBeliefs = this.beliefs!.getCrateBeliefs();

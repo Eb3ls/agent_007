@@ -87,8 +87,8 @@ describe('ActionExecutor — edge cases', () => {
   it('onPutdown fires with correct item count when putdown returns items', async () => {
     client.setActionConfig({
       putdownResult: [
-        { id: 'p1', x: 0, y: 0, carriedBy: null, reward: 10 },
-        { id: 'p2', x: 0, y: 0, carriedBy: null, reward: 20 },
+        { id: 'p1' },
+        { id: 'p2' },
       ],
     });
 

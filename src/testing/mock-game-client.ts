@@ -20,9 +20,9 @@ export interface MockActionConfig {
   /** If true, move() always returns false (simulating blocked movement). Default: true (success). */
   moveSucceeds: boolean;
   /** Parcels returned by pickup(). Default: []. */
-  pickupResult: ReadonlyArray<RawParcelSensing>;
+  pickupResult: ReadonlyArray<{ id: string }>;
   /** Parcels returned by putdown(). Default: []. */
-  putdownResult: ReadonlyArray<RawParcelSensing>;
+  putdownResult: ReadonlyArray<{ id: string }>;
   /** Simulated action duration in ms. Default: 0 (instant). */
   actionDelayMs: number;
   /** Simulated server capacity (GAME.player.capacity). Default: Infinity (no limit). */
@@ -41,9 +41,9 @@ const DEFAULT_ACTION_CONFIG: MockActionConfig = {
 
 type MapCallback = (tiles: ReadonlyArray<Tile>, width: number, height: number) => void;
 type YouCallback = (self: RawSelfSensing) => void;
-type ParcelsCallback = (parcels: ReadonlyArray<RawParcelSensing>) => void;
+type ParcelsCallback = (parcels: ReadonlyArray<RawParcelSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void;
 type AgentsCallback = (agents: ReadonlyArray<RawAgentSensing>) => void;
-type CratesCallback = (crates: ReadonlyArray<RawCrateSensing>) => void;
+type CratesCallback = (crates: ReadonlyArray<RawCrateSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void;
 type MessageCallback = (from: string, msg: InterAgentMessage) => void;
 type VoidCallback = () => void;
 
@@ -104,7 +104,7 @@ export class MockGameClient implements GameClient {
     return this.actionConfig.moveSucceeds;
   }
 
-  async pickup(): Promise<ReadonlyArray<RawParcelSensing>> {
+  async pickup(): Promise<ReadonlyArray<{ id: string }>> {
     this.pickupCount.value++;
     if (this.actionConfig.actionDelayMs > 0) {
       await delay(this.actionConfig.actionDelayMs);
@@ -112,7 +112,7 @@ export class MockGameClient implements GameClient {
     return this.actionConfig.pickupResult;
   }
 
-  async putdown(): Promise<ReadonlyArray<RawParcelSensing>> {
+  async putdown(): Promise<ReadonlyArray<{ id: string }>> {
     this.putdownCount.value++;
     if (this.actionConfig.actionDelayMs > 0) {
       await delay(this.actionConfig.actionDelayMs);
@@ -208,16 +208,16 @@ export class MockGameClient implements GameClient {
     for (const cb of this.youCallbacks) cb(self);
   }
 
-  emitParcelsSensing(parcels: ReadonlyArray<RawParcelSensing>): void {
-    for (const cb of this.parcelsCallbacks) cb(parcels);
+  emitParcelsSensing(parcels: ReadonlyArray<RawParcelSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }> = []): void {
+    for (const cb of this.parcelsCallbacks) cb(parcels, observedPositions);
   }
 
   emitAgentsSensing(agents: ReadonlyArray<RawAgentSensing>): void {
     for (const cb of this.agentsCallbacks) cb(agents);
   }
 
-  emitCratesSensing(crates: ReadonlyArray<RawCrateSensing>): void {
-    for (const cb of this.cratesCallbacks) cb(crates);
+  emitCratesSensing(crates: ReadonlyArray<RawCrateSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }> = []): void {
+    for (const cb of this.cratesCallbacks) cb(crates, observedPositions);
   }
 
   emitMessage(from: string, msg: InterAgentMessage): void {

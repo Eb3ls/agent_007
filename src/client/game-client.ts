@@ -32,7 +32,7 @@ type MapCallback = (tiles: ReadonlyArray<Tile>, width: number, height: number) =
 type YouCallback = (self: RawSelfSensing) => void;
 type ParcelsCallback = (parcels: ReadonlyArray<RawParcelSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void;
 type AgentsCallback = (agents: ReadonlyArray<RawAgentSensing>) => void;
-type CratesCallback = (crates: ReadonlyArray<RawCrateSensing>) => void;
+type CratesCallback = (crates: ReadonlyArray<RawCrateSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void;
 type MessageCallback = (from: string, msg: InterAgentMessage) => void;
 type VoidCallback = () => void;
 
@@ -166,11 +166,11 @@ export class GameClient {
         x: c.x,
         y: c.y,
       }));
-      const cratesEvent: BufferedEvent = { kind: 'crates', crates };
+      const cratesEvent: BufferedEvent = { kind: 'crates', crates, observedPositions: positions };
       if (!this.eventBuffer.isDrained()) {
         this.eventBuffer.push(cratesEvent);
       } else {
-        this.dispatchCrates(crates);
+        this.dispatchCrates(crates, positions);
       }
     });
 
@@ -228,8 +228,8 @@ export class GameClient {
     for (const cb of this.agentsCallbacks) cb(agents);
   }
 
-  private dispatchCrates(crates: ReadonlyArray<RawCrateSensing>): void {
-    for (const cb of this.cratesCallbacks) cb(crates);
+  private dispatchCrates(crates: ReadonlyArray<RawCrateSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }> = []): void {
+    for (const cb of this.cratesCallbacks) cb(crates, observedPositions);
   }
 
   private dispatchMessage(from: string, msg: InterAgentMessage): void {
@@ -279,28 +279,12 @@ export class GameClient {
     return result !== false;
   }
 
-  async pickup(): Promise<ReadonlyArray<RawParcelSensing>> {
-    const result = await this.api.emitPickup();
-    // The server returns [{id}], but we need RawParcelSensing.
-    // Pickup returns minimal data — map to what we have.
-    return result.map(p => ({
-      id: p.id,
-      x: 0, // position not returned by pickup
-      y: 0,
-      carriedBy: null,
-      reward: 0,
-    }));
+  async pickup(): Promise<ReadonlyArray<{ id: string }>> {
+    return this.api.emitPickup();
   }
 
-  async putdown(): Promise<ReadonlyArray<RawParcelSensing>> {
-    const result = await this.api.emitPutdown();
-    return result.map(p => ({
-      id: p.id,
-      x: 0,
-      y: 0,
-      carriedBy: null,
-      reward: 0,
-    }));
+  async putdown(): Promise<ReadonlyArray<{ id: string }>> {
+    return this.api.emitPutdown();
   }
 
   // --- Public: Messaging ---
@@ -375,7 +359,7 @@ export class GameClient {
           this.dispatchAgents(event.agents);
           break;
         case 'crates':
-          this.dispatchCrates(event.crates);
+          this.dispatchCrates(event.crates, event.observedPositions ?? []);
           break;
         case 'message':
           this.dispatchMessage(event.from, event.msg);
