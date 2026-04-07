@@ -32,31 +32,11 @@ export class SelfBeliefUpdater {
     const prevPos = currentBelief.position;
     const prevScore = currentBelief.score;
 
-    // Parcels carried by self
-    const carried = Array.from(parcels.values()).filter(
-      p => p.carriedBy === rawSelf.id,
-    );
+    const carried = this.getSelfCarriedParcels(rawSelf.id, parcels);
+    const stablePosition = this.getStablePosition(rawSelf, currentBelief.position);
+    const newBelief = this.buildNewBelief(rawSelf, currentBelief.penalty, stablePosition, carried);
 
-    // Server sends float coordinates during movement animation.
-    // Only update position when the agent is on a stable integer tile;
-    // otherwise keep the last known integer position to avoid planning from mid-air.
-    const stablePosition = (Number.isInteger(rawSelf.x) && Number.isInteger(rawSelf.y))
-      ? { x: rawSelf.x, y: rawSelf.y }
-      : currentBelief.position;
-
-    const newBelief: SelfBelief = {
-      id: rawSelf.id,
-      name: rawSelf.name,
-      position: stablePosition,
-      score: rawSelf.score,
-      penalty: rawSelf.penalty ?? currentBelief.penalty,
-      carriedParcels: carried,
-    };
-
-    // Track visited spawning tiles for exploration
-    if (this.map.isSpawningTile(stablePosition.x, stablePosition.y)) {
-      visitedSpawningTiles.add(`${stablePosition.x},${stablePosition.y}`);
-    }
+    this.trackVisitedSpawningTile(stablePosition, visitedSpawningTiles);
 
     const positionChanged = !positionEquals(prevPos, newBelief.position);
     const scoreChanged = prevScore !== rawSelf.score;
@@ -66,5 +46,40 @@ export class SelfBeliefUpdater {
       positionChanged,
       scoreChanged,
     };
+  }
+
+  private getSelfCarriedParcels(id: string, parcels: Map<string, ParcelBelief>): ParcelBelief[] {
+    return Array.from(parcels.values()).filter(p => p.carriedBy === id);
+  }
+
+  private getStablePosition(rawSelf: RawSelfSensing, previousPosition: Position): Position {
+    return Number.isInteger(rawSelf.x) && Number.isInteger(rawSelf.y)
+      ? { x: rawSelf.x, y: rawSelf.y }
+      : previousPosition;
+  }
+
+  private buildNewBelief(
+    rawSelf: RawSelfSensing,
+    previousPenalty: number,
+    stablePosition: Position,
+    carriedParcels: ParcelBelief[],
+  ): SelfBelief {
+    return {
+      id: rawSelf.id,
+      name: rawSelf.name,
+      position: stablePosition,
+      score: rawSelf.score,
+      penalty: rawSelf.penalty ?? previousPenalty,
+      carriedParcels,
+    };
+  }
+
+  private trackVisitedSpawningTile(
+    stablePosition: Position,
+    visitedSpawningTiles: Set<string>,
+  ): void {
+    if (this.map.isSpawningTile(stablePosition.x, stablePosition.y)) {
+      visitedSpawningTiles.add(`${stablePosition.x},${stablePosition.y}`);
+    }
   }
 }

@@ -39,49 +39,80 @@ export class ParcelBeliefUpdater {
     const sensedIds = new Set<string>();
     const parcels = new Map(currentParcels);
 
-    // Update sensed parcels
+    this.updateSensedParcels(rawParcels, parcels, sensedIds, now);
+    const effectiveRange = this.getEffectiveObservationRange(observationDistance, rawParcels, selfPos);
+    this.processNonSensedParcels(parcels, sensedIds, selfPos, effectiveRange, now);
+
+    return {
+      parcels,
+      changed: true, // Always emit for consistency
+    };
+  }
+
+  private updateSensedParcels(
+    rawParcels: ReadonlyArray<RawParcelSensing>,
+    parcels: Map<string, ParcelBelief>,
+    sensedIds: Set<string>,
+    now: number,
+  ): void {
     for (const raw of rawParcels) {
       sensedIds.add(raw.id);
       this.parcelTracker.observe(raw.id, raw.reward, now);
       const existing = parcels.get(raw.id);
+      parcels.set(raw.id, this.createParcelBelief(raw, existing, now));
+    }
+  }
 
-      // Estimate decay rate from consecutive observations
-      let decayRate = existing?.decayRatePerMs ?? 0;
-      if (existing && raw.reward < existing.reward && existing.reward > 0) {
-        const dt = now - existing.lastSeen;
-        if (dt > 0) {
-          decayRate = (existing.reward - raw.reward) / dt;
-        }
+  private createParcelBelief(
+    raw: RawParcelSensing,
+    existing: ParcelBelief | undefined,
+    now: number,
+  ): ParcelBelief {
+    let decayRate = existing?.decayRatePerMs ?? 0;
+    if (existing && raw.reward < existing.reward && existing.reward > 0) {
+      const dt = now - existing.lastSeen;
+      if (dt > 0) {
+        decayRate = (existing.reward - raw.reward) / dt;
       }
-
-      parcels.set(raw.id, {
-        id: raw.id,
-        position: { x: raw.x, y: raw.y },
-        carriedBy: raw.carriedBy,
-        reward: raw.reward,
-        estimatedReward: raw.reward,
-        lastSeen: now,
-        confidence: 1.0,
-        decayRatePerMs: decayRate,
-      });
     }
 
-    // Belief revision: remove parcels that should be visible but aren't sensed.
-    // Use PARCELS_OBSERVATION_DISTANCE when known; otherwise fall back to a
-    // heuristic based on the farthest sensed parcel distance.
-    let effectiveRange: number;
+    return {
+      id: raw.id,
+      position: { x: raw.x, y: raw.y },
+      carriedBy: raw.carriedBy,
+      reward: raw.reward,
+      estimatedReward: raw.reward,
+      lastSeen: now,
+      confidence: 1.0,
+      decayRatePerMs: decayRate,
+    };
+  }
+
+  private getEffectiveObservationRange(
+    observationDistance: number,
+    rawParcels: ReadonlyArray<RawParcelSensing>,
+    selfPos: Position,
+  ): number {
     if (observationDistance > 0) {
-      effectiveRange = observationDistance;
-    } else {
-      let maxSensedDist = 0;
-      for (const raw of rawParcels) {
-        const d = manhattanDistance(selfPos, { x: raw.x, y: raw.y });
-        if (d > maxSensedDist) maxSensedDist = d;
-      }
-      effectiveRange = rawParcels.length > 0 ? maxSensedDist : 1;
+      return observationDistance;
     }
 
-    // Process non-sensed parcels: delete if in range, mark stale if out of range
+    let maxSensedDist = 0;
+    for (const raw of rawParcels) {
+      const d = manhattanDistance(selfPos, { x: raw.x, y: raw.y });
+      if (d > maxSensedDist) maxSensedDist = d;
+    }
+
+    return rawParcels.length > 0 ? maxSensedDist : 1;
+  }
+
+  private processNonSensedParcels(
+    parcels: Map<string, ParcelBelief>,
+    sensedIds: Set<string>,
+    selfPos: Position,
+    effectiveRange: number,
+    now: number,
+  ): void {
     for (const [id, belief] of Array.from(parcels.entries())) {
       if (sensedIds.has(id)) continue;
       if (belief.carriedBy !== null) continue; // carried parcels don't appear in sensing
@@ -90,29 +121,33 @@ export class ParcelBeliefUpdater {
       if (dist <= effectiveRange) {
         parcels.delete(id);
       } else {
-        // Mark stale parcels with decaying confidence
-        const age = now - belief.lastSeen;
-        if (age > STALE_THRESHOLD_MS) {
-          const confidence = Math.max(
-            0,
-            1 - (age - STALE_THRESHOLD_MS) / STALE_THRESHOLD_MS,
-          );
-          const estimatedReward = Math.max(
-            0,
-            belief.reward - belief.decayRatePerMs * age,
-          );
-          parcels.set(id, {
-            ...belief,
-            confidence,
-            estimatedReward,
-          });
-        }
+        this.updateStaleParcel(id, belief, parcels, now);
       }
     }
+  }
 
-    return {
-      parcels,
-      changed: true, // Always emit for consistency
-    };
+  private updateStaleParcel(
+    id: string,
+    belief: ParcelBelief,
+    parcels: Map<string, ParcelBelief>,
+    now: number,
+  ): void {
+    const age = now - belief.lastSeen;
+    if (age > STALE_THRESHOLD_MS) {
+      const confidence = Math.max(
+        0,
+        1 - (age - STALE_THRESHOLD_MS) / STALE_THRESHOLD_MS,
+      );
+      const estimatedReward = Math.max(
+        0,
+        belief.reward - belief.decayRatePerMs * age,
+      );
+      parcels.set(id, {
+        ...belief,
+        confidence,
+        estimatedReward,
+      });
+    }
   }
 }
+
