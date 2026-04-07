@@ -28,42 +28,39 @@ export class AgentBeliefUpdater {
     currentAgents: Map<string, AgentBelief>,
     prevAgentPositions: Map<string, Position>,
     allyIds: Set<string>,
-  ): AgentBeliefUpdateResult {
-    const now = Date.now();
-    const sensedIds = new Set<string>();
-    const agents = new Map(currentAgents);
-    const newPrevPositions = new Map(prevAgentPositions);
+    ): AgentBeliefUpdateResult {
+        const now = Date.now();
+        const sensedIds = new Set<string>();
+        const agents = new Map(currentAgents);
+        const newPrevPositions = new Map(prevAgentPositions);
 
-    // Update sensed agents
+        this.updateSensedAgents(rawAgents, agents, newPrevPositions, prevAgentPositions, allyIds, sensedIds, now);
+        this.decayUnseenAgents(agents, newPrevPositions, sensedIds, now);
+
+        return {
+        agents,
+        prevPositions: newPrevPositions,
+        changed: true, // Always emit for consistency
+        };
+    }
+
+  private updateSensedAgents(
+    rawAgents: ReadonlyArray<RawAgentSensing>,
+    agents: Map<string, AgentBelief>,
+    newPrevPositions: Map<string, Position>,
+    prevAgentPositions: Map<string, Position>,
+    allyIds: Set<string>,
+    sensedIds: Set<string>,
+    now: number,
+  ): void {
     for (const raw of rawAgents) {
       sensedIds.add(raw.id);
       const existing = agents.get(raw.id);
+      const heading = this.estimateHeading(prevAgentPositions.get(raw.id), raw, existing);
 
-      // Estimate heading from raw float delta for accuracy (avoids false equality
-      // when comparing integer belief position against a new fractional raw position).
-      const prevRaw = prevAgentPositions.get(raw.id);
-      let heading: Direction | null = null;
-      if (prevRaw && (prevRaw.x !== raw.x || prevRaw.y !== raw.y)) {
-        const dx = raw.x - prevRaw.x;
-        const dy = raw.y - prevRaw.y;
-        if (Math.abs(dx) >= Math.abs(dy)) {
-          heading = dx > 0 ? 'right' : 'left';
-        } else {
-          heading = dy > 0 ? 'up' : 'down';
-        }
-      } else if (existing) {
-        heading = existing.heading;
-      }
-
-      // Store raw float position for heading computation on the next update.
       newPrevPositions.set(raw.id, { x: raw.x, y: raw.y });
 
-      // Use stable integer position — skip fractional mid-move coordinates to avoid
-      // placing the agent on a tile they're actually leaving (Math.round can snap
-      // to the destination tile while the agent is still on the source tile).
-      const stablePosition = (Number.isInteger(raw.x) && Number.isInteger(raw.y))
-        ? { x: raw.x, y: raw.y }
-        : existing?.position ?? { x: Math.round(raw.x), y: Math.round(raw.y) };
+      const stablePosition = this.computeStablePosition(raw, existing);
 
       agents.set(raw.id, {
         id: raw.id,
@@ -76,8 +73,39 @@ export class AgentBeliefUpdater {
         isAlly: allyIds.has(raw.id),
       });
     }
+  }
 
-    // Decay confidence of agents no longer sensed
+  private estimateHeading(
+    prevRaw: Position | undefined,
+    raw: RawAgentSensing,
+    existing: AgentBelief | undefined,
+  ): Direction | null {
+    if (prevRaw && (prevRaw.x !== raw.x || prevRaw.y !== raw.y)) {
+      const dx = raw.x - prevRaw.x;
+      const dy = raw.y - prevRaw.y;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        return dx > 0 ? 'right' : 'left';
+      }
+      return dy > 0 ? 'up' : 'down';
+    }
+
+    return existing?.heading ?? null;
+  }
+
+  private computeStablePosition(raw: RawAgentSensing, existing: AgentBelief | undefined): Position {
+    if (Number.isInteger(raw.x) && Number.isInteger(raw.y)) {
+      return { x: raw.x, y: raw.y };
+    }
+
+    return existing?.position ?? { x: Math.round(raw.x), y: Math.round(raw.y) };
+  }
+
+  private decayUnseenAgents(
+    agents: Map<string, AgentBelief>,
+    newPrevPositions: Map<string, Position>,
+    sensedIds: Set<string>,
+    now: number,
+  ): void {
     for (const [id, belief] of Array.from(agents.entries())) {
       if (sensedIds.has(id)) continue;
       const age = now - belief.lastSeen;
@@ -89,11 +117,6 @@ export class AgentBeliefUpdater {
         agents.set(id, { ...belief, confidence });
       }
     }
-
-    return {
-      agents,
-      prevPositions: newPrevPositions,
-      changed: true, // Always emit for consistency
-    };
   }
 }
+
