@@ -41,10 +41,13 @@ type VoidCallback = () => void;
 function parseTileType(raw: string | number): TileType {
   const s = String(raw).trim();
   if (s === '5!') return 9;  // crate spawner — MUST check before parseInt
-  if (s === "↑") return 4; // one-way up    (enter moving up)
-  if (s === "↓") return 5; // one-way down  (enter moving down)
-  if (s === "←") return 6; // one-way left  (enter moving left)
-  if (s === "→") return 7; // one-way right (enter moving right)
+  // Directional tiles: the arrow blocks only the ONE entry coming from that same side.
+  // All other entries AND all exits are freely allowed.
+  // The `from` param in canEnterFrom() is the agent's direction of MOTION (from movementDirection()).
+  if (s === "↑") return 4; // ↑: blocks agent moving DOWN  (entry from above, y+1)
+  if (s === "↓") return 5; // ↓: blocks agent moving UP    (entry from below, y-1)
+  if (s === "←") return 6; // ←: blocks agent moving RIGHT (entry from left,  x-1)
+  if (s === "→") return 7; // →: blocks agent moving LEFT  (entry from right, x+1)
   const n = parseInt(s, 10);
   if (n === 0 || n === 1 || n === 2 || n === 3) return n;
   if (n === 4) return 3; // base tile — plain walkable, NOT a parcel spawner (server '4' ≠ '1')
@@ -198,6 +201,9 @@ export class GameClient {
 
     // Disconnect / reconnect
     this.api.onDisconnect(() => {
+      // Clear pending reply callbacks: the old socket is gone and any sequence
+      // number collision on reconnect would invoke the wrong callback.
+      this.pendingReplies.clear();
       for (const cb of this.disconnectCallbacks) cb();
     });
 

@@ -245,7 +245,22 @@ export class ActionExecutor implements IActionExecutor {
       }
 
       return false;
-    } catch {
+    } catch (err) {
+      // Distinguish network timeout from other errors on move actions.
+      // On timeout the server may have processed the move — we don't know.
+      // Emit replanRequired (no fake dynamic obstacle) so the next deliberation
+      // re-plans from fresh sensing data instead of recording a bad tile.
+      if (
+        err instanceof Error &&
+        err.message === 'action timed out' &&
+        direction !== null &&
+        !this.replanEmitted
+      ) {
+        this.replanEmitted = true;
+        for (const cb of this.replanRequiredCbs) {
+          cb({ reason: 'plan_invalid', failedStep: step, failureCount: 1 });
+        }
+      }
       return false;
     } finally {
       this.inFlight = null;

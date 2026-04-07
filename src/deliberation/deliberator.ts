@@ -93,12 +93,16 @@ export class Deliberator {
     for (const parcel of candidates) {
       const stepsToParcel = exactDist(parcel.position);
       const delivery = beliefs.getNearestDeliveryZone(parcel.position);
-      // stepsToDelivery: Manhattan from parcel to delivery zone (a reverse BFS would be needed
-      // for exact values; Manhattan is an acceptable proxy here since delivery zones are accessible).
+      // stepsToDelivery: use deliveryDistMap (reverse BFS from delivery zones) when available.
+      // If the map has no entry for this tile the parcel is unreachable from any delivery zone
+      // (e.g. trapped behind one-way tiles) — use Infinity so the intention gets utility ≈ 0
+      // and is never chosen. Fall back to Manhattan only when deliveryDistMap is absent.
       const stepsToDelivery = delivery
-        ? (deliveryDistMap?.get(posKey(parcel.position.x, parcel.position.y, mapWidth))
-            ?? manhattanDistance(parcel.position, delivery))
+        ? (deliveryDistMap !== undefined
+            ? (deliveryDistMap.get(posKey(parcel.position.x, parcel.position.y, mapWidth)) ?? Infinity)
+            : manhattanDistance(parcel.position, delivery))
         : 0;
+      if (!isFinite(stepsToDelivery)) continue; // parcel unreachable from delivery — skip
       const projectedReward = tracker
         ? tracker.estimateRewardAt(parcel.id, now + (stepsToParcel + stepsToDelivery) * movementDurationMs)
         : parcel.estimatedReward;
@@ -121,9 +125,11 @@ export class Deliberator {
       const lastPos = ordered[ordered.length - 1]!.position;
       const delivery = beliefs.getNearestDeliveryZone(lastPos);
       const stepsToDelivery = delivery
-        ? (deliveryDistMap?.get(posKey(lastPos.x, lastPos.y, mapWidth))
-            ?? manhattanDistance(lastPos, delivery))
+        ? (deliveryDistMap !== undefined
+            ? (deliveryDistMap.get(posKey(lastPos.x, lastPos.y, mapWidth)) ?? Infinity)
+            : manhattanDistance(lastPos, delivery))
         : 0;
+      if (!isFinite(stepsToDelivery)) continue; // last parcel unreachable from delivery — skip cluster
 
       // Project each parcel's reward to the estimated delivery time (same for all in cluster).
       const projectedRewards = tracker

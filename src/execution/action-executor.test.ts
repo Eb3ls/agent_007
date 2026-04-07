@@ -196,7 +196,7 @@ describe('ActionExecutor', () => {
     assert.equal(executor.getCurrentStepIndex(), 5);
   });
 
-  it('treats timed-out move as failure', async () => {
+  it('treats timed-out move as replan (not collision), so no dynamic obstacle is recorded', async () => {
     const hangingClient = new MockGameClient();
     hangingClient.move = (_dir) => {
       hangingClient.moveHistory.push(_dir);
@@ -206,7 +206,9 @@ describe('ActionExecutor', () => {
 
     const exec = new ActionExecutor(hangingClient);
     const failures: number[] = [];
+    const replans: string[] = [];
     exec.onStepFailed((_step, index) => failures.push(index));
+    exec.onReplanRequired((signal) => replans.push(signal.reason));
 
     exec.executePlan(makePlan([
       { action: 'move_right', expectedPosition: { x: 5, y: 4 } },
@@ -214,8 +216,11 @@ describe('ActionExecutor', () => {
 
     await delay(250);
 
-    assert.equal(failures.length, 1);
-    assert.equal(failures[0], 0);
+    // Timeout must NOT fire onStepFailed (which records a fake dynamic obstacle).
+    // Instead it fires onReplanRequired so the agent re-plans from fresh sensing.
+    assert.equal(failures.length, 0, 'onStepFailed must not fire on timeout');
+    assert.equal(replans.length, 1, 'onReplanRequired must fire on timeout');
+    assert.equal(replans[0], 'plan_invalid');
   });
 });
 

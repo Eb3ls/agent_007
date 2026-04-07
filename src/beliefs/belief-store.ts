@@ -160,12 +160,16 @@ export class BeliefStore implements IBeliefStore {
           this.parcels.delete(id);
         } else {
           // Tile was not in the server's observation set — parcel may still be there.
-          // Decay confidence if stale.
+          // Always refresh estimatedReward so deliberation sees up-to-date decay.
+          // Confidence decays only after STALE_THRESHOLD_MS (we genuinely don't know
+          // the parcel is gone until then).
           const age = now - belief.lastSeen;
+          const estimatedReward = Math.max(0, belief.reward - belief.decayRatePerMs * age);
           if (age > STALE_THRESHOLD_MS) {
             const confidence = Math.max(0, 1 - (age - STALE_THRESHOLD_MS) / STALE_THRESHOLD_MS);
-            const estimatedReward = Math.max(0, belief.reward - belief.decayRatePerMs * age);
             this.parcels.set(id, { ...belief, confidence, estimatedReward });
+          } else if (estimatedReward !== belief.estimatedReward) {
+            this.parcels.set(id, { ...belief, estimatedReward });
           }
         }
       }
@@ -189,6 +193,9 @@ export class BeliefStore implements IBeliefStore {
 
         const dist = manhattanDistance(selfPos, belief.position);
         // R10: exclusive boundary when using configured observationDistance.
+        // R10: exclusive boundary when using the configured observationDistance; inclusive
+        // when using the heuristic maxSensedDist (we confirmed we can see that far, so any
+        // parcel at exactly that distance that wasn't reported is gone).
         const inRange =
           this.observationDistance > 0
             ? dist < this.observationDistance
@@ -197,10 +204,12 @@ export class BeliefStore implements IBeliefStore {
           this.parcels.delete(id);
         } else {
           const age = now - belief.lastSeen;
+          const estimatedReward = Math.max(0, belief.reward - belief.decayRatePerMs * age);
           if (age > STALE_THRESHOLD_MS) {
             const confidence = Math.max(0, 1 - (age - STALE_THRESHOLD_MS) / STALE_THRESHOLD_MS);
-            const estimatedReward = Math.max(0, belief.reward - belief.decayRatePerMs * age);
             this.parcels.set(id, { ...belief, confidence, estimatedReward });
+          } else if (estimatedReward !== belief.estimatedReward) {
+            this.parcels.set(id, { ...belief, estimatedReward });
           }
         }
       }
@@ -313,9 +322,8 @@ export class BeliefStore implements IBeliefStore {
       for (const [id, belief] of this.crates) {
         if (sensedIds.has(id)) continue;
         const dist = manhattanDistance(selfPos, belief.position);
-        const inRange = this.observationDistance > 0
-          ? dist < this.observationDistance
-          : dist <= effectiveRange;
+        // R10: exclusive boundary (strictly less than) in both branches.
+        const inRange = dist < effectiveRange;
         if (inRange) {
           this.crates.delete(id);
         }
