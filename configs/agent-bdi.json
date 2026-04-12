@@ -1,8 +1,0 @@
-{
-  "host": "http://localhost:8080",
-  "token": "${AGENT_TOKEN}",
-  "role": "bdi",
-  "planner": "bfs",
-  "logLevel": "info",
-  "stagnationTimeoutMs": 15000
-}
