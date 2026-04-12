@@ -1,0 +1,15 @@
+{
+  "host": "http://localhost:8080",
+  "token": "${AGENT_TOKEN}",
+  "role": "llm",
+  "planner": "llm",
+  "logLevel": "info",
+  "stagnationTimeoutMs": 15000,
+  "llm": {
+    "apiUrl": "${LLM_API_URL}",
+    "apiToken": "${LLM_API_TOKEN}",
+    "model": "gpt-4o-mini",
+    "maxTokenBudget": 4000,
+    "minCallIntervalMs": 1000
+  }
+}

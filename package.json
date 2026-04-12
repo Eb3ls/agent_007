@@ -1,0 +1,26 @@
+{
+  "name": "deliveroo-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "start:bdi": "tsx src/main.ts --config configs/agent-bdi.json",
+    "start:llm": "tsx src/main.ts --config configs/agent-llm.json",
+    "start:team": "tsx src/main.ts --config configs/agent-bdi.json & tsx src/main.ts --config configs/agent-llm.json & wait",
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@toon-format/toon": "^2.1.0",
+    "@unitn-asa/deliveroo-js-client": "^2.0.3",
+    "@unitn-asa/pddl-client": "^1.6.2",
+    "dotenv": "^17.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.37",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
