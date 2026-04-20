@@ -50,10 +50,36 @@ declare module "@unitn-asa/deliveroo-js-sdk" {
 		crates: IOCrate[];
 	}
 
+	export interface IOGameConfig {
+		CLOCK: number;
+		PENALTY: number;
+		AGENT_TIMEOUT: number;
+		BROADCAST_LOGS: boolean;
+		GAME: {
+			title: string;
+			description: string;
+			maxPlayers: number;
+			map: { width: number; height: number; tiles: IOTile[] };
+			npcs: unknown[];
+			parcels: {
+				generation_event: string;
+				decaying_event: string;
+				max: number;
+				reward_avg: number;
+				reward_variance: number;
+			};
+			player: {
+				movement_duration: number;
+				observation_distance: number;
+				capacity: number;
+			};
+		};
+	}
+
 	export class DjsClientSocket {
 		token: Promise<string>;
 		me: Promise<IOAgent>;
-		config: Promise<any>;
+		config: Promise<IOGameConfig>;
 		map: Promise<{ width: number; height: number; tiles: IOTile[] }>;
 
 		connect(): void;
@@ -61,7 +87,7 @@ declare module "@unitn-asa/deliveroo-js-sdk" {
 
 		onConnect(callback: () => void): void;
 		onDisconnect(callback: () => void): void;
-		onConfig(callback: (config: any) => void): void;
+		onConfig(callback: (config: IOGameConfig) => void): void;
 		onMap(
 			callback: (width: number, height: number, tiles: IOTile[]) => void,
 		): void;
