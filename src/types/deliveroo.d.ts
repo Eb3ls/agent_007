@@ -1,16 +1,35 @@
-declare module "@unitn-asa/deliveroo-js-client" {
-	export interface Agent {
+declare module "@unitn-asa/deliveroo-js-sdk" {
+	export type IOTileType =
+		| "0"
+		| "1"
+		| "2"
+		| "3"
+		| "4"
+		| "5"
+		| "5!"
+		| "←"
+		| "↑"
+		| "→"
+		| "↓";
+
+	export interface IOTile {
+		x: number;
+		y: number;
+		type: IOTileType;
+	}
+
+	export interface IOAgent {
 		id: string;
 		name: string;
 		teamId: string;
 		teamName: string;
-		x: number;
-		y: number;
+		x?: number;
+		y?: number;
 		score: number;
 		penalty: number;
 	}
 
-	export interface Parcel {
+	export interface IOParcel {
 		id: string;
 		x: number;
 		y: number;
@@ -18,140 +37,74 @@ declare module "@unitn-asa/deliveroo-js-client" {
 		reward: number;
 	}
 
-	export interface Tile {
+	export interface IOCrate {
+		id: string;
 		x: number;
 		y: number;
-		type: string;
 	}
 
-	export interface Timestamp {
-		ms: number;
-		frame: number;
+	export interface IOSensing {
+		positions: { x: number; y: number }[];
+		agents: IOAgent[];
+		parcels: IOParcel[];
+		crates: IOCrate[];
 	}
 
-	export interface LogInfo {
-		src: "server" | "client";
-		ms: number;
-		frame: number;
-		socket: string;
-		id: string;
-		name: string;
-	}
-
-	export class DeliverooApi {
-		/**
-		 * Initialize the API client
-		 * @param host Server URL to connect to
-		 * @param token Optional token for authentication. If not provided, it will fallback to name from CLI options
-		 * @param autoconnect Whether to automatically connect on instantiation. Default is true.
-		 */
-		constructor(host: string, token?: string | null, autoconnect?: boolean);
-
-		// Promises
-		/** Promise that resolves with the authentication token assigned to this agent */
+	export class DjsClientSocket {
 		token: Promise<string>;
-		/** Promise that resolves with the agent's own data (id, name, score, etc.) when received */
-		me: Promise<Agent>;
-		/** Promise that resolves with the server configuration when received */
+		me: Promise<IOAgent>;
 		config: Promise<any>;
-		/** Promise that resolves with the static map data (width, height, and tiles) when received */
-		map: Promise<{ width: number; height: number; tiles: Tile[] }>;
+		map: Promise<{ width: number; height: number; tiles: IOTile[] }>;
 
-		// Connections
-		/** Connect socket to the server manually */
-		connect(): any;
-		/** Disconnect socket from the server */
-		disconnect(): any;
+		connect(): void;
+		disconnect(): void;
 
-		// Event Listeners
-		/** Listen for when the socket successfully connects to the server */
 		onConnect(callback: () => void): void;
-		/** Listen for when the socket disconnects from the server */
 		onDisconnect(callback: () => void): void;
-		/** Listen for server configuration updates */
 		onConfig(callback: (config: any) => void): void;
-		/** Listen for map data updates */
 		onMap(
-			callback: (width: number, height: number, tiles: Tile[]) => void,
+			callback: (width: number, height: number, tiles: IOTile[]) => void,
 		): void;
-		/** Listen for updates on an individual tile on the map */
-		onTile(callback: (tile: Tile, timestamp: Timestamp) => void): void;
-		/** Listen for when another agent connects or disconnects */
+		onTile(callback: (tile: IOTile) => void): void;
 		onAgentConnected(
 			callback: (
 				status: "connected" | "disconnected",
-				agent: Omit<Agent, "x" | "y" | "penalty">,
+				agent: Omit<IOAgent, "x" | "y" | "penalty">,
 			) => void,
 		): void;
-		/** Listen continuously for updates to the agent's own state (score, position, etc.) */
-		onYou(callback: (agent: Agent, timestamp: Timestamp) => void): void;
-		/** Listen once for an update to the agent's own state */
-		onceYou(callback: (agent: Agent, timestamp: Timestamp) => void): void;
-		/** Listen for agents sensing events */
-		onAgentsSensing(
-			callback: (agents: Agent[], timestamp: Timestamp) => void,
-		): void;
-		/** Listen for parcels sensing events */
-		onParcelsSensing(
-			callback: (parcels: Parcel[], timestamp: Timestamp) => void,
-		): void;
-		/** Listen for incoming messages from other agents */
+		onYou(callback: (agent: IOAgent) => void): void;
+		onceYou(callback: (agent: IOAgent) => void): void;
+		onSensing(callback: (sensing: IOSensing) => void): void;
 		onMsg(
 			callback: (
 				id: string,
 				name: string,
 				msg: any,
-				replyAcknowledgmentCallback: (reply: any) => void,
+				reply: (r: any) => void,
 			) => void,
 		): void;
-		/** Listen for log events broadcasted by either the server or other clients */
-		onLog(callback: (info: LogInfo, ...msgArgs: any[]) => void): void;
+		onLog(
+			callback: (
+				src: "server" | { socket: string; id: string; name: string },
+				...args: any[]
+			) => void,
+		): void;
 
-		// Event Emitters
-		/**
-		 * Send a direct message to another agent by ID.
-		 * Resolves to 'successful' when the message is delivered.
-		 */
-		emitSay(toId: string, msg: any): Promise<"successful">;
-		/**
-		 * Send a direct message to another agent and wait for their reply.
-		 * Resolves to the data returned in their reply acknowledgment.
-		 */
-		emitAsk(toId: string, msg: any): Promise<any>;
-		/**
-		 * Broadcast a message to all agents.
-		 * Resolves when the server acknowledges the broadcast.
-		 */
-		emitShout(msg: any): Promise<any>;
-		/**
-		 * Attempt to move the agent.
-		 * @param directionOrXy Can be a direction string ('up', 'right', 'left', 'down') or a coordinate object {x,y}
-		 * @returns Promise resolving to the new {x,y} coordinates on success, or false if the move failed (e.g., hit a wall)
-		 */
 		emitMove(
-			directionOrXy:
-				| "up"
-				| "right"
-				| "left"
-				| "down"
-				| { x: number; y: number },
+			direction: "up" | "right" | "left" | "down",
 		): Promise<{ x: number; y: number } | false>;
-		/**
-		 * Pick up all parcels located on the agent's current tile.
-		 * @returns Promise resolving to an array of picked up parcel objects
-		 */
 		emitPickup(): Promise<{ id: string }[]>;
-		/**
-		 * Put down parcels from the agent's inventory.
-		 * @param selected Optional array of parcel IDs to drop. If nothing is provided, all carried parcels are dropped.
-		 * @returns Promise resolving to an array of dropped parcel objects
-		 */
-		emitPutdown(selected?: string[] | null): Promise<{ id: string }[]>;
-		/**
-		 * Broadcast a custom log message to the server, which then broadcasts it to other connected clients.
-		 */
+		emitPutdown(selected?: string[]): Promise<{ id: string }[]>;
+		emitSay(toId: string, msg: any): Promise<"successful" | "failed">;
+		emitAsk(toId: string, msg: any): Promise<any>;
+		emitShout(msg: any): Promise<any>;
 		emitLog(...message: any[]): void;
 	}
 
-	export function sleep(ms: number): Promise<void>;
+	export function DjsConnect(
+		host?: string,
+		token?: string,
+		name?: string,
+		autoconnect?: boolean,
+	): DjsClientSocket;
 }
