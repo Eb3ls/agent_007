@@ -1,0 +1,14 @@
+# Compiled output
+dist/
+
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+.editorconfig
+
+# Claude Code (personal config)
+.claude/
+CLAUDE.md
