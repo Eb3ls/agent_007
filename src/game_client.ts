@@ -4,13 +4,18 @@ import {
 	setSensing,
 	type Perception,
 } from "./perception.js";
-import { createWorld, setMap, updateTile, type World } from "./world.js";
+import {
+	createStaticMap,
+	setMap,
+	updateTile,
+	type StaticMap,
+} from "./static_map.js";
 import type { DjsClientSocket } from "@unitn-asa/deliveroo-js-sdk";
 import { DjsConnect } from "@unitn-asa/deliveroo-js-sdk";
 
 export class GameClient {
 	private api: DjsClientSocket;
-	public readonly world: World = createWorld();
+	public readonly staticMap: StaticMap = createStaticMap();
 	public readonly perception: Perception = createPerception();
 
 	constructor(
@@ -34,13 +39,17 @@ export class GameClient {
 	}
 
 	private wireUpEvents(): void {
+		this.api.onConfig((config) => {
+			console.log(config);
+		});
+
 		this.api.onMap((width, height, tiles) => {
-			setMap(this.world, tiles);
+			setMap(this.staticMap, tiles);
 			this.logEvent("map", { tilesCount: tiles.length });
 		});
 
 		this.api.onTile((tile) => {
-			updateTile(this.world, tile);
+			updateTile(this.staticMap, tile);
 			this.logEvent("tile", tile);
 		});
 
