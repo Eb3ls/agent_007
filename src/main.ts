@@ -1,7 +1,7 @@
 import { bfsFromSelf, reconstructPath, type BfsFromSelf, type Direction } from "./pathfinder.js";
 import { GameClient } from "./game_client.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
-import type { BeliefStore } from "./belief_store.js";
+import type { BeliefStore, ParcelBelief } from "./belief_store.js";
 import type { IOParcel } from "@unitn-asa/deliveroo-js-sdk";
 import dotenv from "dotenv";
 
@@ -88,19 +88,49 @@ function parcelHere(
 	return undefined;
 }
 
+function parseDecayInterval(s: string | undefined): number {
+	if (!s || s === "infinite" || s === "0") return Infinity;
+	const ms = s.match(/^(\d+)ms$/);
+	if (ms) return parseInt(ms[1]!, 10);
+	const sec = s.match(/^(\d+)s$/);
+	if (sec) return parseInt(sec[1]!, 10) * 1000;
+	return Infinity;
+}
+
+function currentReward(p: ParcelBelief, decayIntervalMs: number, now: number): number {
+	if (!Number.isFinite(decayIntervalMs)) return p.reward;
+	return p.reward - Math.floor((now - p.firstSeenAt) / decayIntervalMs);
+}
+
 function pickBestParcelTarget(
 	m: StaticMap,
 	bfs: BfsFromSelf,
-	parcels: Map<string, IOParcel>,
+	beliefs: BeliefStore,
+	decayIntervalMs: number,
+	movementDurationMs: number,
 ): IOParcel | null {
-	let best: IOParcel | null = null;
-	let bestDist = Infinity;
-	for (const p of parcels.values()) {
+	const now = Date.now();
+	const decayPerStep = Number.isFinite(decayIntervalMs)
+		? movementDurationMs / decayIntervalMs
+		: 0;
+	let best: ParcelBelief | null = null;
+	let bestUtility = -Infinity;
+	let bestSp = Infinity;
+	for (const p of beliefs.parcels.values()) {
+		if (!p.inView) continue;
 		if (p.carriedBy) continue;
-		const d = bfs.dist[tileId(m, p.x, p.y)];
-		if (d === undefined || d === -1) continue;
-		if (d < bestDist) {
-			bestDist = d;
+		const pid = tileId(m, p.x, p.y);
+		const sp = bfs.dist[pid];
+		if (sp === undefined || sp === -1) continue;
+		const sd = m.baseReverseDistToDelivery[pid];
+		if (sd === undefined || sd === -1) continue;
+		const reward = currentReward(p, decayIntervalMs, now);
+		if (reward <= 0) continue;
+		const utility = reward - decayPerStep * (sp + sd);
+		if (utility <= 0) continue;
+		if (utility > bestUtility || (utility === bestUtility && sp < bestSp)) {
+			bestUtility = utility;
+			bestSp = sp;
 			best = p;
 		}
 	}
@@ -136,6 +166,8 @@ async function loop(): Promise<void> {
 
 	while (true) {
 		const selfId = tileId(m, sx, sy);
+		const decayMs = parseDecayInterval(gc.config?.GAME.parcels.decaying_event);
+		const movMs = gc.config?.GAME.player.movement_duration ?? 100;
 		const blocked = computeBlockedTiles(m, gc.beliefs);
 		const bfs = bfsFromSelf(m, sx, sy, blocked);
 		const parcels = gc.perception.visibleParcels;
@@ -161,7 +193,7 @@ async function loop(): Promise<void> {
 			}
 		}
 
-		const target = carrying ? null : pickBestParcelTarget(m, bfs, parcels);
+		const target = carrying ? null : pickBestParcelTarget(m, bfs, gc.beliefs, decayMs, movMs);
 		const step = planStep(m, bfs, carrying, target);
 
 		if (!step) {
