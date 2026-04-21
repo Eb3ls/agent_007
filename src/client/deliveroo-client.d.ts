@@ -13,23 +13,6 @@ declare module '@unitn-asa/deliveroo-js-client' {
         penalty: number;
     }
 
-    export interface ParcelData {
-        id: string;
-        x: number;
-        y: number;
-        carriedBy?: string | null;
-        reward: number;
-    }
-
-    /** Each element of the onParcelsSensing array is a sensed tile.
-     *  If a parcel is present on that tile, `parcel` is populated. */
-    export interface ParcelSensingEntry {
-        x: number;
-        y: number;
-        parcel?: ParcelData | null;
-    }
-
-    /** Legacy alias kept for emitPickup/emitPutdown return types. */
     export interface Parcel {
         id: string;
         x: number;
@@ -70,8 +53,8 @@ declare module '@unitn-asa/deliveroo-js-client' {
         PENALTY?: number;
         MOVEMENT_STEPS?: number;
         MOVEMENT_DURATION?: number;
-        AGENTS_OBSERVATION_DISTANCE?: number;
-        PARCELS_OBSERVATION_DISTANCE?: number;
+        /** Unified observation distance for all entities (agents, parcels, crates). Default: 5. */
+        OBSERVATION_DISTANCE?: number;
         CLOCK?: number;
         [key: string]: unknown;
     }
@@ -94,12 +77,12 @@ declare module '@unitn-asa/deliveroo-js-client' {
         onDisconnect(callback: () => void): void;
         onConfig(callback: (config: GameConfig) => void): void;
         onMap(callback: (width: number, height: number, tiles: Tile[]) => void): void;
-        onTile(callback: (tile: Tile, info: Info) => void): void;
+        onTile(callback: (tile: Tile) => void): void;
         onAgentConnected(callback: (status: 'connected' | 'disconnected', agent: Omit<Agent, 'x' | 'y' | 'penalty'>) => void): void;
         onYou(callback: (agent: Agent, info: Info) => void): void;
         onceYou(callback: (agent: Agent, info: Info) => void): void;
         onAgentsSensing(callback: (agents: Agent[]) => void): void;
-        onParcelsSensing(callback: (entries: ParcelSensingEntry[]) => void): void;
+        onParcelsSensing(callback: (parcels: Parcel[]) => void): void;
         onMsg(callback: (id: string, name: string, msg: any, replyAcknowledgmentCallback: (reply: any) => void) => void): void;
         onLog(callback: (info: LogInfo, ...msgArgs: any[]) => void): void;
 
@@ -107,7 +90,7 @@ declare module '@unitn-asa/deliveroo-js-client' {
         emitSay(toId: string, msg: any): Promise<'successful'>;
         emitAsk(toId: string, msg: any): Promise<any>;
         emitShout(msg: any): Promise<any>;
-        emitMove(directionOrXy: 'up' | 'right' | 'left' | 'down' | { x: number; y: number }): Promise<{ x: number; y: number } | false>;
+        emitMove(direction: 'up' | 'right' | 'left' | 'down'): Promise<{ x: number; y: number } | false>;
         emitPickup(): Promise<{ id: string }[]>;
         emitPutdown(selected?: string[] | null): Promise<{ id: string }[]>;
         emitLog(...message: any[]): void;

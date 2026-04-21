@@ -5,12 +5,19 @@
 
 // --- Game Primitives ---
 
-// 0: non-walkable/wall, 1: parcel-spawning, 2: delivery zone, 3: walkable,
-// 4: one-way ↑ (can only be entered moving up,    dy=+1),
-// 5: one-way ↓ (can only be entered moving down,  dy=-1),
-// 6: one-way ← (can only be entered moving left,  dx=-1),
-// 7: one-way → (can only be entered moving right, dx=+1)
-export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+// Server R01 wire codes → internal TileType mapping (see game-client.ts parseTileType):
+//   server '0' → 0: non-walkable/wall
+//   server '1' → 1: parcel-spawning floor
+//   server '2' → 2: delivery zone
+//   server '3' → 3: plain walkable floor
+//   server '4' → 3: base tile (plain walkable, NOT a spawner — different from '1')
+//   server '5' → 8: crate-slide floor
+//   server '5!'→ 9: crate-spawner (NOT walkable)
+//   server '↑' → 4: one-way ↑ (entry allowed only when moving up,    dy=+1)
+//   server '↓' → 5: one-way ↓ (entry allowed only when moving down,  dy=-1)
+//   server '←' → 6: one-way ← (entry allowed only when moving left,  dx=-1)
+//   server '→' → 7: one-way → (entry allowed only when moving right, dx=+1)
+export type TileType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export interface Tile {
   readonly x: number;
@@ -47,6 +54,18 @@ export interface RawAgentSensing {
   readonly x: number;
   readonly y: number;
   readonly score: number;
+}
+
+export interface RawCrateSensing {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface CrateBelief {
+  readonly id: string;
+  readonly position: Position;
+  readonly lastSeen: number;
 }
 
 export interface RawSelfSensing {
@@ -100,6 +119,8 @@ export interface BeliefMap {
   readonly height: number;
   getTile(x: number, y: number): TileType | null;
   isWalkable(x: number, y: number): boolean;
+  /** R02: returns false if directional tile (4–7) blocks entry from the given direction. */
+  canEnterFrom(x: number, y: number, from: Direction): boolean;
   isDeliveryZone(x: number, y: number): boolean;
   isSpawningTile(x: number, y: number): boolean;
   getDeliveryZones(): ReadonlyArray<Position>;
@@ -111,6 +132,7 @@ export interface BeliefMap {
 export type BeliefChangeType =
   | 'parcels_changed'
   | 'agents_changed'
+  | 'crates_changed'
   | 'self_moved'
   | 'self_score_changed'
   | 'remote_belief_merged';
@@ -134,11 +156,14 @@ export interface BeliefSnapshot {
 
 export interface IBeliefStore {
   updateSelf(self: RawSelfSensing): void;
-  updateParcels(parcels: ReadonlyArray<RawParcelSensing>): void;
+  updateParcels(parcels: ReadonlyArray<RawParcelSensing>, observedPositions?: ReadonlyArray<{ x: number; y: number }>): void;
   updateAgents(agents: ReadonlyArray<RawAgentSensing>): void;
+  updateCrates(crates: ReadonlyArray<RawCrateSensing>, observedPositions?: ReadonlyArray<{ x: number; y: number }>): void;
   mergeRemoteBelief(snapshot: BeliefSnapshot): void;
   removeParcel(id: string): void;
   clearDeliveredParcels(): void;
+  /** Immediately mark parcels as carried by carrierId (optimistic update before next sensing). */
+  markParcelCarried(ids: ReadonlyArray<string>, carrierId: string): void;
 
   getSelf(): SelfBelief;
   getParcelBeliefs(): ReadonlyArray<ParcelBelief>;
@@ -146,6 +171,10 @@ export interface IBeliefStore {
   getMap(): BeliefMap;
   getNearestDeliveryZone(from: Position): Position | null;
   getReachableParcels(): ReadonlyArray<ParcelBelief>;
+  /** @deprecated use getCratePositionSet */
+  getCrateObstacles(): ReadonlyArray<Position>;
+  getCrateBeliefs(): ReadonlyMap<string, CrateBelief>;
+  getCratePositionSet(mapWidth: number): ReadonlySet<number>;
   /** Maximum number of parcels the agent can carry simultaneously. Infinity if unconstrained. */
   getCapacity(): number;
   /**
@@ -224,7 +253,10 @@ export interface PlanningRequest {
 export interface PlanningConstraints {
   readonly maxPlanLength?: number;
   readonly timeoutMs?: number;
+  /** Dynamic obstacles (agent positions) — ignored in the BFS no-obstacle fallback since agents move. */
   readonly avoidPositions?: ReadonlyArray<Position>;
+  /** Persistent obstacles (e.g. lastFailedTile) — kept as obstacles even in the fallback. */
+  readonly persistentAvoid?: ReadonlyArray<Position>;
 }
 
 export interface PlanningResult {
@@ -252,6 +284,14 @@ export interface InFlightAction {
   readonly expectedDurationMs: number;
 }
 
+export type ReplanReason = 'collision' | 'consecutive_failures' | 'plan_invalid';
+
+export interface ReplanSignal {
+  readonly reason: ReplanReason;
+  readonly failedStep: PlanStep;
+  readonly failureCount: number;
+}
+
 export interface IActionExecutor {
   executePlan(plan: Plan): void;
   cancelCurrentPlan(): void;
@@ -262,6 +302,7 @@ export interface IActionExecutor {
   onStepComplete(cb: (step: PlanStep, index: number) => void): void;
   onPlanComplete(cb: (plan: Plan) => void): void;
   onStepFailed(cb: (step: PlanStep, index: number, reason: string) => void): void;
+  onReplanRequired(cb: (signal: ReplanSignal) => void): void;
   onPutdown(cb: (count: number) => void): void;
 }
 
@@ -280,6 +321,12 @@ export interface IAgent {
 // --- Agent Configuration ---
 
 export type PlannerChoice = 'bfs' | 'pddl' | 'llm';
+/** Identifies which planner chain PlannerFactory should build:
+ *  'bfs'  → BFS only
+ *  'pddl' → PDDL → BFS fallback
+ *  'llm'  → LLM → PDDL → BFS fallback
+ */
+export type PlannerChainType = 'bfs' | 'pddl' | 'llm';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LlmConfig {
@@ -405,8 +452,8 @@ export type LogEvent =
   | { kind: 'plan_failed';       plannerName: string; error: string }
   | { kind: 'replan_triggered';  reason: string }
   | { kind: 'belief_update';     changeType: BeliefChangeType }
-  | { kind: 'message_sent';      msgType: string; to: string }
-  | { kind: 'message_received';  msgType: string; from: string }
+  | { kind: 'message_sent';      msgType: string; to: string;   ts?: number }
+  | { kind: 'message_received';  msgType: string; from: string; ts?: number }
   | { kind: 'llm_call';          latencyMs: number; tokensUsed: number }
   | { kind: 'llm_fallback';      reason: string }
   | { kind: 'penalty';           cause: string }
@@ -455,6 +502,95 @@ export interface SessionEvent {
   readonly data: unknown;
 }
 
+// --- Evaluation & Decision Logging ---
+
+/** Compact candidate info for Level-1 decision records. */
+export interface EvalCandidate {
+  readonly type: 'pickup' | 'cluster' | 'explore';
+  readonly tp: ReadonlyArray<string>;   // target parcel IDs
+  readonly u: number;                   // utility score
+  readonly steps: number;               // estimated total steps
+  readonly projR: number;               // projected reward at delivery
+}
+
+/** Return value of Deliberator.evaluate() — includes metadata for L1 logging. */
+export interface EvaluationResult {
+  readonly intentions: ReadonlyArray<Intention>;   // sorted by utility desc, filtered
+  readonly reachable: number;                       // total reachable parcels (before contesa)
+  readonly contestaDrop: number;                    // parcels dropped by contesa filter
+  readonly candidates: ReadonlyArray<EvalCandidate>; // all candidates (incl. dropped), for logging
+}
+
+/** Trigger reason for a deliberation cycle. */
+export type DelibTrigger =
+  | 'sensing'
+  | 'timer'
+  | 'plan_failed'
+  | 'plan_complete'
+  | 'reconnect';
+
+/** Branch taken in _deliberateAndPlan after evaluation. */
+export type DelibBranch =
+  | 'gate_skip'
+  | 'capacity_deliver'
+  | 'no_reachable_deliver'
+  | 'explore'
+  | 'deliver_vs_pickup'
+  | 'pickup'
+  | 'no_action';
+
+/** Level-1 Type D — one per deliberation cycle (_deliberateAndPlan call). */
+export interface L1RecordD {
+  readonly t: 'D';
+  readonly ts: number;                  // unix ms
+  readonly seq: number;                 // monotonic counter per episode
+  readonly trigger: DelibTrigger;
+  readonly pos: [number, number];       // [x, y]
+  readonly score: number;
+  readonly carried: number;             // count
+  readonly carriedR: number;            // sum of estimatedReward
+  readonly cap: number;                 // capacity
+  readonly decayStep: number;           // decay per step per parcel
+  readonly gateSkip: boolean;           // true = fingerprint gate skipped full eval
+  // Fields below only present when gateSkip === false
+  readonly reachable?: number;
+  readonly contestaDrop?: number;
+  readonly cands?: ReadonlyArray<EvalCandidate>;
+  readonly replan?: boolean;
+  readonly replanReason?: string;
+  readonly curU?: number;               // current intention utility
+  readonly branch?: DelibBranch;
+  readonly portfolio?: { delivV: number; pickV: number } | null;
+  readonly claims?: ReadonlyArray<{ p: string; d: number; r: 'won' | 'yield' }>;
+  readonly plan?: { pl: string; ok: boolean; steps: number; ms: number } | null;
+  readonly valid?: boolean | null;
+  readonly chosen?: number | null;      // index into cands of chosen intention (-1 = none)
+  readonly enemies?: ReadonlyArray<{ pos: [number, number]; h: string }>;
+}
+
+/** Level-1 Type A — one per executed action step. */
+export interface L1RecordA {
+  readonly t: 'A';
+  readonly ts: number;
+  readonly seq: number;
+  readonly action: ActionType;
+  readonly ok: boolean;
+  readonly ms: number;                  // actual duration
+  readonly pos: [number, number];       // position AFTER action (or unchanged on failure)
+}
+
+/** Level-1 Type E — sparse events (deliveries, score updates, stagnation, etc.). */
+export interface L1RecordE {
+  readonly t: 'E';
+  readonly ts: number;
+  readonly seq: number;
+  readonly kind: string;                // mirrors LogEvent.kind
+  readonly data?: Record<string, unknown>;
+}
+
+/** Union of all Level-1 log records. */
+export type L1Record = L1RecordD | L1RecordA | L1RecordE;
+
 // --- GameClient (forward declaration) ---
 // The actual implementation is in src/client/game-client.ts.
 // This interface allows other modules to depend on the GameClient shape
@@ -464,8 +600,8 @@ export interface GameClient {
   connect(): Promise<void>;
   disconnect(): void;
   move(direction: Direction): Promise<boolean>;
-  pickup(): Promise<ReadonlyArray<RawParcelSensing>>;
-  putdown(): Promise<ReadonlyArray<RawParcelSensing>>;
+  pickup(): Promise<ReadonlyArray<{ id: string }>>;
+  putdown(): Promise<ReadonlyArray<{ id: string }>>;
   sendMessage(toId: string, msg: InterAgentMessage): void;
   broadcastMessage(msg: InterAgentMessage): void;
   /** Send a targeted message and await a direct reply from the recipient. */
@@ -474,8 +610,9 @@ export interface GameClient {
   consumeReply(seq: number): ((data: unknown) => void) | undefined;
   onMap(cb: (tiles: ReadonlyArray<Tile>, width: number, height: number) => void): void;
   onYou(cb: (self: RawSelfSensing) => void): void;
-  onParcelsSensing(cb: (parcels: ReadonlyArray<RawParcelSensing>) => void): void;
+  onParcelsSensing(cb: (parcels: ReadonlyArray<RawParcelSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void): void;
   onAgentsSensing(cb: (agents: ReadonlyArray<RawAgentSensing>) => void): void;
+  onCratesSensing(cb: (crates: ReadonlyArray<RawCrateSensing>, observedPositions: ReadonlyArray<{ x: number; y: number }>) => void): void;
   onMessage(cb: (from: string, msg: InterAgentMessage) => void): void;
   onDisconnect(cb: () => void): void;
   onReconnect(cb: () => void): void;
@@ -483,6 +620,8 @@ export interface GameClient {
   getMeasuredActionDurationMs(): number;
   /** Maximum parcels the agent can carry simultaneously, from server config. Infinity if unconstrained. */
   getServerCapacity(): number;
-  /** Server's PARCELS_OBSERVATION_DISTANCE; 0 if not available. */
-  getParcelsObservationDistance(): number;
+  /** Server's unified observation_distance (for all entities); 5 if not yet received. */
+  getObservationDistance(): number;
+  /** Full server config object; null if not yet received. */
+  getServerConfig(): { PARCEL_DECADING_INTERVAL?: string; [key: string]: unknown } | null;
 }

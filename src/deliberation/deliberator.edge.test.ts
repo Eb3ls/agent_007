@@ -52,6 +52,7 @@ function mockStore(
     updateSelf: () => {},
     updateParcels: () => {},
     updateAgents: () => {},
+    updateCrates: () => {},
     mergeRemoteBelief: () => {},
     getSelf: () => ({
       id: selfId,
@@ -66,6 +67,9 @@ function mockStore(
     getMap: () => new BeliefMapImpl(FIXTURE_MAP_TILES, FIXTURE_MAP_WIDTH, FIXTURE_MAP_HEIGHT),
     getNearestDeliveryZone: (from) => nearestDelivery(from),
     getReachableParcels: () => parcels.filter(p => p.carriedBy === null && p.confidence > 0),
+    getCrateObstacles: () => [],
+    getCrateBeliefs: () => new Map(),
+    getCratePositionSet: () => new Set(),
     toSnapshot: () => ({
       agentId: selfId,
       timestamp: Date.now(),
@@ -77,6 +81,7 @@ function mockStore(
     getExploreTarget: () => null,
     removeParcel: () => {},
     clearDeliveredParcels: () => {},
+    markParcelCarried: () => {},
     onUpdate: () => {},
   };
 }
@@ -96,12 +101,12 @@ describe('Deliberator.evaluate — edge cases', () => {
       makeParcel({ id: 'p2', confidence: 0, position: { x: 6, y: 4 } }),
     ];
     const beliefs = mockStore(parcels);
-    assert.deepEqual(deliberator.evaluate(beliefs), []);
+    assert.deepEqual(deliberator.evaluate(beliefs).intentions, []);
   });
 
   it('returns a single intention for a single reachable parcel (no cluster)', () => {
     const p = makeParcel({ id: 'lone', position: { x: 5, y: 4 }, estimatedReward: 30 });
-    const intentions = deliberator.evaluate(mockStore([p]));
+    const intentions = deliberator.evaluate(mockStore([p])).intentions;
     // Should be exactly 1 intention (no cluster for a single parcel)
     assert.equal(intentions.length, 1);
     assert.deepEqual(intentions[0]!.targetParcels, ['lone']);
@@ -110,7 +115,7 @@ describe('Deliberator.evaluate — edge cases', () => {
   it('parcel at agent position has stepsToParcel = 0', () => {
     const selfPos: Position = { x: 4, y: 4 };
     const p = makeParcel({ id: 'here', position: selfPos, estimatedReward: 20 });
-    const intentions = deliberator.evaluate(mockStore([p], selfPos));
+    const intentions = deliberator.evaluate(mockStore([p], selfPos)).intentions;
     assert.ok(intentions.length > 0);
     const single = intentions.find(i => i.targetParcels.length === 1 && i.targetParcels[0] === 'here');
     assert.ok(single, 'single-parcel intention for parcel at agent position must exist');
@@ -124,7 +129,7 @@ describe('Deliberator.evaluate — edge cases', () => {
       makeParcel({ id: 'b', position: { x: 5, y: 4 }, estimatedReward: 50 }),
       makeParcel({ id: 'c', position: { x: 5, y: 4 }, estimatedReward: 10 }),
     ];
-    const intentions = deliberator.evaluate(mockStore(parcels));
+    const intentions = deliberator.evaluate(mockStore(parcels)).intentions;
     for (let i = 1; i < intentions.length; i++) {
       assert.ok(
         intentions[i - 1]!.utility >= intentions[i]!.utility,
@@ -139,7 +144,7 @@ describe('Deliberator.evaluate — edge cases', () => {
     const free     = makeParcel({ id: 'free', position: { x: 6, y: 4 }, estimatedReward: 15 });
 
     const beliefs = mockStore([carried, free], { x: 4, y: 4 }, selfId);
-    const intentions = deliberator.evaluate(beliefs);
+    const intentions = deliberator.evaluate(beliefs).intentions;
     const ids = intentions.flatMap(i => i.targetParcels);
     assert.ok(!ids.includes('mine'), 'self-carried parcel must not appear in candidates');
     assert.ok(ids.includes('free'));
@@ -185,14 +190,13 @@ describe('Deliberator.shouldReplan — edge cases', () => {
   it('does NOT replan when new utility exactly equals threshold * currentUtility', () => {
     // Self at (4,4). Parcel 'cur' at (5,4): stepsToParcel=1, nearestDelivery=(9,0) at dist=8.
     // intention utility = 20 / (1+8) = 20/9.
-    // REPLAN_UTILITY_THRESHOLD * 20/9 = 1.5 * 20/9 = 10/3.
+    // REPLAN_UTILITY_THRESHOLD=1.3 → threshold * current = 1.3 * 20/9 = 26/9 ≈ 2.89.
     const current = makeParcel({ id: 'cur', position: { x: 5, y: 4 }, estimatedReward: 20 });
     const intention = createSingleIntention(current, 1, 8); // utility = 20/9
 
-    // Place 'eq' at (0,9): dist from (5,4)=10 > CLUSTER_RADIUS → no cluster.
-    // stepsToParcel from (4,4) = 4+5=9; nearestDelivery(0,9)=(0,0) at dist=9 → total=18.
-    // utility = 60/18 = 10/3 — exactly equal to threshold*current → NOT strictly greater.
-    const equalThreshold = makeParcel({ id: 'eq', position: { x: 0, y: 9 }, estimatedReward: 60 });
+    // Place 'eq' at (0,9): stepsToParcel from (4,4)=9; nearestDelivery(0,9)=(0,0) dist=9 → total=18.
+    // reward=52 → utility=52/18=26/9≈2.89 — exactly equals threshold*current → NOT strictly greater.
+    const equalThreshold = makeParcel({ id: 'eq', position: { x: 0, y: 9 }, estimatedReward: 52 });
 
     const result = deliberator.shouldReplan(
       intention,
@@ -236,6 +240,38 @@ describe('Deliberator.shouldReplan — edge cases', () => {
 
   it('exported REPLAN_UTILITY_THRESHOLD is strictly greater-than (not >=)', () => {
     // Confirm constant value
-    assert.equal(REPLAN_UTILITY_THRESHOLD, 1.5);
+    assert.equal(REPLAN_UTILITY_THRESHOLD, 1.3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shouldReplan — precomputedCandidates evita doppio evaluate()
+// ---------------------------------------------------------------------------
+
+describe('Deliberator — shouldReplan con precomputedCandidates', () => {
+  it('con precomputedCandidates dà stesso risultato di senza', () => {
+    const deliberator = new Deliberator();
+    const p = makeParcel({ id: 'p1', position: { x: 5, y: 4 }, reward: 20 });
+    const store = mockStore([p]);
+    const intention = createSingleIntention(p, 1, 9, 20);
+
+    const withoutPre = deliberator.shouldReplan(intention, store, false, 500);
+    const candidates = deliberator.evaluate(store, 500).intentions;
+    const withPre = deliberator.shouldReplan(intention, store, false, 500, undefined, candidates);
+
+    assert.strictEqual(withPre, withoutPre,
+      'shouldReplan con precomputedCandidates deve dare stesso risultato');
+  });
+
+  it('con precomputedCandidates vuoti: nessun candidato migliore → no replan', () => {
+    const deliberator = new Deliberator();
+    const p = makeParcel({ id: 'p1', position: { x: 5, y: 4 }, reward: 20 });
+    const store = mockStore([p]);
+    const intention = createSingleIntention(p, 1, 9, 20);
+
+    // Array vuoto = nessun candidato migliore → no replan
+    const result = deliberator.shouldReplan(intention, store, false, 500, undefined, []);
+    assert.strictEqual(result, false,
+      'nessun candidato migliore → shouldReplan deve ritornare false');
   });
 });

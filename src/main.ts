@@ -31,6 +31,17 @@ async function main(): Promise<void> {
   const agent: IAgent = config.role === 'llm' ? new LlmAgent() : new BdiAgent();
   await agent.init(client, config);
 
+  // Create EvalLogger before connect so the file timestamp reflects episode start.
+  // But inject into agent AFTER drainPending() because executor is created in onMap.
+  let evalLog: import('./evaluation/eval-logger.js').EvalLogger | null = null;
+  if (config.recording?.enabled && config.recording.outputPath) {
+    const mapName = process.env['EVAL_MAP_NAME'] ?? 'unknown';
+    const runIndex = parseInt(process.env['EVAL_RUN_INDEX'] ?? '0', 10);
+    const logsDir = process.env['EVAL_LOGS_DIR'] ?? 'logs';
+    const { EvalLogger } = await import('./evaluation/eval-logger.js');
+    evalLog = new EvalLogger(mapName, runIndex, logsDir);
+  }
+
   try {
     await client.connect();
   } catch (err) {
@@ -38,8 +49,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Replay buffered events (map, you, initial sensing) into registered callbacks
+  // Replay buffered events (map, you, initial sensing) into registered callbacks.
+  // The onMap callback creates the ActionExecutor, so evalLogger must be injected after.
   client.drainPending();
+
+  if (evalLog) {
+    (agent as unknown as { setEvalLogger: (l: unknown) => void }).setEvalLogger(evalLog);
+  }
 
   await agent.start();
 }

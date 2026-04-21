@@ -18,12 +18,15 @@ function posKey(x: number, y: number, width: number): number {
  * or null if no path exists.
  *
  * `dynamicObstacles` are treated as non-walkable tiles (e.g. known agent positions).
+ * `cratePositions` is a pre-built Set of posKeys for crate tiles; when provided,
+ * crates are treated as pushable obstacles (see getNeighbors for semantics).
  */
 export function findPath(
   from: Position,
   to: Position,
   map: BeliefMap,
   dynamicObstacles?: ReadonlyArray<Position>,
+  cratePositions?: ReadonlySet<number>,
 ): Position[] | null {
   // Trivial case
   if (from.x === to.x && from.y === to.y) return [from];
@@ -73,7 +76,7 @@ export function findPath(
     if (closed.has(currentKey)) continue;
     closed.add(currentKey);
 
-    const neighbors = getNeighbors({ x: cx, y: cy }, map, dynamicObstacles);
+    const neighbors = getNeighbors({ x: cx, y: cy }, map, dynamicObstacles, cratePositions);
     const tentativeG = currentG + 1;
 
     for (const n of neighbors) {

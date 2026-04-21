@@ -3,7 +3,7 @@
 // Grid data structure conforming to BeliefMap interface
 // ============================================================
 
-import type { BeliefMap, Position, Tile, TileType } from '../types.js';
+import type { BeliefMap, Direction, Position, Tile, TileType } from '../types.js';
 
 export class BeliefMapImpl implements BeliefMap {
   readonly width: number;
@@ -47,8 +47,30 @@ export class BeliefMapImpl implements BeliefMap {
 
   isWalkable(x: number, y: number): boolean {
     const type = this.getTile(x, y);
-    // Types 1–7 are walkable (direction constraints handled in getNeighbors); 0 and null are not
-    return type !== null && type !== 0;
+    // Types 1–8 are walkable; 0, 9 (crate-spawner), and null are not
+    return type !== null && type !== 0 && type !== 9;
+  }
+
+  /**
+   * R02 — directional tile entry restriction (not exit restriction).
+   * Only one direction is blocked per tile type; all other entry directions are allowed.
+   *
+   * Tile ↑ (4): arrow North → blocks entry from North (fromDir='down', moving south into tile).
+   * Tile ↓ (5): arrow South → blocks entry from South (fromDir='up', moving north into tile).
+   * Tile ← (6): arrow West  → blocks entry from West  (fromDir='right', moving east into tile).
+   * Tile → (7): arrow East  → blocks entry from East  (fromDir='left', moving west into tile).
+   * Non-walkable tiles always return false. All other walkable tiles return true.
+   */
+  canEnterFrom(x: number, y: number, from: Direction): boolean {
+    const type = this.getTile(x, y);
+    if (type === null || type === 0 || type === 9) return false;
+    switch (type) {
+      case 4: return from !== 'down';  // ↑: blocks southward entry (from north)
+      case 5: return from !== 'up';    // ↓: blocks northward entry (from south)
+      case 6: return from !== 'right'; // ←: blocks eastward entry (from west)
+      case 7: return from !== 'left';  // →: blocks westward entry (from east)
+      default: return true;
+    }
   }
 
   isDeliveryZone(x: number, y: number): boolean {

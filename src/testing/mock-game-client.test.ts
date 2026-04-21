@@ -107,9 +107,9 @@ describe('MockGameClient', () => {
       receivedParcels = parcels;
     });
     client.emitParcelsSensing(FIXTURE_PARCELS);
-    assert.equal(receivedParcels.length, 5);
-    assert.equal(receivedParcels[0].id, 'p1');
-    assert.equal(receivedParcels[0].reward, 50);
+    assert.equal(receivedParcels.length, FIXTURE_PARCELS.length);
+    assert.equal(receivedParcels[0].id, FIXTURE_PARCELS[0].id);
+    assert.equal(receivedParcels[0].reward, FIXTURE_PARCELS[0].reward);
     assert.equal(receivedParcels[0].carriedBy, null);
   });
 
@@ -133,7 +133,7 @@ describe('MockGameClient', () => {
       count = agents.length;
     });
     client.emitAgentsSensing(FIXTURE_AGENTS);
-    assert.equal(count, 3);
+    assert.equal(count, FIXTURE_AGENTS.length);
   });
 
   it('emitMessage fires onMessage callback', () => {

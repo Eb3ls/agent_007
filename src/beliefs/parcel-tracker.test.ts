@@ -188,3 +188,31 @@ describe('ParcelTracker', () => {
     assert.strictEqual(tracker.getSpawnFrequency({ x: 5, y: 5 }), 0);
   });
 });
+
+// --- setBaseDecayRate ---
+
+describe('ParcelTracker — setBaseDecayRate', () => {
+  it('getGlobalAverageDecayRate returns base rate when no empirical observations', () => {
+    const tracker = new ParcelTracker();
+    tracker.setBaseDecayRate(0.005);
+    assert.strictEqual(tracker.getGlobalAverageDecayRate(), 0.005);
+  });
+
+  it('estimateRewardAt uses base decay rate as fallback for new parcel (single observation)', () => {
+    const tracker = new ParcelTracker();
+    tracker.setBaseDecayRate(0.01); // 1 reward unit per 100ms
+    tracker.observe('p1', 50, 0);
+    // 1000ms later: 50 - 0.01*1000 = 40
+    assert.strictEqual(tracker.estimateRewardAt('p1', 1000), 40);
+  });
+
+  it('empirical rate takes precedence over base rate once measured', () => {
+    const tracker = new ParcelTracker();
+    tracker.setBaseDecayRate(0.001); // slow base rate
+    tracker.observe('p1', 50, 0);
+    tracker.observe('p1', 40, 1000); // empirical: (50-40)/1000 = 0.01
+    // Global avg now uses empirical, not base
+    assert.strictEqual(tracker.getGlobalAverageDecayRate(), 0.01);
+    assert.strictEqual(tracker.getDecayRate('p1'), 0.01);
+  });
+});

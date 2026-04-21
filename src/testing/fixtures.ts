@@ -112,3 +112,30 @@ export const FIXTURE_SELF: RawSelfSensing = {
   score: 0,
   penalty: 0,
 };
+
+// --- Directional tile fixture (5x3 map) — for testing R02 (canEnterFrom) ---
+//
+// Layout (y=0 is bottom):
+//   y=2:  3  3  3  3  3
+//   y=1:  3  4  3  5  3    ← tile(1,1)=↑ (type 4), tile(3,1)=↓ (type 5)
+//   y=0:  3  3  3  3  3
+//
+// tile ↑ at (1,1): blocks entry from South (fromDir='up'). Allowed: down/left/right.
+// tile ↓ at (3,1): blocks entry from North (fromDir='down'). Allowed: up/left/right.
+//
+// Expected pathfinder behaviour (Rischio 2, ARCHITECTURE.md):
+//   - Agent at (0,1) → (1,1):  direction='right' → canEnterFrom(1,1,'right')=true  ✓
+//   - Agent at (1,0) → (1,1):  direction='up'    → canEnterFrom(1,1,'up')=false     ✗ blocked
+//   - Agent at (1,2) → (1,1):  direction='down'  → canEnterFrom(1,1,'down')=true   ✓
+//   - Agent at (2,1) → (1,1):  direction='left'  → canEnterFrom(1,1,'left')=true   ✓
+//   - Exit from (1,1) in any direction: always walkable (R02: exit unrestricted)
+export const FIXTURE_DIRECTIONAL_TILES: ReadonlyArray<Tile> = [
+  // Row y=0: all walkable
+  tile(0,0,3), tile(1,0,3), tile(2,0,3), tile(3,0,3), tile(4,0,3),
+  // Row y=1: two directional tiles
+  tile(0,1,3), tile(1,1,4), tile(2,1,3), tile(3,1,5), tile(4,1,3),
+  // Row y=2: all walkable
+  tile(0,2,3), tile(1,2,3), tile(2,2,3), tile(3,2,3), tile(4,2,3),
+];
+export const FIXTURE_DIRECTIONAL_WIDTH  = 5;
+export const FIXTURE_DIRECTIONAL_HEIGHT = 3;

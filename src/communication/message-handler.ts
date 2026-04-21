@@ -123,7 +123,8 @@ export class MessageHandler {
       return;
     }
 
-    logger.debug({ kind: 'message_received', msgType: msg.type, from });
+    // R25: include message timestamp for post-hoc ordering analysis
+    logger.debug({ kind: 'message_received', msgType: msg.type, from, ts: msg.timestamp });
 
     for (const cb of this.messageCallbacks) {
       cb(from, msg);

@@ -30,6 +30,7 @@ function mockBeliefs(parcels: ReadonlyArray<ParcelBelief>, selfPos: Position): I
     updateSelf: () => {},
     updateParcels: () => {},
     updateAgents: () => {},
+    updateCrates: () => {},
     mergeRemoteBelief: () => {},
     getSelf: () => ({
       id: 'agent-self', name: 'TestAgent', position: selfPos,
@@ -40,11 +41,15 @@ function mockBeliefs(parcels: ReadonlyArray<ParcelBelief>, selfPos: Position): I
     getMap: () => fixtureMap,
     getNearestDeliveryZone: () => zones[0]!,
     getReachableParcels: () => parcels.filter(p => p.carriedBy === null),
+    getCrateObstacles: () => [],
+    getCrateBeliefs: () => new Map(),
+    getCratePositionSet: () => new Set(),
     toSnapshot: () => ({ agentId: 'agent-self', timestamp: Date.now(), selfPosition: selfPos, parcels: [], agents: [] }),
     getCapacity: () => Infinity,
     getExploreTarget: () => null,
     removeParcel: () => {},
     clearDeliveredParcels: () => {},
+    markParcelCarried: () => {},
     onUpdate: () => {},
   };
 }

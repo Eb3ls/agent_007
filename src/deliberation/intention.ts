@@ -5,6 +5,7 @@
 import { randomUUID } from 'crypto';
 import type { Intention, ParcelBelief, Position } from '../types.js';
 import { manhattanDistance } from '../types.js';
+import { posKey } from '../pathfinding/distance-map.js';
 
 /** Max Manhattan distance between parcels to be grouped in a cluster. */
 export const CLUSTER_RADIUS = 3;
@@ -16,6 +17,49 @@ export const CLUSTER_RADIUS = 3;
 export function computeUtility(totalReward: number, totalSteps: number): number {
   if (totalSteps <= 0) return 0;
   return totalReward / totalSteps;
+}
+
+/**
+ * Portfolio-aware score for a pickup detour.
+ *
+ * Returns the total portfolio value (carried + new parcel) at delivery time,
+ * accounting for the decay all carried parcels suffer during the detour.
+ *
+ * @param projectedParcelReward  Projected reward of the new parcel at delivery.
+ * @param stepsTotal             Total steps: stepsToParcel + stepsToDelivery.
+ * @param carriedReward          Sum of current rewards of all carried parcels.
+ * @param numCarried             Number of carried parcels.
+ * @param decayPerStep           decayRate * movementDurationMs (reward lost per step per parcel).
+ */
+export function computePickupScore(
+  projectedParcelReward: number,
+  stepsTotal: number,
+  carriedReward: number,
+  numCarried: number,
+  decayPerStep: number,
+): number {
+  const carriedAtDelivery = Math.max(0, carriedReward - numCarried * decayPerStep * stepsTotal);
+  return carriedAtDelivery + projectedParcelReward;
+}
+
+/**
+ * Portfolio-aware score for delivering now (no further pickup).
+ *
+ * Returns the total carried reward at delivery time after accounting for
+ * the decay all parcels suffer on the way to the delivery zone.
+ *
+ * @param carriedReward    Sum of current rewards of all carried parcels.
+ * @param numCarried       Number of carried parcels.
+ * @param stepsToDelivery  Steps from current position to nearest delivery zone.
+ * @param decayPerStep     decayRate * movementDurationMs (reward lost per step per parcel).
+ */
+export function computeDeliveryScore(
+  carriedReward: number,
+  numCarried: number,
+  stepsToDelivery: number,
+  decayPerStep: number,
+): number {
+  return Math.max(0, carriedReward - numCarried * decayPerStep * stepsToDelivery);
 }
 
 /**
@@ -91,10 +135,16 @@ export function createExploreIntention(target: Position): Intention {
 /**
  * Sort parcels in nearest-neighbour order starting from `from`.
  * Returns the ordered list and the total inter-parcel steps.
+ *
+ * When `distanceMap` and `mapWidth` are provided, `stepsToFirst` is computed
+ * using the exact BFS distance from the agent to the first parcel.
+ * Inter-parcel distances always use Manhattan (BFS from each parcel would be O(N×W×H)).
  */
 export function orderParcelsByNearest(
   parcels: ReadonlyArray<ParcelBelief>,
   from: Position,
+  distanceMap?: Map<number, number>,
+  mapWidth?: number,
 ): { ordered: ParcelBelief[]; interParcelSteps: number; stepsToFirst: number } {
   if (parcels.length === 0) return { ordered: [], interParcelSteps: 0, stepsToFirst: 0 };
   const remaining = [...parcels];
@@ -115,7 +165,10 @@ export function orderParcelsByNearest(
     current = next.position;
   }
 
-  const stepsToFirst = manhattanDistance(from, ordered[0]!.position);
+  const first = ordered[0]!;
+  const stepsToFirst = (distanceMap !== undefined && mapWidth !== undefined)
+    ? (distanceMap.get(posKey(first.position.x, first.position.y, mapWidth)) ?? manhattanDistance(from, first.position))
+    : manhattanDistance(from, first.position);
   return { ordered, interParcelSteps, stepsToFirst };
 }
 

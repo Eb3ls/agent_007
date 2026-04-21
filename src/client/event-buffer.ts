@@ -7,14 +7,16 @@ import type {
   RawSelfSensing,
   RawParcelSensing,
   RawAgentSensing,
+  RawCrateSensing,
   InterAgentMessage,
 } from '../types.js';
 
 export type BufferedEvent =
   | { kind: 'map'; tiles: ReadonlyArray<Tile>; width: number; height: number }
   | { kind: 'you'; self: RawSelfSensing }
-  | { kind: 'parcels'; parcels: ReadonlyArray<RawParcelSensing> }
+  | { kind: 'parcels'; parcels: ReadonlyArray<RawParcelSensing>; observedPositions?: ReadonlyArray<{ x: number; y: number }> }
   | { kind: 'agents'; agents: ReadonlyArray<RawAgentSensing> }
+  | { kind: 'crates'; crates: ReadonlyArray<RawCrateSensing>; observedPositions?: ReadonlyArray<{ x: number; y: number }> }
   | { kind: 'message'; from: string; msg: InterAgentMessage };
 
 /**
