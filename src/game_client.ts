@@ -52,6 +52,14 @@ export class GameClient {
 		return this.api.emitMove(direction);
 	}
 
+	public async pickup(): Promise<{ id: string }[]> {
+		return this.api.emitPickup();
+	}
+
+	public async putdown(): Promise<{ id: string }[]> {
+		return this.api.emitPutdown();
+	}
+
 	private logEvent(eventName: string, ...payload: unknown[]): void {
 		console.log(`[${eventName}]`, ...payload);
 	}
