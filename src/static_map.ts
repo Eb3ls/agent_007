@@ -41,7 +41,9 @@ export function setMap(m: StaticMap, tiles: IOTile[]): void {
 		minY = Infinity,
 		maxX = -Infinity,
 		maxY = -Infinity;
-	for (const t of tiles) {
+	for (const raw of tiles) {
+		// Coerce type to string: server may send numeric tile types (e.g. 2 instead of "2").
+		const t = { ...raw, type: String(raw.type) as IOTile["type"] };
 		if (t.x < minX) minX = t.x;
 		if (t.y < minY) minY = t.y;
 		if (t.x > maxX) maxX = t.x;
@@ -59,7 +61,8 @@ export function setMap(m: StaticMap, tiles: IOTile[]): void {
 }
 
 export function updateTile(m: StaticMap, tile: IOTile): void {
-	m.tiles.set(`${tile.x},${tile.y}`, tile);
+	const t = { ...tile, type: String(tile.type) as IOTile["type"] };
+	m.tiles.set(`${t.x},${t.y}`, t);
 }
 
 /** Converts grid coordinates to a flat tile id for typed-array indexing. */
