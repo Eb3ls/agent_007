@@ -1,12 +1,7 @@
-import {
-	bfsFromSelf,
-	gradientStepToDelivery,
-	reconstructPath,
-	type BfsFromSelf,
-	type Direction,
-} from "./pathfinder.js";
+import { bfsFromSelf, reconstructPath, type BfsFromSelf, type Direction } from "./pathfinder.js";
 import { GameClient } from "./game_client.js";
-import { tileId, type StaticMap } from "./static_map.js";
+import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
+import type { BeliefStore } from "./belief_store.js";
 import type { IOParcel } from "@unitn-asa/deliveroo-js-sdk";
 import dotenv from "dotenv";
 
@@ -42,6 +37,40 @@ async function waitForReady(): Promise<{ id: string; x: number; y: number }> {
 		}
 		await sleep(50);
 	}
+}
+
+// Short TTL keeps an agent "blocked" for ~3 ticks after it leaves view — breaks oscillation
+// when a stationary agent sits at the edge of sensing range (deviate → lose view → revert → repeat).
+const SHORT_BLOCK_TTL_MS = 300;
+
+function computeBlockedTiles(m: StaticMap, beliefs: BeliefStore): Set<number> {
+	const blocked = new Set<number>();
+	const now = Date.now();
+	for (const a of beliefs.agents.values()) {
+		if (!a.inView && now - a.lastSeenAt > SHORT_BLOCK_TTL_MS) continue;
+		if (a.x === undefined || a.y === undefined) continue;
+		const ax = Math.round(a.x);
+		const ay = Math.round(a.y);
+		if (!inBounds(m, ax, ay)) continue;
+		blocked.add(tileId(m, ax, ay));
+	}
+	return blocked;
+}
+
+function nearestDeliveryTile(
+	m: StaticMap,
+	bfs: BfsFromSelf,
+): { x: number; y: number } | null {
+	let bestId = -1,
+		bestDist = Infinity;
+	for (const did of m.deliveryTileIds) {
+		const d = bfs.dist[did];
+		if (d !== undefined && d !== -1 && d < bestDist) {
+			bestDist = d;
+			bestId = did;
+		}
+	}
+	return bestId === -1 ? null : idToXY(m, bestId);
 }
 
 function shouldDrop(m: StaticMap, selfId: number, carrying: boolean): boolean {
@@ -81,15 +110,12 @@ function pickBestParcelTarget(
 function planStep(
 	m: StaticMap,
 	bfs: BfsFromSelf,
-	sx: number,
-	sy: number,
 	carrying: boolean,
 	target: IOParcel | null,
 ): Direction | null {
-	if (carrying) return gradientStepToDelivery(m, sx, sy);
-	if (!target) return null;
-	const path = reconstructPath(m, bfs, target.x, target.y);
-	return path?.[0] ?? null;
+	const dest = carrying ? nearestDeliveryTile(m, bfs) : target;
+	if (!dest) return null;
+	return reconstructPath(m, bfs, dest.x, dest.y)?.[0] ?? null;
 }
 
 async function loop(): Promise<void> {
@@ -110,7 +136,8 @@ async function loop(): Promise<void> {
 
 	while (true) {
 		const selfId = tileId(m, sx, sy);
-		const bfs = bfsFromSelf(m, sx, sy);
+		const blocked = computeBlockedTiles(m, gc.beliefs);
+		const bfs = bfsFromSelf(m, sx, sy, blocked);
 		const parcels = gc.perception.visibleParcels;
 
 		// Derive carrying from sensing: server sets carriedBy=myId on our parcels.
@@ -135,7 +162,7 @@ async function loop(): Promise<void> {
 		}
 
 		const target = carrying ? null : pickBestParcelTarget(m, bfs, parcels);
-		const step = planStep(m, bfs, sx, sy, carrying, target);
+		const step = planStep(m, bfs, carrying, target);
 
 		if (!step) {
 			console.log(
@@ -149,10 +176,12 @@ async function loop(): Promise<void> {
 		if (result) {
 			sx = result.x;
 			sy = result.y;
+			console.log(`[move] ${step} → ok@(${sx},${sy})`);
+		} else {
+			const waitMs = gc.config?.GAME.player.movement_duration ?? 100;
+			console.log(`[move] ${step} → FAILED (wait ${waitMs}ms)`);
+			await sleep(waitMs);
 		}
-		console.log(
-			`[move] ${step} → ${result ? `ok@(${result.x},${result.y})` : "FAILED"}`,
-		);
 	}
 }
 

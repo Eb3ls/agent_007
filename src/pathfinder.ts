@@ -8,7 +8,12 @@ export type BfsFromSelf = {
 };
 
 /** Forward BFS from (sx, sy). Call once per cycle; reuse result for all target queries. */
-export function bfsFromSelf(m: StaticMap, sx: number, sy: number): BfsFromSelf {
+export function bfsFromSelf(
+	m: StaticMap,
+	sx: number,
+	sy: number,
+	blocked?: ReadonlySet<number>,
+): BfsFromSelf {
 	const size = m.gridWidth * m.gridHeight;
 	const dist = new Int32Array(size).fill(-1);
 	const prev = new Int32Array(size).fill(-1);
@@ -35,6 +40,7 @@ export function bfsFromSelf(m: StaticMap, sx: number, sy: number): BfsFromSelf {
 			if (!inBounds(m, nx, ny)) continue;
 			const nid = tileId(m, nx, ny);
 			if (dist[nid] !== -1) continue;
+			if (blocked?.has(nid)) continue;
 			if (canMoveForward(m, cx, cy, nx, ny)) {
 				dist[nid] = d + 1;
 				prev[nid] = cur;
