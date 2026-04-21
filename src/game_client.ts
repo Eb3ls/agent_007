@@ -1,4 +1,11 @@
 import {
+	createBeliefStore,
+	evictStale,
+	markAgentDisconnected,
+	updateFromSensing,
+	type BeliefStore,
+} from "./belief_store.js";
+import {
 	createPerception,
 	setSelf,
 	setSensing,
@@ -10,14 +17,10 @@ import {
 	updateTile,
 	type StaticMap,
 } from "./static_map.js";
-import {
-	createBeliefStore,
-	evictStale,
-	markAgentDisconnected,
-	updateFromSensing,
-	type BeliefStore,
-} from "./belief_store.js";
-import type { DjsClientSocket, IOGameConfig } from "@unitn-asa/deliveroo-js-sdk";
+import type {
+	DjsClientSocket,
+	IOGameConfig,
+} from "@unitn-asa/deliveroo-js-sdk";
 import { DjsConnect } from "@unitn-asa/deliveroo-js-sdk";
 
 export class GameClient {
@@ -41,6 +44,12 @@ export class GameClient {
 
 	public disconnect(): void {
 		this.api.disconnect();
+	}
+
+	public async move(
+		direction: "up" | "down" | "left" | "right",
+	): Promise<{ x: number; y: number } | false> {
+		return this.api.emitMove(direction);
 	}
 
 	private logEvent(eventName: string, ...payload: unknown[]): void {
@@ -100,7 +109,8 @@ export class GameClient {
 		});
 
 		this.api.onAgentConnected((status, agent) => {
-			if (status === "disconnected") markAgentDisconnected(this.beliefs, agent.id);
+			if (status === "disconnected")
+				markAgentDisconnected(this.beliefs, agent.id);
 			this.logEvent("agent-connected", { status, agent });
 		});
 	}
