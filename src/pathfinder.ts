@@ -1,0 +1,130 @@
+import { canMoveForward, tileId, type StaticMap } from "./static_map.js";
+
+export type Direction = "up" | "down" | "left" | "right";
+
+export type BfsFromSelf = {
+	dist: Int32Array; // -1 = unreachable; 0 = start tile
+	prev: Int32Array; // -1 = no predecessor; otherwise tileId of parent
+};
+
+const DIRS: [number, number][] = [
+	[1, 0],
+	[-1, 0],
+	[0, 1],
+	[0, -1],
+];
+
+/** Forward BFS from (sx, sy). Call once per cycle; reuse result for all target queries. */
+export function bfsFromSelf(m: StaticMap, sx: number, sy: number): BfsFromSelf {
+	const size = m.gridWidth * m.gridHeight;
+	const dist = new Int32Array(size).fill(-1);
+	const prev = new Int32Array(size).fill(-1);
+
+	if (size === 0) return { dist, prev };
+	if (!m.tiles.has(`${sx},${sy}`)) return { dist, prev };
+
+	const startId = tileId(m, sx, sy);
+	dist[startId] = 0;
+
+	const queue = new Int32Array(size);
+	let head = 0,
+		tail = 0;
+	queue[tail++] = startId;
+
+	while (head < tail) {
+		const cur = queue[head++]!;
+		const cx = (cur % m.gridWidth) + m.minX;
+		const cy = Math.floor(cur / m.gridWidth) + m.minY;
+		const d = dist[cur]!;
+
+		for (const [dx, dy] of DIRS) {
+			const nx = cx + dx,
+				ny = cy + dy;
+			if (nx < m.minX || nx >= m.minX + m.gridWidth) continue;
+			if (ny < m.minY || ny >= m.minY + m.gridHeight) continue;
+			const nid = tileId(m, nx, ny);
+			if (dist[nid] !== -1) continue;
+			if (canMoveForward(m, cx, cy, nx, ny)) {
+				dist[nid] = d + 1;
+				prev[nid] = cur;
+				queue[tail++] = nid;
+			}
+		}
+	}
+
+	return { dist, prev };
+}
+
+/** Reconstructs direction sequence from start to (tx, ty). Returns null if unreachable, [] if already there. */
+export function reconstructPath(
+	m: StaticMap,
+	bfs: BfsFromSelf,
+	tx: number,
+	ty: number,
+): Direction[] | null {
+	if (tx < m.minX || tx >= m.minX + m.gridWidth) return null;
+	if (ty < m.minY || ty >= m.minY + m.gridHeight) return null;
+
+	const tid = tileId(m, tx, ty);
+	if (bfs.dist[tid] === -1) return null;
+	if (bfs.dist[tid] === 0) return [];
+
+	const path: Direction[] = [];
+	let cur = tid;
+	while (bfs.prev[cur] !== -1) {
+		const p = bfs.prev[cur]!;
+		const cx = (cur % m.gridWidth) + m.minX;
+		const cy = Math.floor(cur / m.gridWidth) + m.minY;
+		const px = (p % m.gridWidth) + m.minX;
+		const py = Math.floor(p / m.gridWidth) + m.minY;
+		path.push(directionOf(px, py, cx, cy));
+		cur = p;
+	}
+
+	return path.reverse();
+}
+
+/** One greedy step toward nearest delivery using precomputed gradient. Returns null if already on delivery or unreachable. */
+export function gradientStepToDelivery(
+	m: StaticMap,
+	sx: number,
+	sy: number,
+): Direction | null {
+	if (sx < m.minX || sx >= m.minX + m.gridWidth) return null;
+	if (sy < m.minY || sy >= m.minY + m.gridHeight) return null;
+
+	const sid = tileId(m, sx, sy);
+	const d = m.baseReverseDistToDelivery[sid];
+	if (d === undefined || d <= 0) return null;
+
+	for (const [dx, dy] of DIRS) {
+		const nx = sx + dx,
+			ny = sy + dy;
+		if (nx < m.minX || nx >= m.minX + m.gridWidth) continue;
+		if (ny < m.minY || ny >= m.minY + m.gridHeight) continue;
+		const nid = tileId(m, nx, ny);
+		const nd = m.baseReverseDistToDelivery[nid];
+		if (
+			nd !== undefined &&
+			nd !== -1 &&
+			nd < d &&
+			canMoveForward(m, sx, sy, nx, ny)
+		) {
+			return directionOf(sx, sy, nx, ny);
+		}
+	}
+
+	return null;
+}
+
+function directionOf(
+	fx: number,
+	fy: number,
+	tx: number,
+	ty: number,
+): Direction {
+	if (ty > fy) return "up";
+	if (ty < fy) return "down";
+	if (tx < fx) return "left";
+	return "right";
+}
