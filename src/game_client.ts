@@ -1,4 +1,6 @@
 import {
+	AGENT_TTL_MULT,
+	PARCEL_TTL_MULT,
 	createBeliefStore,
 	evictStale,
 	markAgentDisconnected,
@@ -17,6 +19,7 @@ import {
 	updateTile,
 	type StaticMap,
 } from "./static_map.js";
+import type { Direction } from "./pathfinder.js";
 import type {
 	DjsClientSocket,
 	IOGameConfig,
@@ -47,7 +50,7 @@ export class GameClient {
 	}
 
 	public async move(
-		direction: "up" | "down" | "left" | "right",
+		direction: Direction,
 	): Promise<{ x: number; y: number } | false> {
 		return this.api.emitMove(direction);
 	}
@@ -102,7 +105,7 @@ export class GameClient {
 			updateFromSensing(this.beliefs, sensing);
 			if (this.config) {
 				const movMs = this.config.GAME.player.movement_duration;
-				evictStale(this.beliefs, movMs * 20, movMs * 10);
+				evictStale(this.beliefs, movMs * PARCEL_TTL_MULT, movMs * AGENT_TTL_MULT);
 			}
 			this.logEvent("sensing", {
 				agents: sensing.agents.length,
