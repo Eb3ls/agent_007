@@ -68,9 +68,14 @@ export function tileId(m: StaticMap, x: number, y: number): number {
 }
 
 /**
- * Returns true if moving from (fx,fy) to (tx,ty) is a valid move.
- * Checks tile existence, wall types, and directional tile constraints on both source and dest.
- * Not for use in BFS hot path — pathfinder builds its own typed-array version.
+ * Returns true if moving from (fx,fy) to (tx,ty) is a valid forward move.
+ *
+ * Server rules (Tile.js / Controller.js, confirmed):
+ *   - EXIT from any tile: always allowed (allowsExitInDirection returns true unconditionally).
+ *   - ENTRY into a directional tile: prohibited only from the direction OPPOSITE to the arrow.
+ *     '→' prohibits entry when dx=-1, '←' when dx=+1, '↓' when dy=+1, '↑' when dy=-1.
+ *   - Walls (type "5") are locked tiles; "5!" landing spots are walkable when unoccupied but
+ *     we conservatively block both to avoid collisions with moving walls.
  */
 export function canMoveForward(
 	m: StaticMap,
@@ -80,22 +85,19 @@ export function canMoveForward(
 	ty: number,
 ): boolean {
 	const to = m.tiles.get(`${tx},${ty}`);
-	if (!to || to.type === "5" || to.type === "5!") return false;
+	if (!to || to.type === "0" || to.type === "5" || to.type === "5!")
+		return false;
 	const from = m.tiles.get(`${fx},${fy}`);
-	if (!from) return false;
+	if (!from || from.type === "0") return false;
 
 	const dx = tx - fx,
 		dy = ty - fy;
 
-	if (from.type === "→" && !(dx === 1 && dy === 0)) return false;
-	if (from.type === "←" && !(dx === -1 && dy === 0)) return false;
-	if (from.type === "↓" && !(dx === 0 && dy === 1)) return false;
-	if (from.type === "↑" && !(dx === 0 && dy === -1)) return false;
-
-	if (to.type === "→" && !(dx === 1 && dy === 0)) return false;
-	if (to.type === "←" && !(dx === -1 && dy === 0)) return false;
-	if (to.type === "↓" && !(dx === 0 && dy === 1)) return false;
-	if (to.type === "↑" && !(dx === 0 && dy === -1)) return false;
+	// Entry restrictions: block the direction opposite to the arrow symbol.
+	if (to.type === "→" && dx === -1) return false;
+	if (to.type === "←" && dx === 1) return false;
+	if (to.type === "↓" && dy === 1) return false;
+	if (to.type === "↑" && dy === -1) return false;
 
 	return true;
 }
@@ -153,4 +155,3 @@ function buildDeliveryBfs(m: StaticMap, size: number): void {
 		}
 	}
 }
-
