@@ -25,7 +25,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 // Waits until map is loaded and self has an integer position (not mid-animation).
-async function waitForReady(): Promise<{ x: number; y: number }> {
+async function waitForReady(): Promise<{ id: string; x: number; y: number }> {
 	while (true) {
 		const self = gc.perception.self;
 		if (
@@ -35,7 +35,7 @@ async function waitForReady(): Promise<{ x: number; y: number }> {
 			Number.isInteger(self.x) &&
 			Number.isInteger(self.y)
 		) {
-			return { x: self.x, y: self.y };
+			return { id: self.id, x: self.x, y: self.y };
 		}
 		await sleep(50);
 	}
@@ -47,41 +47,74 @@ async function loop(): Promise<void> {
 	// — updated from ACK results (server guarantees integer after move completes)
 	// Never read from perception.self mid-loop: onYou fires with fractional
 	// positions during animation (server sets pos+0.6*step immediately, before synch).
-	let { x: sx, y: sy } = await waitForReady();
+	const { id: myId, x: startX, y: startY } = await waitForReady();
+	let sx = startX,
+		sy = startY;
 
 	const m = gc.staticMap;
-	const tilesReachingDelivery = m.baseReverseDistToDelivery.filter(
-		(d) => d >= 0,
-	).length;
 	console.log(
-		`[map] tiles=${m.tiles.size} | delivery_zones=${m.deliveryTileIds.length} | reachable_from_delivery=${tilesReachingDelivery}/${m.gridWidth * m.gridHeight}`,
+		`[map] tiles=${m.tiles.size} | delivery_zones=${m.deliveryTileIds.length}`,
 	);
 	console.log(`[main] starting loop at (${sx},${sy})`);
 
 	while (true) {
 		const selfId = tileId(m, sx, sy);
-		const distToDelivery = m.baseReverseDistToDelivery[selfId] ?? -1;
-
 		const bfs = bfsFromSelf(m, sx, sy);
-		const reachable = bfs.dist.filter((d) => d >= 0).length;
 
-		const parcels = [...gc.perception.visibleParcels.values()];
-		const firstParcel = parcels[0];
-		if (firstParcel) {
-			const dist = bfs.dist[tileId(m, firstParcel.x, firstParcel.y)];
-			const path = reconstructPath(m, bfs, firstParcel.x, firstParcel.y);
-			console.log(
-				`[bfs] pos=(${sx},${sy}) to_delivery=${distToDelivery} reachable=${reachable} | parcel@(${firstParcel.x},${firstParcel.y}) dist=${dist ?? "?"} path=[${path?.join(",") ?? "null"}]`,
-			);
-		} else {
-			console.log(
-				`[bfs] pos=(${sx},${sy}) to_delivery=${distToDelivery} reachable=${reachable} | no visible parcels`,
-			);
+		// Derive carrying from sensing: server sets carriedBy=myId on our parcels.
+		// If a parcel decays while carried it disappears from sensing → carrying becomes false automatically.
+		const carrying = [...gc.perception.visibleParcels.values()].some(
+			(p) => p.carriedBy === myId,
+		);
+
+		// On delivery with parcel → drop everything.
+		if (carrying && m.baseReverseDistToDelivery[selfId] === 0) {
+			const dropped = await gc.putdown();
+			console.log(`[putdown] dropped=${dropped.length}`);
+			await sleep(300); // wait for sensing update before next cycle
+			continue;
 		}
 
-		const step = gradientStepToDelivery(m, sx, sy);
+		// On a free parcel tile → pick up.
+		if (!carrying) {
+			const hereParcel = [...gc.perception.visibleParcels.values()].find(
+				(p) => p.x === sx && p.y === sy && !p.carriedBy,
+			);
+			if (hereParcel) {
+				const picked = await gc.pickup();
+				console.log(`[pickup] picked=${picked.length}`);
+				await sleep(300); // wait for sensing update before next cycle
+				continue;
+			}
+		}
+
+		// Choose next step.
+		let step = null;
+		if (carrying) {
+			step = gradientStepToDelivery(m, sx, sy);
+		} else {
+			// Walk toward nearest reachable free parcel.
+			let best = null;
+			let bestDist = Infinity;
+			for (const p of gc.perception.visibleParcels.values()) {
+				if (p.carriedBy) continue;
+				const d = bfs.dist[tileId(m, p.x, p.y)];
+				if (d === undefined || d === -1) continue;
+				if (d < bestDist) {
+					bestDist = d;
+					best = p;
+				}
+			}
+			if (best) {
+				const path = reconstructPath(m, bfs, best.x, best.y);
+				step = path?.[0] ?? null;
+			}
+		}
+
 		if (!step) {
-			console.log("[move] on delivery or unreachable — waiting");
+			console.log(
+				`[wait] no step — carrying=${carrying} distToDelivery=${m.baseReverseDistToDelivery[selfId]} pos=(${sx},${sy})`,
+			);
 			await sleep(200);
 			continue;
 		}
