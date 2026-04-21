@@ -1,4 +1,4 @@
-import { canMoveForward, tileId, type StaticMap } from "./static_map.js";
+import { DIRS, canMoveForward, idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
 
 export type Direction = "up" | "down" | "left" | "right";
 
@@ -6,13 +6,6 @@ export type BfsFromSelf = {
 	dist: Int32Array; // -1 = unreachable; 0 = start tile
 	prev: Int32Array; // -1 = no predecessor; otherwise tileId of parent
 };
-
-const DIRS: [number, number][] = [
-	[1, 0],
-	[-1, 0],
-	[0, 1],
-	[0, -1],
-];
 
 /** Forward BFS from (sx, sy). Call once per cycle; reuse result for all target queries. */
 export function bfsFromSelf(m: StaticMap, sx: number, sy: number): BfsFromSelf {
@@ -33,15 +26,13 @@ export function bfsFromSelf(m: StaticMap, sx: number, sy: number): BfsFromSelf {
 
 	while (head < tail) {
 		const cur = queue[head++]!;
-		const cx = (cur % m.gridWidth) + m.minX;
-		const cy = Math.floor(cur / m.gridWidth) + m.minY;
+		const { x: cx, y: cy } = idToXY(m, cur);
 		const d = dist[cur]!;
 
 		for (const [dx, dy] of DIRS) {
 			const nx = cx + dx,
 				ny = cy + dy;
-			if (nx < m.minX || nx >= m.minX + m.gridWidth) continue;
-			if (ny < m.minY || ny >= m.minY + m.gridHeight) continue;
+			if (!inBounds(m, nx, ny)) continue;
 			const nid = tileId(m, nx, ny);
 			if (dist[nid] !== -1) continue;
 			if (canMoveForward(m, cx, cy, nx, ny)) {
@@ -62,8 +53,7 @@ export function reconstructPath(
 	tx: number,
 	ty: number,
 ): Direction[] | null {
-	if (tx < m.minX || tx >= m.minX + m.gridWidth) return null;
-	if (ty < m.minY || ty >= m.minY + m.gridHeight) return null;
+	if (!inBounds(m, tx, ty)) return null;
 
 	const tid = tileId(m, tx, ty);
 	if (bfs.dist[tid] === -1) return null;
@@ -73,10 +63,8 @@ export function reconstructPath(
 	let cur = tid;
 	while (bfs.prev[cur] !== -1) {
 		const p = bfs.prev[cur]!;
-		const cx = (cur % m.gridWidth) + m.minX;
-		const cy = Math.floor(cur / m.gridWidth) + m.minY;
-		const px = (p % m.gridWidth) + m.minX;
-		const py = Math.floor(p / m.gridWidth) + m.minY;
+		const { x: cx, y: cy } = idToXY(m, cur);
+		const { x: px, y: py } = idToXY(m, p);
 		path.push(directionOf(px, py, cx, cy));
 		cur = p;
 	}
@@ -90,8 +78,7 @@ export function gradientStepToDelivery(
 	sx: number,
 	sy: number,
 ): Direction | null {
-	if (sx < m.minX || sx >= m.minX + m.gridWidth) return null;
-	if (sy < m.minY || sy >= m.minY + m.gridHeight) return null;
+	if (!inBounds(m, sx, sy)) return null;
 
 	const sid = tileId(m, sx, sy);
 	const d = m.baseReverseDistToDelivery[sid];
@@ -100,8 +87,7 @@ export function gradientStepToDelivery(
 	for (const [dx, dy] of DIRS) {
 		const nx = sx + dx,
 			ny = sy + dy;
-		if (nx < m.minX || nx >= m.minX + m.gridWidth) continue;
-		if (ny < m.minY || ny >= m.minY + m.gridHeight) continue;
+		if (!inBounds(m, nx, ny)) continue;
 		const nid = tileId(m, nx, ny);
 		const nd = m.baseReverseDistToDelivery[nid];
 		if (
