@@ -1,12 +1,24 @@
 import type { IOTile } from "@unitn-asa/deliveroo-js-sdk";
 
-// The 4 cardinal move offsets [dx, dy]. Shared across all BFS/SCC loops.
-const DIRS: [number, number][] = [
+// The 4 cardinal move offsets [dx, dy]. Exported for reuse in pathfinder.
+export const DIRS: [number, number][] = [
 	[1, 0],
 	[-1, 0],
 	[0, 1],
 	[0, -1],
 ];
+
+export const TILE = {
+	EMPTY: "0",
+	WALKABLE: "1",
+	DELIVERY: "2",
+	WALL: "5",
+	WALL_MOVING: "5!",
+	ARROW_R: "→",
+	ARROW_L: "←",
+	ARROW_U: "↑",
+	ARROW_D: "↓",
+} as const;
 
 export type StaticMap = {
 	tiles: Map<string, IOTile>;
@@ -49,7 +61,7 @@ export function setMap(m: StaticMap, tiles: IOTile[]): void {
 		if (t.x > maxX) maxX = t.x;
 		if (t.y > maxY) maxY = t.y;
 		m.tiles.set(`${t.x},${t.y}`, t);
-		if (t.type === "5!") m.hasMovingWalls = true;
+		if (t.type === TILE.WALL_MOVING) m.hasMovingWalls = true;
 	}
 
 	m.minX = minX === Infinity ? 0 : minX;
@@ -57,7 +69,8 @@ export function setMap(m: StaticMap, tiles: IOTile[]): void {
 	m.gridWidth = maxX === -Infinity ? 0 : maxX - minX + 1;
 	m.gridHeight = maxY === -Infinity ? 0 : maxY - minY + 1;
 
-	buildPrecompute(m);
+	const size = m.gridWidth * m.gridHeight;
+	if (size > 0) buildDeliveryBfs(m, size);
 }
 
 export function updateTile(m: StaticMap, tile: IOTile): void {
@@ -68,6 +81,16 @@ export function updateTile(m: StaticMap, tile: IOTile): void {
 /** Converts grid coordinates to a flat tile id for typed-array indexing. */
 export function tileId(m: StaticMap, x: number, y: number): number {
 	return (y - m.minY) * m.gridWidth + (x - m.minX);
+}
+
+/** Decodes a flat tile id back to grid coordinates. */
+export function idToXY(m: StaticMap, id: number): { x: number; y: number } {
+	return { x: (id % m.gridWidth) + m.minX, y: Math.floor(id / m.gridWidth) + m.minY };
+}
+
+/** Returns true if (x, y) is within the map bounding box. */
+export function inBounds(m: StaticMap, x: number, y: number): boolean {
+	return x >= m.minX && x < m.minX + m.gridWidth && y >= m.minY && y < m.minY + m.gridHeight;
 }
 
 /**
@@ -88,33 +111,24 @@ export function canMoveForward(
 	ty: number,
 ): boolean {
 	const to = m.tiles.get(`${tx},${ty}`);
-	if (!to || to.type === "0" || to.type === "5" || to.type === "5!")
+	if (!to || to.type === TILE.EMPTY || to.type === TILE.WALL || to.type === TILE.WALL_MOVING)
 		return false;
 	const from = m.tiles.get(`${fx},${fy}`);
-	if (!from || from.type === "0") return false;
+	if (!from || from.type === TILE.EMPTY) return false;
 
 	const dx = tx - fx,
 		dy = ty - fy;
 
 	// Entry restrictions: block the direction opposite to the arrow symbol.
-	if (to.type === "→" && dx === -1) return false;
-	if (to.type === "←" && dx === 1) return false;
-	if (to.type === "↓" && dy === 1) return false;
-	if (to.type === "↑" && dy === -1) return false;
+	if (to.type === TILE.ARROW_R && dx === -1) return false;
+	if (to.type === TILE.ARROW_L && dx === 1) return false;
+	if (to.type === TILE.ARROW_D && dy === 1) return false;
+	if (to.type === TILE.ARROW_U && dy === -1) return false;
 
 	return true;
 }
 
-// --- Internal precompute ---
-
-// Runs once at setMap. Fills deliveryTileIds and baseReverseDistToDelivery.
-function buildPrecompute(m: StaticMap): void {
-	const size = m.gridWidth * m.gridHeight;
-	if (size === 0) return;
-	buildDeliveryBfs(m, size);
-}
-
-// Multi-source reverse BFS from all delivery tiles.
+// Multi-source reverse BFS from all delivery tiles. Runs once at setMap.
 // "Reverse" means: instead of asking "can I reach a delivery from here?", we ask
 // "which tiles have a forward edge into the already-visited set?" — so a single BFS
 // from the delivery set fills the whole map in one pass instead of N separate BFS runs.
@@ -127,7 +141,7 @@ function buildDeliveryBfs(m: StaticMap, size: number): void {
 		tail = 0;
 
 	for (const [, t] of m.tiles) {
-		if (t.type === "2") {
+		if (t.type === TILE.DELIVERY) {
 			const id = tileId(m, t.x, t.y);
 			if (m.baseReverseDistToDelivery[id] === -1) {
 				m.deliveryTileIds.push(id);
