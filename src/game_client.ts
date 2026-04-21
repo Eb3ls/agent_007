@@ -62,7 +62,6 @@ export class GameClient {
 			setMap(this.staticMap, tiles);
 			this.logEvent("map", {
 				tilesCount: tiles.length,
-				hasDirectionalTiles: this.staticMap.hasDirectionalTiles,
 				hasMovingWalls: this.staticMap.hasMovingWalls,
 			});
 		});
