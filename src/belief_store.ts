@@ -20,6 +20,16 @@ export function createBeliefStore(): BeliefStore {
 	};
 }
 
+function markAbsentOutOfView<T extends { inView: boolean }>(
+	map: Map<string, T>,
+	sensed: { id: string }[],
+): void {
+	const inViewIds = new Set(sensed.map((e) => e.id));
+	for (const [id, entry] of map) {
+		if (entry.inView && !inViewIds.has(id)) entry.inView = false;
+	}
+}
+
 // Updates beliefs from a sensing event: marks in-view entities as authoritative,
 // marks previously in-view entities now absent as out-of-view.
 export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
@@ -34,23 +44,17 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 			inView: true,
 		});
 	}
-	for (const [id, p] of b.parcels) {
-		if (p.inView && !sensing.parcels.some((sp) => sp.id === id)) p.inView = false;
-	}
+	markAbsentOutOfView(b.parcels, sensing.parcels);
 
 	for (const a of sensing.agents) {
 		b.agents.set(a.id, { ...a, lastSeenAt: now, inView: true });
 	}
-	for (const [id, a] of b.agents) {
-		if (a.inView && !sensing.agents.some((sa) => sa.id === id)) a.inView = false;
-	}
+	markAbsentOutOfView(b.agents, sensing.agents);
 
 	for (const c of sensing.crates) {
 		b.crates.set(c.id, { ...c, lastSeenAt: now, inView: true });
 	}
-	for (const [id, c] of b.crates) {
-		if (c.inView && !sensing.crates.some((sc) => sc.id === id)) c.inView = false;
-	}
+	markAbsentOutOfView(b.crates, sensing.crates);
 }
 
 export function markAgentDisconnected(b: BeliefStore, agentId: string): void {
