@@ -1,7 +1,7 @@
 import type { IOAgent, IOCrate, IOParcel, IOSensing } from "@unitn-asa/deliveroo-js-sdk";
 
 export type ParcelBelief = IOParcel & { firstSeenAt: number; lastSeenAt: number; inView: boolean };
-export type AgentBelief = IOAgent & { lastSeenAt: number; inView: boolean };
+export type AgentBelief = IOAgent & { firstSeenAt: number; lastSeenAt: number; inView: boolean };
 export type CrateBelief = IOCrate & { lastSeenAt: number; inView: boolean };
 
 export type BeliefStore = {
@@ -47,7 +47,12 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 	markAbsentOutOfView(b.parcels, sensing.parcels);
 
 	for (const a of sensing.agents) {
-		b.agents.set(a.id, { ...a, lastSeenAt: now, inView: true });
+		b.agents.set(a.id, {
+			...a,
+			firstSeenAt: b.agents.get(a.id)?.firstSeenAt ?? now,
+			lastSeenAt: now,
+			inView: true,
+		});
 	}
 	markAbsentOutOfView(b.agents, sensing.agents);
 
