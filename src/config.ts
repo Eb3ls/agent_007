@@ -6,10 +6,6 @@ export const FALLBACK_OBSERVATION_DISTANCE = 5;
 export const PARCEL_TTL_MULT = 20;
 export const AGENT_TTL_MULT = 10;
 
-// Planner: keep a stationary agent "blocked" for ~3 ticks after leaving view
-// (breaks oscillation when an agent sits at the edge of sensing range)
-export const SHORT_BLOCK_TTL_MS = 300;
-
 // Probabilistic belief: expected number of steps before a competitor picks up
 // an out-of-view parcel. P_alive = exp(-age_steps / horizon). ~15 steps ≈ 1.5s.
 // PARCEL_TTL_MULT must be >> EXPECTED_STEAL_HORIZON_STEPS to avoid evicting parcels
