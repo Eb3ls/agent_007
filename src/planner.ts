@@ -146,6 +146,37 @@ export function pickBestParcelTarget(
 	return best;
 }
 
+export type CarryState = {
+	n: number;
+	rewards: number[];
+	nearestDeliveryDist: number;
+	ids: string[];
+};
+
+// Derives carry state from beliefs.parcels (authoritative for carriedBy + firstSeenAt).
+export function deriveCarryState(
+	parcels: Map<string, ParcelBelief>,
+	myId: string,
+	m: StaticMap,
+	bfs: BfsFromSelf,
+	decayMs: number,
+	now: number,
+): CarryState {
+	const ids: string[] = [];
+	const rewards: number[] = [];
+	for (const p of parcels.values()) {
+		if (p.carriedBy !== myId) continue;
+		ids.push(p.id);
+		rewards.push(currentReward(p, decayMs, now));
+	}
+	let nearestDeliveryDist = Infinity;
+	for (const did of m.deliveryTileIds) {
+		const d = bfs.dist[did];
+		if (d !== undefined && d !== -1 && d < nearestDeliveryDist) nearestDeliveryDist = d;
+	}
+	return { n: ids.length, rewards, nearestDeliveryDist, ids };
+}
+
 export function planStep(
 	m: StaticMap,
 	bfs: BfsFromSelf,

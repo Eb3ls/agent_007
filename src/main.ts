@@ -3,6 +3,7 @@ import { GameClient } from "./game_client.js";
 import { tileId } from "./static_map.js";
 import {
 	computeBlockedTiles,
+	deriveCarryState,
 	nearestOutOfViewSpawn,
 	parcelHere,
 	pickBestParcelTarget,
@@ -76,10 +77,8 @@ async function loop(): Promise<void> {
 		const blocked = computeBlockedTiles(m, gc.beliefs, movMs);
 		const bfs = bfsFromSelf(m, sx, sy, blocked);
 		const parcels = gc.perception.visibleParcels;
-
-		// Derive carrying from sensing: server sets carriedBy=myId on our parcels.
-		// If a parcel decays while carried it disappears from sensing → carrying becomes false automatically.
-		const carrying = [...parcels.values()].some((p) => p.carriedBy === myId);
+		const carry = deriveCarryState(gc.beliefs.parcels, myId, m, bfs, decayMs, Date.now());
+		const carrying = carry.n > 0;
 
 		if (shouldDrop(m, selfId, carrying)) {
 			const dropped = await gc.putdown();
