@@ -78,36 +78,6 @@ export function reconstructPath(
 	return path.reverse();
 }
 
-/** One greedy step toward nearest delivery using precomputed gradient. Returns null if already on delivery or unreachable. */
-export function gradientStepToDelivery(
-	m: StaticMap,
-	sx: number,
-	sy: number,
-): Direction | null {
-	if (!inBounds(m, sx, sy)) return null;
-
-	const sid = tileId(m, sx, sy);
-	const d = m.baseReverseDistToDelivery[sid];
-	if (d === undefined || d <= 0) return null;
-
-	for (const [dx, dy] of DIRS) {
-		const nx = sx + dx,
-			ny = sy + dy;
-		if (!inBounds(m, nx, ny)) continue;
-		const nid = tileId(m, nx, ny);
-		const nd = m.baseReverseDistToDelivery[nid];
-		if (
-			nd !== undefined &&
-			nd !== -1 &&
-			nd < d &&
-			canMoveForward(m, sx, sy, nx, ny)
-		) {
-			return directionOf(sx, sy, nx, ny);
-		}
-	}
-
-	return null;
-}
 
 function directionOf(
 	fx: number,
