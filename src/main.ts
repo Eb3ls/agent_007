@@ -73,6 +73,31 @@ function nearestDeliveryTile(
 	return bestId === -1 ? null : idToXY(m, bestId);
 }
 
+function nearestOutOfViewSpawn(
+	m: StaticMap,
+	bfs: BfsFromSelf,
+	sx: number,
+	sy: number,
+	observationDistance: number,
+): { x: number; y: number } | null {
+	let bestId = -1;
+	let bestCost = Infinity;
+	for (const sid of m.spawnTileIds) {
+		const sp = bfs.dist[sid];
+		if (sp === undefined || sp <= 0) continue;
+		const sd = m.baseReverseDistToDelivery[sid];
+		if (sd === undefined || sd === -1) continue;
+		const { x, y } = idToXY(m, sid);
+		if (Math.max(Math.abs(x - sx), Math.abs(y - sy)) <= observationDistance) continue;
+		const cost = sp + sd;
+		if (cost < bestCost) {
+			bestCost = cost;
+			bestId = sid;
+		}
+	}
+	return bestId === -1 ? null : idToXY(m, bestId);
+}
+
 function shouldDrop(m: StaticMap, selfId: number, carrying: boolean): boolean {
 	return carrying && m.baseReverseDistToDelivery[selfId] === 0;
 }
@@ -142,8 +167,13 @@ function planStep(
 	bfs: BfsFromSelf,
 	carrying: boolean,
 	target: IOParcel | null,
+	exploreTarget: { x: number; y: number } | null,
 ): Direction | null {
-	const dest = carrying ? nearestDeliveryTile(m, bfs) : target;
+	const dest = carrying
+		? nearestDeliveryTile(m, bfs)
+		: target
+			? { x: target.x, y: target.y }
+			: exploreTarget;
 	if (!dest) return null;
 	return reconstructPath(m, bfs, dest.x, dest.y)?.[0] ?? null;
 }
@@ -193,8 +223,11 @@ async function loop(): Promise<void> {
 			}
 		}
 
+		const obsDist = gc.config?.GAME.player.observation_distance ?? 5;
 		const target = carrying ? null : pickBestParcelTarget(m, bfs, gc.beliefs, decayMs, movMs);
-		const step = planStep(m, bfs, carrying, target);
+		const explore =
+			!carrying && !target ? nearestOutOfViewSpawn(m, bfs, sx, sy, obsDist) : null;
+		const step = planStep(m, bfs, carrying, target, explore);
 
 		if (!step) {
 			console.log(
