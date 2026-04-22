@@ -4,10 +4,6 @@ export type ParcelBelief = IOParcel & { firstSeenAt: number; lastSeenAt: number;
 export type AgentBelief = IOAgent & { lastSeenAt: number; inView: boolean };
 export type CrateBelief = IOCrate & { lastSeenAt: number; inView: boolean };
 
-// TTL policy: how many movement_duration units an entity is kept after going out-of-view.
-export const PARCEL_TTL_MULT = 20;
-export const AGENT_TTL_MULT = 10;
-
 export type BeliefStore = {
 	parcels: Map<string, ParcelBelief>;
 	agents: Map<string, AgentBelief>;

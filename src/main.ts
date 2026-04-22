@@ -3,6 +3,15 @@ import { GameClient } from "./game_client.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
 import type { BeliefStore, ParcelBelief } from "./belief_store.js";
 import type { IOParcel } from "@unitn-asa/deliveroo-js-sdk";
+import {
+	FALLBACK_MOVEMENT_DURATION_MS,
+	FALLBACK_OBSERVATION_DISTANCE,
+	NO_STEP_WAIT_MS,
+	POST_ACTION_WAIT_MS,
+	READY_POLL_MS,
+	SHORT_BLOCK_TTL_MS,
+	parseDecayInterval,
+} from "./config.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -35,13 +44,9 @@ async function waitForReady(): Promise<{ id: string; x: number; y: number }> {
 		) {
 			return { id: self.id, x: self.x, y: self.y };
 		}
-		await sleep(50);
+		await sleep(READY_POLL_MS);
 	}
 }
-
-// Short TTL keeps an agent "blocked" for ~3 ticks after it leaves view — breaks oscillation
-// when a stationary agent sits at the edge of sensing range (deviate → lose view → revert → repeat).
-const SHORT_BLOCK_TTL_MS = 300;
 
 function computeBlockedTiles(m: StaticMap, beliefs: BeliefStore): Set<number> {
 	const blocked = new Set<number>();
@@ -111,15 +116,6 @@ function parcelHere(
 		if (p.x === sx && p.y === sy && !p.carriedBy) return p;
 	}
 	return undefined;
-}
-
-function parseDecayInterval(s: string | undefined): number {
-	if (!s || s === "infinite" || s === "0") return Infinity;
-	const ms = s.match(/^(\d+)ms$/);
-	if (ms) return parseInt(ms[1]!, 10);
-	const sec = s.match(/^(\d+)s$/);
-	if (sec) return parseInt(sec[1]!, 10) * 1000;
-	return Infinity;
 }
 
 function currentReward(p: ParcelBelief, decayIntervalMs: number, now: number): number {
@@ -197,7 +193,7 @@ async function loop(): Promise<void> {
 	while (true) {
 		const selfId = tileId(m, sx, sy);
 		const decayMs = parseDecayInterval(gc.config?.GAME.parcels.decaying_event);
-		const movMs = gc.config?.GAME.player.movement_duration ?? 100;
+		const movMs = gc.config?.GAME.player.movement_duration ?? FALLBACK_MOVEMENT_DURATION_MS;
 		const blocked = computeBlockedTiles(m, gc.beliefs);
 		const bfs = bfsFromSelf(m, sx, sy, blocked);
 		const parcels = gc.perception.visibleParcels;
@@ -209,7 +205,7 @@ async function loop(): Promise<void> {
 		if (shouldDrop(m, selfId, carrying)) {
 			const dropped = await gc.putdown();
 			console.log(`[putdown] dropped=${dropped.length}`);
-			await sleep(300); // wait for sensing update before next cycle
+			await sleep(POST_ACTION_WAIT_MS);
 			continue;
 		}
 
@@ -218,12 +214,12 @@ async function loop(): Promise<void> {
 			if (here) {
 				const picked = await gc.pickup();
 				console.log(`[pickup] picked=${picked.length}`);
-				await sleep(300); // wait for sensing update before next cycle
+				await sleep(POST_ACTION_WAIT_MS);
 				continue;
 			}
 		}
 
-		const obsDist = gc.config?.GAME.player.observation_distance ?? 5;
+		const obsDist = gc.config?.GAME.player.observation_distance ?? FALLBACK_OBSERVATION_DISTANCE;
 		const target = carrying ? null : pickBestParcelTarget(m, bfs, gc.beliefs, decayMs, movMs);
 		const explore =
 			!carrying && !target ? nearestOutOfViewSpawn(m, bfs, sx, sy, obsDist) : null;
@@ -233,7 +229,7 @@ async function loop(): Promise<void> {
 			console.log(
 				`[wait] no step — carrying=${carrying} distToDelivery=${m.baseReverseDistToDelivery[selfId]} pos=(${sx},${sy})`,
 			);
-			await sleep(200);
+			await sleep(NO_STEP_WAIT_MS);
 			continue;
 		}
 
@@ -243,7 +239,7 @@ async function loop(): Promise<void> {
 			sy = result.y;
 			console.log(`[move] ${step} → ok@(${sx},${sy})`);
 		} else {
-			const waitMs = gc.config?.GAME.player.movement_duration ?? 100;
+			const waitMs = gc.config?.GAME.player.movement_duration ?? FALLBACK_MOVEMENT_DURATION_MS;
 			console.log(`[move] ${step} → FAILED (wait ${waitMs}ms)`);
 			await sleep(waitMs);
 		}
