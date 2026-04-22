@@ -1,12 +1,11 @@
 import {
-	AGENT_TTL_MULT,
-	PARCEL_TTL_MULT,
 	createBeliefStore,
 	evictStale,
 	markAgentDisconnected,
 	updateFromSensing,
 	type BeliefStore,
 } from "./belief_store.js";
+import { AGENT_TTL_MULT, PARCEL_TTL_MULT } from "./config.js";
 import {
 	createPerception,
 	setSelf,
