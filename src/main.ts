@@ -73,7 +73,7 @@ async function loop(): Promise<void> {
 		const selfId = tileId(m, sx, sy);
 		const decayMs = parseDecayInterval(gc.config?.GAME.parcels.decaying_event);
 		const movMs = gc.config?.GAME.player.movement_duration ?? FALLBACK_MOVEMENT_DURATION_MS;
-		const blocked = computeBlockedTiles(m, gc.beliefs);
+		const blocked = computeBlockedTiles(m, gc.beliefs, movMs);
 		const bfs = bfsFromSelf(m, sx, sy, blocked);
 		const parcels = gc.perception.visibleParcels;
 

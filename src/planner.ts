@@ -2,7 +2,7 @@ import { reconstructPath, type BfsFromSelf, type Direction } from "./pathfinder.
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
 import type { AgentBelief, BeliefStore, ParcelBelief } from "./belief_store.js";
 import type { IOParcel } from "@unitn-asa/deliveroo-js-sdk";
-import { SHORT_BLOCK_TTL_MS } from "./config.js";
+import { AGENT_GRACE_STEPS, EXPECTED_STEAL_HORIZON_STEPS } from "./config.js";
 
 export function isAgentBlocking(
 	a: AgentBelief,
@@ -15,11 +15,16 @@ export function isAgentBlocking(
 	return ageSteps <= graceSteps;
 }
 
-export function computeBlockedTiles(m: StaticMap, beliefs: BeliefStore): Set<number> {
+export function computeBlockedTiles(
+	m: StaticMap,
+	beliefs: BeliefStore,
+	movMs: number,
+	graceSteps: number = AGENT_GRACE_STEPS,
+): Set<number> {
 	const blocked = new Set<number>();
 	const now = Date.now();
 	for (const a of beliefs.agents.values()) {
-		if (!a.inView && now - a.lastSeenAt > SHORT_BLOCK_TTL_MS) continue;
+		if (!isAgentBlocking(a, movMs, graceSteps, now)) continue;
 		if (a.x === undefined || a.y === undefined) continue;
 		const ax = Math.round(a.x);
 		const ay = Math.round(a.y);
@@ -112,6 +117,7 @@ export function pickBestParcelTarget(
 	beliefs: BeliefStore,
 	decayIntervalMs: number,
 	movementDurationMs: number,
+	stealHorizonSteps: number = EXPECTED_STEAL_HORIZON_STEPS,
 ): IOParcel | null {
 	const now = Date.now();
 	const decayPerStep = Number.isFinite(decayIntervalMs)
@@ -121,14 +127,13 @@ export function pickBestParcelTarget(
 	let bestUtility = -Infinity;
 	let bestSp = Infinity;
 	for (const p of beliefs.parcels.values()) {
-		if (!p.inView) continue;
 		if (p.carriedBy) continue;
 		const pid = tileId(m, p.x, p.y);
 		const sp = bfs.dist[pid];
 		if (sp === undefined || sp === -1) continue;
 		const sd = m.baseReverseDistToDelivery[pid];
 		if (sd === undefined || sd === -1) continue;
-		const reward = currentReward(p, decayIntervalMs, now);
+		const reward = expectedReward(p, decayIntervalMs, movementDurationMs, stealHorizonSteps, now);
 		if (reward <= 0) continue;
 		const utility = reward - decayPerStep * (sp + sd);
 		if (utility <= 0) continue;
