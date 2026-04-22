@@ -1,8 +1,19 @@
 import { reconstructPath, type BfsFromSelf, type Direction } from "./pathfinder.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
-import type { BeliefStore, ParcelBelief } from "./belief_store.js";
+import type { AgentBelief, BeliefStore, ParcelBelief } from "./belief_store.js";
 import type { IOParcel } from "@unitn-asa/deliveroo-js-sdk";
 import { SHORT_BLOCK_TTL_MS } from "./config.js";
+
+export function isAgentBlocking(
+	a: AgentBelief,
+	movMs: number,
+	graceSteps: number,
+	now: number,
+): boolean {
+	if (a.inView) return true;
+	const ageSteps = (now - a.lastSeenAt) / movMs;
+	return ageSteps <= graceSteps;
+}
 
 export function computeBlockedTiles(m: StaticMap, beliefs: BeliefStore): Set<number> {
 	const blocked = new Set<number>();
@@ -77,6 +88,22 @@ export function parcelHere(
 export function currentReward(p: ParcelBelief, decayIntervalMs: number, now: number): number {
 	if (!Number.isFinite(decayIntervalMs)) return p.reward;
 	return p.reward - Math.floor((now - p.firstSeenAt) / decayIntervalMs);
+}
+
+// Expected reward accounting for probabilistic availability: in-view parcels are
+// certain; out-of-view parcels are discounted by P_alive = exp(-age/horizon).
+export function expectedReward(
+	p: ParcelBelief,
+	decayMs: number,
+	movMs: number,
+	stealHorizonSteps: number,
+	now: number,
+): number {
+	const base = currentReward(p, decayMs, now);
+	if (base <= 0) return 0;
+	if (p.inView) return base;
+	const ageSteps = (now - p.lastSeenAt) / movMs;
+	return base * Math.exp(-ageSteps / stealHorizonSteps);
 }
 
 export function pickBestParcelTarget(

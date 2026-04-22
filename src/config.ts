@@ -10,6 +10,16 @@ export const AGENT_TTL_MULT = 10;
 // (breaks oscillation when an agent sits at the edge of sensing range)
 export const SHORT_BLOCK_TTL_MS = 300;
 
+// Probabilistic belief: expected number of steps before a competitor picks up
+// an out-of-view parcel. P_alive = exp(-age_steps / horizon). ~15 steps ≈ 1.5s.
+// PARCEL_TTL_MULT must be >> EXPECTED_STEAL_HORIZON_STEPS to avoid evicting parcels
+// before P_alive has decayed to near-zero (~3× is the practical minimum).
+export const EXPECTED_STEAL_HORIZON_STEPS = 15;
+
+// Grace window: keep an out-of-view agent's tile hard-blocked for this many steps.
+// Replaces SHORT_BLOCK_TTL_MS once commit C lands. ~3 steps @ 100ms/step.
+export const AGENT_GRACE_STEPS = 3;
+
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
 export const POST_ACTION_WAIT_MS = 300; // wait for sensing update after pickup/putdown
