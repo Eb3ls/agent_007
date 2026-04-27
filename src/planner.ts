@@ -95,12 +95,12 @@ export function shouldDrop(
 }
 
 export function parcelHere(
-	parcels: Map<string, IOParcel>,
+	parcels: Map<string, ParcelBelief>,
 	sx: number,
 	sy: number,
-): IOParcel | undefined {
+): ParcelBelief | undefined {
 	for (const p of parcels.values()) {
-		if (p.x === sx && p.y === sy && !p.carriedBy) return p;
+		if (p.inView && p.x === sx && p.y === sy && !p.carriedBy) return p;
 	}
 	return undefined;
 }

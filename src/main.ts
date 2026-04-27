@@ -5,7 +5,6 @@ import {
 	FALLBACK_MOVEMENT_DURATION_MS,
 	FALLBACK_OBSERVATION_DISTANCE,
 	NO_STEP_WAIT_MS,
-	POST_ACTION_WAIT_MS,
 	READY_POLL_MS,
 	parseDecayInterval,
 } from "./config.js";
@@ -22,6 +21,10 @@ import {
 	shouldDrop,
 	shouldReplan,
 } from "./planner.js";
+import {
+	applyPickupResult,
+	applyPutdownResult,
+} from "./belief_store.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
 import { tileId } from "./static_map.js";
@@ -94,7 +97,6 @@ async function loop(): Promise<void> {
 		const selfId = tileId(map, sx, sy);
 		const blocked = computeBlockedTiles(map, gc.beliefs, movMs);
 		const bfs = bfsFromSelf(map, sx, sy, blocked);
-		const parcels = gc.perception.visibleParcels;
 		const carry = deriveCarryState(
 			gc.beliefs.parcels,
 			myId,
@@ -107,17 +109,17 @@ async function loop(): Promise<void> {
 
 		if (shouldDrop(map, selfId, carrying)) {
 			const dropped = await gc.putdown();
+			applyPutdownResult(gc.beliefs, dropped);
 			console.log(`[putdown] dropped=${dropped.length}`);
-			await sleep(POST_ACTION_WAIT_MS);
 			continue;
 		}
 
 		if (!carrying) {
-			const here = parcelHere(parcels, sx, sy);
+			const here = parcelHere(gc.beliefs.parcels, sx, sy);
 			if (here) {
 				const picked = await gc.pickup();
+				applyPickupResult(gc.beliefs, picked, myId);
 				console.log(`[pickup] picked=${picked.length}`);
-				await sleep(POST_ACTION_WAIT_MS);
 				continue;
 			}
 		}
