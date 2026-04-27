@@ -1,4 +1,7 @@
 import {
+	DETOUR_UTILITY_EPSILON,
+	EXPECTED_STEAL_HORIZON_STEPS,
+	FALLBACK_AGENT_CAPACITY,
 	FALLBACK_MOVEMENT_DURATION_MS,
 	FALLBACK_OBSERVATION_DISTANCE,
 	NO_STEP_WAIT_MS,
@@ -11,6 +14,7 @@ import {
 	deriveCarryState,
 	nearestOutOfViewSpawn,
 	parcelHere,
+	pickBestDetourTarget,
 	pickBestParcelTarget,
 	planStep,
 	shouldDrop,
@@ -113,14 +117,29 @@ async function loop(): Promise<void> {
 			}
 		}
 
+		const capacity =
+			gc.config?.GAME.player.capacity ?? FALLBACK_AGENT_CAPACITY;
 		const target = carrying
 			? null
 			: pickBestParcelTarget(map, bfs, gc.beliefs, decayMs, movMs);
+		const detour = carrying
+			? pickBestDetourTarget(
+					map,
+					bfs,
+					gc.beliefs,
+					carry,
+					decayMs,
+					movMs,
+					EXPECTED_STEAL_HORIZON_STEPS,
+					capacity,
+					DETOUR_UTILITY_EPSILON,
+				)
+			: null;
 		const explore =
 			!carrying && !target
 				? nearestOutOfViewSpawn(map, bfs, sx, sy, obsDist)
 				: null;
-		const step = planStep(map, bfs, carrying, target, explore);
+		const step = planStep(map, bfs, carrying, target, detour, explore);
 
 		if (!step) {
 			console.log(
