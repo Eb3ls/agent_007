@@ -16,6 +16,10 @@ export const EXPECTED_STEAL_HORIZON_STEPS = 15;
 // Replaces SHORT_BLOCK_TTL_MS once commit C lands. ~3 steps @ 100ms/step.
 export const AGENT_GRACE_STEPS = 3;
 
+// Multi-parcel detour: capacity fallback and minimum surplus to commit a detour.
+export const FALLBACK_AGENT_CAPACITY = 5;
+export const DETOUR_UTILITY_EPSILON = 1;
+
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
 export const POST_ACTION_WAIT_MS = 300; // wait for sensing update after pickup/putdown

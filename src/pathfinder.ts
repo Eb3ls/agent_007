@@ -1,4 +1,11 @@
-import { DIRS, canMoveForward, idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
+import {
+	DIRS,
+	canMoveForward,
+	idToXY,
+	inBounds,
+	tileId,
+	type StaticMap,
+} from "./static_map.js";
 
 export type Direction = "up" | "down" | "left" | "right";
 
@@ -77,7 +84,6 @@ export function reconstructPath(
 
 	return path.reverse();
 }
-
 
 function directionOf(
 	fx: number,
