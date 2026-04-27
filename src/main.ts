@@ -10,8 +10,10 @@ import {
 	parseDecayInterval,
 } from "./config.js";
 import {
+	type Intention,
 	computeBlockedTiles,
 	deriveCarryState,
+	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
 	parcelHere,
 	pickBestDetourTarget,
@@ -85,6 +87,8 @@ async function loop(): Promise<void> {
 		gc.config?.GAME.player.movement_duration ??
 		FALLBACK_MOVEMENT_DURATION_MS;
 
+	let intention: Intention | null = null;
+
 	while (true) {
 		const selfId = tileId(map, sx, sy);
 		const blocked = computeBlockedTiles(map, gc.beliefs, movMs);
@@ -139,6 +143,22 @@ async function loop(): Promise<void> {
 			!carrying && !target
 				? nearestOutOfViewSpawn(map, bfs, sx, sy, obsDist)
 				: null;
+
+		// Build candidate intention; H: always adopt (always replan, behaviour unchanged).
+		const now = Date.now();
+		let candidate: Intention | null = null;
+		if (carrying && detour) {
+			candidate = { kind: "detour", targetId: detour.id, targetXY: { x: detour.x, y: detour.y }, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+		} else if (carrying) {
+			const del = nearestDeliveryTile(map, bfs);
+			if (del) candidate = { kind: "deliver", targetXY: del, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+		} else if (target) {
+			candidate = { kind: "pickup", targetId: target.id, targetXY: { x: target.x, y: target.y }, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+		} else if (explore) {
+			candidate = { kind: "explore", targetXY: explore, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+		}
+		intention = candidate;
+
 		const step = planStep(map, bfs, carrying, target, detour, explore);
 
 		if (!step) {
