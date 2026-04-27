@@ -91,13 +91,11 @@ export function applyPickupResult(
 	}
 }
 
-// Removes dropped/delivered parcels from beliefs immediately (before next sensing).
-export function applyPutdownResult(
-	b: BeliefStore,
-	droppedIds: { id: string }[],
-): void {
-	for (const { id } of droppedIds) {
-		b.parcels.delete(id);
+// Clears all parcels believed carried by myId — call after putdown on delivery tile
+// to avoid belief lag when the server returns an empty ack (timing/sensing race).
+export function applyDelivery(b: BeliefStore, myId: string): void {
+	for (const [id, p] of b.parcels) {
+		if (p.carriedBy === myId) b.parcels.delete(id);
 	}
 }
 

@@ -75,6 +75,7 @@ export class GameClient {
 				decayingEvent: cfg.GAME.parcels.decaying_event,
 				capacity: cfg.GAME.player.capacity,
 			});
+			this.config.GAME.player.capacity = 100;
 		});
 
 		this.api.onMap((width, height, tiles) => {
