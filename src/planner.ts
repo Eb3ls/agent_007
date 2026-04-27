@@ -4,7 +4,13 @@ import {
 	type Direction,
 } from "./pathfinder.js";
 import type { AgentBelief, BeliefStore, ParcelBelief } from "./belief_store.js";
-import { AGENT_GRACE_STEPS, EXPECTED_STEAL_HORIZON_STEPS } from "./config.js";
+import {
+	AGENT_GRACE_STEPS,
+	EXPECTED_STEAL_HORIZON_STEPS,
+	INTENTION_MAX_AGE_STEPS,
+	INTENTION_UTILITY_EPSILON,
+	MAX_MOVE_FAIL_STREAK,
+} from "./config.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
 import type { IOParcel } from "@unitn-asa/deliveroo-js-sdk";
 
@@ -274,4 +280,61 @@ export function planStep(
 	}
 	if (!dest) return null;
 	return reconstructPath(map, bfs, dest.x, dest.y)?.[0] ?? null;
+}
+
+export type Intention = {
+	kind: "deliver" | "pickup" | "detour" | "explore";
+	targetId?: string;
+	targetXY: { x: number; y: number };
+	expectedUtility: number;
+	committedAt: number;
+	moveFailStreak: number;
+};
+
+// Returns true when the agent should abandon current intention and replan.
+export function shouldReplan(
+	current: Intention | null,
+	candidate: Intention | null,
+	beliefs: BeliefStore,
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	sx: number,
+	sy: number,
+	now: number,
+	movMs: number,
+): boolean {
+	if (!current) return true;
+
+	// Reached target
+	if (sx === current.targetXY.x && sy === current.targetXY.y) return true;
+
+	// Safety timeout
+	const ageSteps = (now - current.committedAt) / movMs;
+	if (ageSteps >= INTENTION_MAX_AGE_STEPS) return true;
+
+	// Too many consecutive move failures
+	if (current.moveFailStreak >= MAX_MOVE_FAIL_STREAK) return true;
+
+	// Target tile unreachable via BFS
+	const targetTileId = tileId(map, current.targetXY.x, current.targetXY.y);
+	if (bfs.dist[targetTileId] === -1) return true;
+
+	// For pickup/detour: parcel gone or carried by someone else
+	if (
+		(current.kind === "pickup" || current.kind === "detour") &&
+		current.targetId
+	) {
+		const p = beliefs.parcels.get(current.targetId);
+		if (!p || p.carriedBy) return true;
+	}
+
+	// Better candidate appears
+	if (
+		candidate &&
+		candidate.expectedUtility >
+			current.expectedUtility + INTENTION_UTILITY_EPSILON
+	)
+		return true;
+
+	return false;
 }
