@@ -27,7 +27,6 @@ export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms
 
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
-export const POST_ACTION_WAIT_MS = 0; // was 300ms; now belief-synced locally after action
 export const NO_STEP_WAIT_MS = 200; // no plan available → retry
 
 /** Parses Deliveroo decaying_event string ("infinite", "0", "500ms", "5s") into ms. */

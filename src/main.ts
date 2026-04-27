@@ -1,14 +1,4 @@
 import {
-	DETOUR_UTILITY_EPSILON,
-	EXPECTED_STEAL_HORIZON_STEPS,
-	FALLBACK_AGENT_CAPACITY,
-	FALLBACK_MOVEMENT_DURATION_MS,
-	FALLBACK_OBSERVATION_DISTANCE,
-	NO_STEP_WAIT_MS,
-	READY_POLL_MS,
-	parseDecayInterval,
-} from "./config.js";
-import {
 	type Intention,
 	computeBlockedTiles,
 	deriveCarryState,
@@ -22,9 +12,16 @@ import {
 	shouldReplan,
 } from "./planner.js";
 import {
-	applyPickupResult,
-	applyPutdownResult,
-} from "./belief_store.js";
+	DETOUR_UTILITY_EPSILON,
+	EXPECTED_STEAL_HORIZON_STEPS,
+	FALLBACK_AGENT_CAPACITY,
+	FALLBACK_MOVEMENT_DURATION_MS,
+	FALLBACK_OBSERVATION_DISTANCE,
+	NO_STEP_WAIT_MS,
+	READY_POLL_MS,
+	parseDecayInterval,
+} from "./config.js";
+import { applyDelivery, applyPickupResult } from "./belief_store.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
 import { tileId } from "./static_map.js";
@@ -109,19 +106,17 @@ async function loop(): Promise<void> {
 
 		if (shouldDrop(map, selfId, carrying)) {
 			const dropped = await gc.putdown();
-			applyPutdownResult(gc.beliefs, dropped);
-			console.log(`[putdown] dropped=${dropped.length}`);
+			applyDelivery(gc.beliefs, myId);
+			console.log(`[deliver] putdown=${dropped.length} cleared=${carry.n}`);
 			continue;
 		}
 
-		if (!carrying) {
-			const here = parcelHere(gc.beliefs.parcels, sx, sy);
-			if (here) {
-				const picked = await gc.pickup();
-				applyPickupResult(gc.beliefs, picked, myId);
-				console.log(`[pickup] picked=${picked.length}`);
-				continue;
-			}
+		const here = parcelHere(gc.beliefs.parcels, sx, sy);
+		if (here) {
+			const picked = await gc.pickup();
+			applyPickupResult(gc.beliefs, picked, myId);
+			console.log(`[pickup] picked=${picked.length}`);
+			continue;
 		}
 
 		const capacity =
@@ -151,26 +146,80 @@ async function loop(): Promise<void> {
 		const now = Date.now();
 		let candidate: Intention | null = null;
 		if (carrying && detour) {
-			candidate = { kind: "detour", targetId: detour.id, targetXY: { x: detour.x, y: detour.y }, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+			candidate = {
+				kind: "detour",
+				targetId: detour.id,
+				targetXY: { x: detour.x, y: detour.y },
+				expectedUtility: 0,
+				committedAt: now,
+				moveFailStreak: 0,
+			};
 		} else if (carrying) {
 			const del = nearestDeliveryTile(map, bfs);
-			if (del) candidate = { kind: "deliver", targetXY: del, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+			if (del)
+				candidate = {
+					kind: "deliver",
+					targetXY: del,
+					expectedUtility: 0,
+					committedAt: now,
+					moveFailStreak: 0,
+				};
 		} else if (target) {
-			candidate = { kind: "pickup", targetId: target.id, targetXY: { x: target.x, y: target.y }, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+			candidate = {
+				kind: "pickup",
+				targetId: target.id,
+				targetXY: { x: target.x, y: target.y },
+				expectedUtility: 0,
+				committedAt: now,
+				moveFailStreak: 0,
+			};
 		} else if (explore) {
-			candidate = { kind: "explore", targetXY: explore, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+			candidate = {
+				kind: "explore",
+				targetXY: explore,
+				expectedUtility: 0,
+				committedAt: now,
+				moveFailStreak: 0,
+			};
 		}
 
-		const replanning = shouldReplan(intention, candidate, gc.beliefs, map, bfs, sx, sy, now, movMs);
+		const replanning = shouldReplan(
+			intention,
+			candidate,
+			gc.beliefs,
+			map,
+			bfs,
+			sx,
+			sy,
+			now,
+			movMs,
+		);
 		if (replanning) {
-			intention = candidate ? { ...candidate, committedAt: now, moveFailStreak: 0 } : null;
-			if (intention) console.log(`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`);
+			intention = candidate
+				? { ...candidate, committedAt: now, moveFailStreak: 0 }
+				: null;
+			if (intention)
+				console.log(
+					`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`,
+				);
 		} else {
-			if (intention) console.log(`[intent] keep kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movMs)}steps fails=${intention.moveFailStreak}`);
+			if (intention)
+				console.log(
+					`[intent] keep kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movMs)}steps fails=${intention.moveFailStreak}`,
+				);
 		}
 
-		const commitTarget = !replanning && intention ? intention.targetXY : null;
-		const step = planStep(map, bfs, carrying, target, detour, explore, commitTarget);
+		const commitTarget =
+			!replanning && intention ? intention.targetXY : null;
+		const step = planStep(
+			map,
+			bfs,
+			carrying,
+			target,
+			detour,
+			explore,
+			commitTarget,
+		);
 
 		if (!step) {
 			console.log(
