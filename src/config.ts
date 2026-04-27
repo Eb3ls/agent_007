@@ -20,6 +20,11 @@ export const AGENT_GRACE_STEPS = 3;
 export const FALLBACK_AGENT_CAPACITY = 5;
 export const DETOUR_UTILITY_EPSILON = 1;
 
+// Intention layer: thresholds for path commitment and forced replan.
+export const INTENTION_UTILITY_EPSILON = 2; // must be > DETOUR_UTILITY_EPSILON to avoid flicker
+export const MAX_MOVE_FAIL_STREAK = 3;
+export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms
+
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
 export const POST_ACTION_WAIT_MS = 300; // wait for sensing update after pickup/putdown
