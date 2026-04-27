@@ -75,6 +75,32 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 	markAbsentOutOfView(b.crates, sensing.crates);
 }
 
+// Marks picked-up parcels as carried by myId immediately (before next sensing).
+export function applyPickupResult(
+	b: BeliefStore,
+	pickedIds: { id: string }[],
+	myId: string,
+): void {
+	const now = Date.now();
+	for (const { id } of pickedIds) {
+		const p = b.parcels.get(id);
+		if (p) {
+			p.carriedBy = myId;
+			p.lastSeenAt = now;
+		}
+	}
+}
+
+// Removes dropped/delivered parcels from beliefs immediately (before next sensing).
+export function applyPutdownResult(
+	b: BeliefStore,
+	droppedIds: { id: string }[],
+): void {
+	for (const { id } of droppedIds) {
+		b.parcels.delete(id);
+	}
+}
+
 export function markAgentDisconnected(b: BeliefStore, agentId: string): void {
 	b.disconnected.add(agentId);
 	b.agents.delete(agentId);
