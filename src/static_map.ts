@@ -93,12 +93,20 @@ export function tileId(m: StaticMap, x: number, y: number): number {
 
 /** Decodes a flat tile id back to grid coordinates. */
 export function idToXY(m: StaticMap, id: number): { x: number; y: number } {
-	return { x: (id % m.gridWidth) + m.minX, y: Math.floor(id / m.gridWidth) + m.minY };
+	return {
+		x: (id % m.gridWidth) + m.minX,
+		y: Math.floor(id / m.gridWidth) + m.minY,
+	};
 }
 
 /** Returns true if (x, y) is within the map bounding box. */
 export function inBounds(m: StaticMap, x: number, y: number): boolean {
-	return x >= m.minX && x < m.minX + m.gridWidth && y >= m.minY && y < m.minY + m.gridHeight;
+	return (
+		x >= m.minX &&
+		x < m.minX + m.gridWidth &&
+		y >= m.minY &&
+		y < m.minY + m.gridHeight
+	);
 }
 
 /**
@@ -119,7 +127,12 @@ export function canMoveForward(
 	ty: number,
 ): boolean {
 	const to = m.tiles.get(`${tx},${ty}`);
-	if (!to || to.type === TILE.EMPTY || to.type === TILE.WALL || to.type === TILE.WALL_MOVING)
+	if (
+		!to ||
+		to.type === TILE.EMPTY ||
+		to.type === TILE.WALL ||
+		to.type === TILE.WALL_MOVING
+	)
 		return false;
 	const from = m.tiles.get(`${fx},${fy}`);
 	if (!from || from.type === TILE.EMPTY) return false;

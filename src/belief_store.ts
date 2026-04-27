@@ -1,7 +1,20 @@
-import type { IOAgent, IOCrate, IOParcel, IOSensing } from "@unitn-asa/deliveroo-js-sdk";
+import type {
+	IOAgent,
+	IOCrate,
+	IOParcel,
+	IOSensing,
+} from "@unitn-asa/deliveroo-js-sdk";
 
-export type ParcelBelief = IOParcel & { firstSeenAt: number; lastSeenAt: number; inView: boolean };
-export type AgentBelief = IOAgent & { firstSeenAt: number; lastSeenAt: number; inView: boolean };
+export type ParcelBelief = IOParcel & {
+	firstSeenAt: number;
+	lastSeenAt: number;
+	inView: boolean;
+};
+export type AgentBelief = IOAgent & {
+	firstSeenAt: number;
+	lastSeenAt: number;
+	inView: boolean;
+};
 export type CrateBelief = IOCrate & { lastSeenAt: number; inView: boolean };
 
 export type BeliefStore = {
@@ -68,7 +81,11 @@ export function markAgentDisconnected(b: BeliefStore, agentId: string): void {
 }
 
 // Drops beliefs older than the given TTL in ms.
-export function evictStale(b: BeliefStore, parcelTtlMs: number, agentTtlMs: number): void {
+export function evictStale(
+	b: BeliefStore,
+	parcelTtlMs: number,
+	agentTtlMs: number,
+): void {
 	const now = Date.now();
 	for (const [id, p] of b.parcels) {
 		if (!p.inView && now - p.lastSeenAt > parcelTtlMs) b.parcels.delete(id);

@@ -1,6 +1,11 @@
-import { bfsFromSelf } from "./pathfinder.js";
-import { GameClient } from "./game_client.js";
-import { tileId } from "./static_map.js";
+import {
+	FALLBACK_MOVEMENT_DURATION_MS,
+	FALLBACK_OBSERVATION_DISTANCE,
+	NO_STEP_WAIT_MS,
+	POST_ACTION_WAIT_MS,
+	READY_POLL_MS,
+	parseDecayInterval,
+} from "./config.js";
 import {
 	computeBlockedTiles,
 	deriveCarryState,
@@ -10,14 +15,9 @@ import {
 	planStep,
 	shouldDrop,
 } from "./planner.js";
-import {
-	FALLBACK_MOVEMENT_DURATION_MS,
-	FALLBACK_OBSERVATION_DISTANCE,
-	NO_STEP_WAIT_MS,
-	POST_ACTION_WAIT_MS,
-	READY_POLL_MS,
-	parseDecayInterval,
-} from "./config.js";
+import { GameClient } from "./game_client.js";
+import { bfsFromSelf } from "./pathfinder.js";
+import { tileId } from "./static_map.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -64,23 +64,39 @@ async function loop(): Promise<void> {
 	let sx = startX,
 		sy = startY;
 
-	const m = gc.staticMap;
+	const map = gc.staticMap;
 	console.log(
-		`[map] tiles=${m.tiles.size} | delivery_zones=${m.deliveryTileIds.length}`,
+		`[map] tiles=${map.tiles.size} | delivery_zones=${map.deliveryTileIds.length}`,
 	);
 	console.log(`[main] starting loop at (${sx},${sy})`);
 
+	const decayMs = parseDecayInterval(gc.config?.GAME.parcels.decaying_event);
+	const movMs =
+		gc.config?.GAME.player.movement_duration ??
+		FALLBACK_MOVEMENT_DURATION_MS;
+	const obsDist =
+		gc.config?.GAME.player.observation_distance ??
+		FALLBACK_OBSERVATION_DISTANCE;
+	const waitMs =
+		gc.config?.GAME.player.movement_duration ??
+		FALLBACK_MOVEMENT_DURATION_MS;
+
 	while (true) {
-		const selfId = tileId(m, sx, sy);
-		const decayMs = parseDecayInterval(gc.config?.GAME.parcels.decaying_event);
-		const movMs = gc.config?.GAME.player.movement_duration ?? FALLBACK_MOVEMENT_DURATION_MS;
-		const blocked = computeBlockedTiles(m, gc.beliefs, movMs);
-		const bfs = bfsFromSelf(m, sx, sy, blocked);
+		const selfId = tileId(map, sx, sy);
+		const blocked = computeBlockedTiles(map, gc.beliefs, movMs);
+		const bfs = bfsFromSelf(map, sx, sy, blocked);
 		const parcels = gc.perception.visibleParcels;
-		const carry = deriveCarryState(gc.beliefs.parcels, myId, m, bfs, decayMs, Date.now());
+		const carry = deriveCarryState(
+			gc.beliefs.parcels,
+			myId,
+			map,
+			bfs,
+			decayMs,
+			Date.now(),
+		);
 		const carrying = carry.n > 0;
 
-		if (shouldDrop(m, selfId, carrying)) {
+		if (shouldDrop(map, selfId, carrying)) {
 			const dropped = await gc.putdown();
 			console.log(`[putdown] dropped=${dropped.length}`);
 			await sleep(POST_ACTION_WAIT_MS);
@@ -97,15 +113,18 @@ async function loop(): Promise<void> {
 			}
 		}
 
-		const obsDist = gc.config?.GAME.player.observation_distance ?? FALLBACK_OBSERVATION_DISTANCE;
-		const target = carrying ? null : pickBestParcelTarget(m, bfs, gc.beliefs, decayMs, movMs);
+		const target = carrying
+			? null
+			: pickBestParcelTarget(map, bfs, gc.beliefs, decayMs, movMs);
 		const explore =
-			!carrying && !target ? nearestOutOfViewSpawn(m, bfs, sx, sy, obsDist) : null;
-		const step = planStep(m, bfs, carrying, target, explore);
+			!carrying && !target
+				? nearestOutOfViewSpawn(map, bfs, sx, sy, obsDist)
+				: null;
+		const step = planStep(map, bfs, carrying, target, explore);
 
 		if (!step) {
 			console.log(
-				`[wait] no step — carrying=${carrying} distToDelivery=${m.baseReverseDistToDelivery[selfId]} pos=(${sx},${sy})`,
+				`[wait] no step — carrying=${carrying} distToDelivery=${map.baseReverseDistToDelivery[selfId]} pos=(${sx},${sy})`,
 			);
 			await sleep(NO_STEP_WAIT_MS);
 			continue;
@@ -117,7 +136,6 @@ async function loop(): Promise<void> {
 			sy = result.y;
 			console.log(`[move] ${step} → ok@(${sx},${sy})`);
 		} else {
-			const waitMs = gc.config?.GAME.player.movement_duration ?? FALLBACK_MOVEMENT_DURATION_MS;
 			console.log(`[move] ${step} → FAILED (wait ${waitMs}ms)`);
 			await sleep(waitMs);
 		}

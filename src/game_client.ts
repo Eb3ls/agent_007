@@ -5,7 +5,6 @@ import {
 	updateFromSensing,
 	type BeliefStore,
 } from "./belief_store.js";
-import { AGENT_TTL_MULT, PARCEL_TTL_MULT } from "./config.js";
 import {
 	createPerception,
 	setSelf,
@@ -18,12 +17,13 @@ import {
 	updateTile,
 	type StaticMap,
 } from "./static_map.js";
-import type { Direction } from "./pathfinder.js";
 import type {
 	DjsClientSocket,
 	IOGameConfig,
 } from "@unitn-asa/deliveroo-js-sdk";
+import { AGENT_TTL_MULT, PARCEL_TTL_MULT } from "./config.js";
 import { DjsConnect } from "@unitn-asa/deliveroo-js-sdk";
+import type { Direction } from "./pathfinder.js";
 
 export class GameClient {
 	private api: DjsClientSocket;
@@ -104,7 +104,11 @@ export class GameClient {
 			updateFromSensing(this.beliefs, sensing);
 			if (this.config) {
 				const movMs = this.config.GAME.player.movement_duration;
-				evictStale(this.beliefs, movMs * PARCEL_TTL_MULT, movMs * AGENT_TTL_MULT);
+				evictStale(
+					this.beliefs,
+					movMs * PARCEL_TTL_MULT,
+					movMs * AGENT_TTL_MULT,
+				);
 			}
 			this.logEvent("sensing", {
 				agents: sensing.agents.length,
