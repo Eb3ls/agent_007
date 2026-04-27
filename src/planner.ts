@@ -259,13 +259,19 @@ export function planStep(
 	bfs: BfsFromSelf,
 	carrying: boolean,
 	target: IOParcel | null,
+	detourTarget: ParcelBelief | null,
 	exploreTarget: { x: number; y: number } | null,
 ): Direction | null {
-	const dest = carrying
-		? nearestDeliveryTile(map, bfs)
-		: target
-			? { x: target.x, y: target.y }
-			: exploreTarget;
+	let dest: { x: number; y: number } | null;
+	if (carrying && detourTarget) {
+		dest = { x: detourTarget.x, y: detourTarget.y };
+	} else if (carrying) {
+		dest = nearestDeliveryTile(map, bfs);
+	} else if (target) {
+		dest = { x: target.x, y: target.y };
+	} else {
+		dest = exploreTarget;
+	}
 	if (!dest) return null;
 	return reconstructPath(map, bfs, dest.x, dest.y)?.[0] ?? null;
 }
