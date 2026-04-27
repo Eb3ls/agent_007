@@ -267,9 +267,12 @@ export function planStep(
 	target: IOParcel | null,
 	detourTarget: ParcelBelief | null,
 	exploreTarget: { x: number; y: number } | null,
+	commitTarget?: { x: number; y: number } | null,
 ): Direction | null {
 	let dest: { x: number; y: number } | null;
-	if (carrying && detourTarget) {
+	if (commitTarget) {
+		dest = commitTarget;
+	} else if (carrying && detourTarget) {
 		dest = { x: detourTarget.x, y: detourTarget.y };
 	} else if (carrying) {
 		dest = nearestDeliveryTile(map, bfs);

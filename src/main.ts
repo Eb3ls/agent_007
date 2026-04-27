@@ -20,6 +20,7 @@ import {
 	pickBestParcelTarget,
 	planStep,
 	shouldDrop,
+	shouldReplan,
 } from "./planner.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
@@ -144,7 +145,7 @@ async function loop(): Promise<void> {
 				? nearestOutOfViewSpawn(map, bfs, sx, sy, obsDist)
 				: null;
 
-		// Build candidate intention; H: always adopt (always replan, behaviour unchanged).
+		// Build candidate intention from current evaluation.
 		const now = Date.now();
 		let candidate: Intention | null = null;
 		if (carrying && detour) {
@@ -157,9 +158,17 @@ async function loop(): Promise<void> {
 		} else if (explore) {
 			candidate = { kind: "explore", targetXY: explore, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
 		}
-		intention = candidate;
 
-		const step = planStep(map, bfs, carrying, target, detour, explore);
+		const replanning = shouldReplan(intention, candidate, gc.beliefs, map, bfs, sx, sy, now, movMs);
+		if (replanning) {
+			intention = candidate ? { ...candidate, committedAt: now, moveFailStreak: 0 } : null;
+			if (intention) console.log(`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`);
+		} else {
+			if (intention) console.log(`[intent] keep kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movMs)}steps fails=${intention.moveFailStreak}`);
+		}
+
+		const commitTarget = !replanning && intention ? intention.targetXY : null;
+		const step = planStep(map, bfs, carrying, target, detour, explore, commitTarget);
 
 		if (!step) {
 			console.log(
@@ -174,8 +183,10 @@ async function loop(): Promise<void> {
 			sx = result.x;
 			sy = result.y;
 			console.log(`[move] ${step} → ok@(${sx},${sy})`);
+			if (intention) intention.moveFailStreak = 0;
 		} else {
 			console.log(`[move] ${step} → FAILED (wait ${waitMs}ms)`);
+			if (intention) intention.moveFailStreak++;
 			await sleep(waitMs);
 		}
 	}
