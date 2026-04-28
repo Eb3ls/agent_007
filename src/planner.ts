@@ -15,31 +15,31 @@ import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
 import type { IOParcel } from "@unitn-asa/deliveroo-js-sdk";
 
 export function isAgentBlocking(
-	a: AgentBelief,
-	movMs: number,
+	agent: AgentBelief,
+	movementDurationMs: number,
 	graceSteps: number,
 	now: number,
 ): boolean {
-	if (a.inView) return true;
-	const ageSteps = (now - a.lastSeenAt) / movMs;
+	if (agent.inView) return true;
+	const ageSteps = (now - agent.lastSeenAt) / movementDurationMs;
 	return ageSteps <= graceSteps;
 }
 
 export function computeBlockedTiles(
 	map: StaticMap,
 	beliefs: BeliefStore,
-	movMs: number,
+	movementDurationMs: number,
 	graceSteps: number = AGENT_GRACE_STEPS,
 ): Set<number> {
 	const blocked = new Set<number>();
 	const now = Date.now();
-	for (const a of beliefs.agents.values()) {
-		if (!isAgentBlocking(a, movMs, graceSteps, now)) continue;
-		if (a.x === undefined || a.y === undefined) continue;
-		const ax = Math.round(a.x);
-		const ay = Math.round(a.y);
-		if (!inBounds(map, ax, ay)) continue;
-		blocked.add(tileId(map, ax, ay));
+	for (const agent of beliefs.agents.values()) {
+		if (!isAgentBlocking(agent, movementDurationMs, graceSteps, now)) continue;
+		if (agent.x === undefined || agent.y === undefined) continue;
+		const agentX = Math.round(agent.x);
+		const agentY = Math.round(agent.y);
+		if (!inBounds(map, agentX, agentY)) continue;
+		blocked.add(tileId(map, agentX, agentY));
 	}
 	return blocked;
 }
@@ -50,11 +50,11 @@ export function nearestDeliveryTile(
 ): { x: number; y: number } | null {
 	let bestId = -1,
 		bestDist = Infinity;
-	for (const did of map.deliveryTileIds) {
-		const d = bfs.dist[did];
-		if (d !== undefined && d !== -1 && d < bestDist) {
-			bestDist = d;
-			bestId = did;
+	for (const deliveryId of map.deliveryTileIds) {
+		const dist = bfs.dist[deliveryId];
+		if (dist !== undefined && dist !== -1 && dist < bestDist) {
+			bestDist = dist;
+			bestId = deliveryId;
 		}
 	}
 	return bestId === -1 ? null : idToXY(map, bestId);
@@ -63,24 +63,26 @@ export function nearestDeliveryTile(
 export function nearestOutOfViewSpawn(
 	map: StaticMap,
 	bfs: BfsFromSelf,
-	sx: number,
-	sy: number,
+	selfX: number,
+	selfY: number,
 	observationDistance: number,
+	visitedSpawnIds?: ReadonlySet<number>,
 ): { x: number; y: number } | null {
 	let bestId = -1;
 	let bestCost = Infinity;
-	for (const sid of map.spawnTileIds) {
-		const sp = bfs.dist[sid];
-		if (sp === undefined || sp <= 0) continue;
-		const sd = map.baseReverseDistToDelivery[sid];
-		if (sd === undefined || sd === -1) continue;
-		const { x, y } = idToXY(map, sid);
-		if (Math.max(Math.abs(x - sx), Math.abs(y - sy)) <= observationDistance)
+	for (const spawnId of map.spawnTileIds) {
+		const distToSpawn = bfs.dist[spawnId];
+		if (distToSpawn === undefined || distToSpawn <= 0) continue;
+		const distSpawnToDelivery = map.baseReverseDistToDelivery[spawnId];
+		if (distSpawnToDelivery === undefined || distSpawnToDelivery === -1) continue;
+		if (visitedSpawnIds?.has(spawnId)) continue;
+		const { x, y } = idToXY(map, spawnId);
+		if (Math.max(Math.abs(x - selfX), Math.abs(y - selfY)) <= observationDistance)
 			continue;
-		const cost = sp + sd;
+		const cost = distToSpawn + distSpawnToDelivery;
 		if (cost < bestCost) {
 			bestCost = cost;
-			bestId = sid;
+			bestId = spawnId;
 		}
 	}
 	return bestId === -1 ? null : idToXY(map, bestId);
@@ -96,11 +98,11 @@ export function shouldDrop(
 
 export function parcelHere(
 	parcels: Map<string, ParcelBelief>,
-	sx: number,
-	sy: number,
+	selfX: number,
+	selfY: number,
 ): ParcelBelief | undefined {
-	for (const p of parcels.values()) {
-		if (p.inView && p.x === sx && p.y === sy && !p.carriedBy) return p;
+	for (const parcel of parcels.values()) {
+		if (parcel.inView && parcel.x === selfX && parcel.y === selfY && !parcel.carriedBy) return parcel;
 	}
 	return undefined;
 }
@@ -118,15 +120,15 @@ export function currentReward(
 // certain; out-of-view parcels are discounted by P_alive = exp(-age/horizon).
 export function expectedReward(
 	p: ParcelBelief,
-	decayMs: number,
-	movMs: number,
+	decayIntervalMs: number,
+	movementDurationMs: number,
 	stealHorizonSteps: number,
 	now: number,
 ): number {
-	const base = currentReward(p, decayMs, now);
+	const base = currentReward(p, decayIntervalMs, now);
 	if (base <= 0) return 0;
 	if (p.inView) return base;
-	const ageSteps = (now - p.lastSeenAt) / movMs;
+	const ageSteps = (now - p.lastSeenAt) / movementDurationMs;
 	return base * Math.exp(-ageSteps / stealHorizonSteps);
 }
 
@@ -139,19 +141,17 @@ export function pickBestParcelTarget(
 	stealHorizonSteps: number = EXPECTED_STEAL_HORIZON_STEPS,
 ): IOParcel | null {
 	const now = Date.now();
-	const decayPerStep = Number.isFinite(decayIntervalMs)
-		? movementDurationMs / decayIntervalMs
-		: 0;
+	const decayPerStep = computeDecayPerStep(decayIntervalMs, movementDurationMs);
 	let best: ParcelBelief | null = null;
 	let bestUtility = -Infinity;
-	let bestSp = Infinity;
+	let bestDistToParcel = Infinity;
 	for (const p of beliefs.parcels.values()) {
 		if (p.carriedBy) continue;
-		const pid = tileId(map, p.x, p.y);
-		const sp = bfs.dist[pid];
-		if (sp === undefined || sp === -1) continue;
-		const sd = map.baseReverseDistToDelivery[pid];
-		if (sd === undefined || sd === -1) continue;
+		const parcelTileId = tileId(map, p.x, p.y);
+		const distToParcel = bfs.dist[parcelTileId];
+		if (distToParcel === undefined || distToParcel === -1) continue;
+		const distParcelToDelivery = map.baseReverseDistToDelivery[parcelTileId];
+		if (distParcelToDelivery === undefined || distParcelToDelivery === -1) continue;
 		const reward = expectedReward(
 			p,
 			decayIntervalMs,
@@ -160,11 +160,11 @@ export function pickBestParcelTarget(
 			now,
 		);
 		if (reward <= 0) continue;
-		const utility = reward - decayPerStep * (sp + sd);
+		const utility = reward - decayPerStep * (distToParcel + distParcelToDelivery);
 		if (utility <= 0) continue;
-		if (utility > bestUtility || (utility === bestUtility && sp < bestSp)) {
+		if (utility > bestUtility || (utility === bestUtility && distToParcel < bestDistToParcel)) {
 			bestUtility = utility;
-			bestSp = sp;
+			bestDistToParcel = distToParcel;
 			best = p;
 		}
 	}
@@ -184,7 +184,7 @@ export function deriveCarryState(
 	myId: string,
 	map: StaticMap,
 	bfs: BfsFromSelf,
-	decayMs: number,
+	decayIntervalMs: number,
 	now: number,
 ): CarryState {
 	const ids: string[] = [];
@@ -192,20 +192,27 @@ export function deriveCarryState(
 	for (const p of parcels.values()) {
 		if (p.carriedBy !== myId) continue;
 		ids.push(p.id);
-		rewards.push(currentReward(p, decayMs, now));
+		rewards.push(currentReward(p, decayIntervalMs, now));
 	}
-	let nearestDeliveryDist = Infinity;
-	for (const did of map.deliveryTileIds) {
-		const d = bfs.dist[did];
-		if (d !== undefined && d !== -1 && d < nearestDeliveryDist)
-			nearestDeliveryDist = d;
+	return { n: ids.length, rewards, nearestDeliveryDist: nearestDeliveryDist(map, bfs), ids };
+}
+
+function computeDecayPerStep(decayIntervalMs: number, movementDurationMs: number): number {
+	return Number.isFinite(decayIntervalMs) ? movementDurationMs / decayIntervalMs : 0;
+}
+
+function nearestDeliveryDist(map: StaticMap, bfs: BfsFromSelf): number {
+	let best = Infinity;
+	for (const deliveryId of map.deliveryTileIds) {
+		const dist = bfs.dist[deliveryId];
+		if (dist !== undefined && dist !== -1 && dist < best) best = dist;
 	}
-	return { n: ids.length, rewards, nearestDeliveryDist, ids };
+	return best;
 }
 
 // Saturated decay cost: a parcel with reward R cannot lose more than R over t steps.
-function decayCost(r: number, decayPerStep: number, t: number): number {
-	return Math.min(r, decayPerStep * t);
+function decayCost(reward: number, decayPerStep: number, steps: number): number {
+	return Math.min(reward, decayPerStep * steps);
 }
 
 // Evaluates whether a mid-carry detour to pick up an additional parcel is worth it.
@@ -213,23 +220,23 @@ function decayCost(r: number, decayPerStep: number, t: number): number {
 //   surplus = R_p_expected − (decay_detour − decay_direct)
 // where decay costs are capped at each parcel's current reward.
 export function pickBestDetourTarget(
-	m: StaticMap,
+	map: StaticMap,
 	bfs: BfsFromSelf,
 	beliefs: BeliefStore,
 	carry: CarryState,
-	decayMs: number,
-	movMs: number,
+	decayIntervalMs: number,
+	movementDurationMs: number,
 	stealHorizonSteps: number,
 	capacity: number,
 	epsilon: number,
 ): ParcelBelief | null {
 	if (carry.n >= capacity) return null;
 	const now = Date.now();
-	const decayPerStep = Number.isFinite(decayMs) ? movMs / decayMs : 0;
-	const s0 = carry.nearestDeliveryDist;
+	const decayPerStep = computeDecayPerStep(decayIntervalMs, movementDurationMs);
+	const directDeliveryDist = carry.nearestDeliveryDist;
 
 	const decayDirect = carry.rewards.reduce(
-		(sum, r) => sum + decayCost(r, decayPerStep, s0),
+		(sum, reward) => sum + decayCost(reward, decayPerStep, directDeliveryDist),
 		0,
 	);
 
@@ -238,20 +245,20 @@ export function pickBestDetourTarget(
 
 	for (const p of beliefs.parcels.values()) {
 		if (p.carriedBy) continue;
-		const pid = tileId(m, p.x, p.y);
-		const sp = bfs.dist[pid];
-		if (sp === undefined || sp === -1) continue;
-		const sd = m.baseReverseDistToDelivery[pid];
-		if (sd === undefined || sd === -1) continue;
-		const S = sp + sd;
-		const rp = expectedReward(p, decayMs, movMs, stealHorizonSteps, now);
-		if (rp <= 0) continue;
+		const parcelTileId = tileId(map, p.x, p.y);
+		const distToParcel = bfs.dist[parcelTileId];
+		if (distToParcel === undefined || distToParcel === -1) continue;
+		const distParcelToDelivery = map.baseReverseDistToDelivery[parcelTileId];
+		if (distParcelToDelivery === undefined || distParcelToDelivery === -1) continue;
+		const detourTotalDist = distToParcel + distParcelToDelivery;
+		const parcelReward = expectedReward(p, decayIntervalMs, movementDurationMs, stealHorizonSteps, now);
+		if (parcelReward <= 0) continue;
 		const decayDetour =
 			carry.rewards.reduce(
-				(sum, r) => sum + decayCost(r, decayPerStep, S),
+				(sum, reward) => sum + decayCost(reward, decayPerStep, detourTotalDist),
 				0,
-			) + decayCost(rp, decayPerStep, S);
-		const surplus = rp - decayDetour + decayDirect;
+			) + decayCost(parcelReward, decayPerStep, detourTotalDist);
+		const surplus = parcelReward - decayDetour + decayDirect;
 		if (surplus > epsilon && surplus > bestSurplus) {
 			bestSurplus = surplus;
 			best = p;
@@ -301,18 +308,18 @@ export function shouldReplan(
 	beliefs: BeliefStore,
 	map: StaticMap,
 	bfs: BfsFromSelf,
-	sx: number,
-	sy: number,
+	selfX: number,
+	selfY: number,
 	now: number,
-	movMs: number,
+	movementDurationMs: number,
 ): boolean {
 	if (!current) return true;
 
 	// Reached target
-	if (sx === current.targetXY.x && sy === current.targetXY.y) return true;
+	if (selfX === current.targetXY.x && selfY === current.targetXY.y) return true;
 
 	// Safety timeout
-	const ageSteps = (now - current.committedAt) / movMs;
+	const ageSteps = (now - current.committedAt) / movementDurationMs;
 	if (ageSteps >= INTENTION_MAX_AGE_STEPS) return true;
 
 	// Too many consecutive move failures
@@ -327,10 +334,11 @@ export function shouldReplan(
 		(current.kind === "pickup" || current.kind === "detour") &&
 		current.targetId
 	) {
-		const p = beliefs.parcels.get(current.targetId);
-		if (!p || p.carriedBy) return true;
+		const parcel = beliefs.parcels.get(current.targetId);
+		if (!parcel || parcel.carriedBy) return true;
 	}
 
+	// TODO: expectedUtility currently always 0 at call sites — branch dead until populated.
 	// Better candidate appears
 	if (
 		candidate &&
