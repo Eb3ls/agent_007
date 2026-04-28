@@ -109,7 +109,7 @@ async function loop(): Promise<void> {
 	const spawnTtlMs = SPAWN_VISITED_TTL_STEPS * movementDurationMs;
 
 	let intention: Intention | null = null;
-	const visitedSpawns = new Map<number, number>(); // tileId → visitedAt ms
+	const observedEmptySpawns = new Map<number, number>(); // tileId → visitedAt ms
 
 	while (true) {
 		const selfId = tileId(map, selfX, selfY);
@@ -172,7 +172,7 @@ async function loop(): Promise<void> {
 		// Build candidate intention from current evaluation.
 		const now = Date.now();
 		const freshVisited = new Set<number>();
-		for (const [id, visitedAt] of visitedSpawns) {
+		for (const [id, visitedAt] of observedEmptySpawns) {
 			if (now - visitedAt < spawnTtlMs) freshVisited.add(id);
 		}
 		const explore =
@@ -217,7 +217,7 @@ async function loop(): Promise<void> {
 			selfX === intention.targetXY.x &&
 			selfY === intention.targetXY.y
 		) {
-			visitedSpawns.set(tileId(map, selfX, selfY), now);
+			observedEmptySpawns.set(tileId(map, selfX, selfY), now);
 		}
 
 		const replanning = shouldReplan(

@@ -21,7 +21,6 @@ export type BeliefStore = {
 	parcels: Map<string, ParcelBelief>;
 	agents: Map<string, AgentBelief>;
 	crates: Map<string, CrateBelief>;
-	disconnected: Set<string>;
 };
 
 export function createBeliefStore(): BeliefStore {
@@ -29,7 +28,6 @@ export function createBeliefStore(): BeliefStore {
 		parcels: new Map(),
 		agents: new Map(),
 		crates: new Map(),
-		disconnected: new Set(),
 	};
 }
 
@@ -100,7 +98,6 @@ export function applyDelivery(b: BeliefStore, myId: string): void {
 }
 
 export function markAgentDisconnected(b: BeliefStore, agentId: string): void {
-	b.disconnected.add(agentId);
 	b.agents.delete(agentId);
 }
 
