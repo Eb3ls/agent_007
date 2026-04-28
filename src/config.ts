@@ -17,7 +17,9 @@ export const EXPECTED_STEAL_HORIZON_STEPS = 15;
 export const AGENT_GRACE_STEPS = 3;
 
 // Multi-parcel detour: capacity fallback and minimum surplus to commit a detour.
+// Server does not enforce capacity; set to 100 to disable the cap.
 export const FALLBACK_AGENT_CAPACITY = 5;
+export const CAPACITY_OVERRIDE = 100;
 export const DETOUR_UTILITY_EPSILON = 1;
 
 // Intention layer: thresholds for path commitment and forced replan.

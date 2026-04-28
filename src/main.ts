@@ -1,7 +1,7 @@
 import {
+	CAPACITY_OVERRIDE,
 	DETOUR_UTILITY_EPSILON,
 	EXPECTED_STEAL_HORIZON_STEPS,
-	FALLBACK_AGENT_CAPACITY,
 	FALLBACK_MOVEMENT_DURATION_MS,
 	FALLBACK_OBSERVATION_DISTANCE,
 	NO_STEP_WAIT_MS,
@@ -11,6 +11,7 @@ import {
 } from "./config.js";
 import {
 	type Intention,
+	type PickResult,
 	computeBlockedTiles,
 	deriveCarryState,
 	nearestDeliveryTile,
@@ -23,9 +24,9 @@ import {
 	shouldReplan,
 } from "./planner.js";
 import { applyDelivery, applyPickupResult } from "./belief_store.js";
+import { idToXY, tileId } from "./static_map.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
-import { tileId } from "./static_map.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -66,9 +67,16 @@ function makeIntention(
 	kind: Intention["kind"],
 	targetXY: { x: number; y: number },
 	now: number,
+	utility: number = 0,
 	targetId?: string,
 ): Intention {
-	const base = { kind, targetXY, expectedUtility: 0, committedAt: now, moveFailStreak: 0 };
+	const base = {
+		kind,
+		targetXY,
+		expectedUtility: utility,
+		committedAt: now,
+		moveFailStreak: 0,
+	};
 	return targetId !== undefined ? { ...base, targetId } : base;
 }
 
@@ -88,14 +96,16 @@ async function loop(): Promise<void> {
 	);
 	console.log(`[main] starting loop at (${selfX},${selfY})`);
 
-	const decayIntervalMs = parseDecayInterval(client.config?.GAME.parcels.decaying_event);
+	const decayIntervalMs = parseDecayInterval(
+		client.config?.GAME.parcels.decaying_event,
+	);
 	const movementDurationMs =
 		client.config?.GAME.player.movement_duration ??
 		FALLBACK_MOVEMENT_DURATION_MS;
 	const observationDistance =
 		client.config?.GAME.player.observation_distance ??
 		FALLBACK_OBSERVATION_DISTANCE;
-	const capacity = client.config?.GAME.player.capacity ?? FALLBACK_AGENT_CAPACITY;
+	const capacity = CAPACITY_OVERRIDE;
 	const spawnTtlMs = SPAWN_VISITED_TTL_STEPS * movementDurationMs;
 
 	let intention: Intention | null = null;
@@ -103,7 +113,11 @@ async function loop(): Promise<void> {
 
 	while (true) {
 		const selfId = tileId(map, selfX, selfY);
-		const blocked = computeBlockedTiles(map, client.beliefs, movementDurationMs);
+		const blocked = computeBlockedTiles(
+			map,
+			client.beliefs,
+			movementDurationMs,
+		);
 		const bfs = bfsFromSelf(map, selfX, selfY, blocked);
 		const carry = deriveCarryState(
 			client.beliefs.parcels,
@@ -132,10 +146,16 @@ async function loop(): Promise<void> {
 			continue;
 		}
 
-		const target = carrying
+		const targetResult: PickResult | null = carrying
 			? null
-			: pickBestParcelTarget(map, bfs, client.beliefs, decayIntervalMs, movementDurationMs);
-		const detour = carrying
+			: pickBestParcelTarget(
+					map,
+					bfs,
+					client.beliefs,
+					decayIntervalMs,
+					movementDurationMs,
+				);
+		const detourResult: PickResult | null = carrying
 			? pickBestDetourTarget(
 					map,
 					bfs,
@@ -156,17 +176,37 @@ async function loop(): Promise<void> {
 			if (now - visitedAt < spawnTtlMs) freshVisited.add(id);
 		}
 		const explore =
-			!carrying && !target
-				? nearestOutOfViewSpawn(map, bfs, selfX, selfY, observationDistance, freshVisited)
+			!carrying && !targetResult
+				? nearestOutOfViewSpawn(
+						map,
+						bfs,
+						selfX,
+						selfY,
+						observationDistance,
+						freshVisited,
+					)
 				: null;
 		let candidate: Intention | null = null;
-		if (carrying && detour) {
-			candidate = makeIntention("detour", { x: detour.x, y: detour.y }, now, detour.id);
+		if (carrying && detourResult) {
+			candidate = makeIntention(
+				"detour",
+				{ x: detourResult.parcel.x, y: detourResult.parcel.y },
+				now,
+				detourResult.utility,
+				detourResult.parcel.id,
+			);
 		} else if (carrying) {
 			const deliveryXY = nearestDeliveryTile(map, bfs);
-			if (deliveryXY) candidate = makeIntention("deliver", deliveryXY, now);
-		} else if (target) {
-			candidate = makeIntention("pickup", { x: target.x, y: target.y }, now, target.id);
+			if (deliveryXY)
+				candidate = makeIntention("deliver", deliveryXY, now);
+		} else if (targetResult) {
+			candidate = makeIntention(
+				"pickup",
+				{ x: targetResult.parcel.x, y: targetResult.parcel.y },
+				now,
+				targetResult.utility,
+				targetResult.parcel.id,
+			);
 		} else if (explore) {
 			candidate = makeIntention("explore", explore, now);
 		}
@@ -212,8 +252,8 @@ async function loop(): Promise<void> {
 			map,
 			bfs,
 			carrying,
-			target,
-			detour,
+			targetResult,
+			detourResult,
 			explore,
 			commitTarget,
 		);
@@ -233,7 +273,9 @@ async function loop(): Promise<void> {
 			console.log(`[move] ${step} → ok@(${selfX},${selfY})`);
 			if (intention) intention.moveFailStreak = 0;
 		} else {
-			console.log(`[move] ${step} → FAILED (wait ${movementDurationMs}ms)`);
+			console.log(
+				`[move] ${step} → FAILED (wait ${movementDurationMs}ms)`,
+			);
 			if (intention) intention.moveFailStreak++;
 			await sleep(movementDurationMs);
 		}
