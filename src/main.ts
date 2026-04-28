@@ -14,6 +14,7 @@ import {
 	type PickResult,
 	computeBlockedTiles,
 	deriveCarryState,
+	isIntentionStillValid,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
 	parcelHere,
@@ -21,7 +22,7 @@ import {
 	pickBestParcelTarget,
 	planStep,
 	shouldDrop,
-	shouldReplan,
+	shouldSwitch,
 } from "./planner.js";
 import { applyDelivery, applyPickupResult } from "./belief_store.js";
 import { idToXY, tileId } from "./static_map.js";
@@ -146,108 +147,113 @@ async function loop(): Promise<void> {
 			continue;
 		}
 
-		const targetResult: PickResult | null = carrying
-			? null
-			: pickBestParcelTarget(
-					map,
-					bfs,
-					client.beliefs,
-					decayIntervalMs,
-					movementDurationMs,
-				);
-		const detourResult: PickResult | null = carrying
-			? pickBestDetourTarget(
-					map,
-					bfs,
-					client.beliefs,
-					carry,
-					decayIntervalMs,
-					movementDurationMs,
-					EXPECTED_STEAL_HORIZON_STEPS,
-					capacity,
-					DETOUR_UTILITY_EPSILON,
-				)
-			: null;
-
-		// Build candidate intention from current evaluation.
 		const now = Date.now();
-		const freshVisited = new Set<number>();
-		for (const [id, visitedAt] of observedEmptySpawns) {
-			if (now - visitedAt < spawnTtlMs) freshVisited.add(id);
-		}
-		const explore =
-			!carrying && !targetResult
-				? nearestOutOfViewSpawn(
+		let targetResult: PickResult | null = null;
+		let detourResult: PickResult | null = null;
+		let explore: { x: number; y: number } | null = null;
+
+		const needsDeliberation =
+			!intention ||
+			!isIntentionStillValid(
+				intention,
+				client.beliefs,
+				map,
+				bfs,
+				selfX,
+				selfY,
+				now,
+				movementDurationMs,
+			);
+
+		if (needsDeliberation) {
+			// Mark spawn as visited when arriving at an explore target (before invalidating intent).
+			if (
+				intention?.kind === "explore" &&
+				selfX === intention.targetXY.x &&
+				selfY === intention.targetXY.y
+			) {
+				observedEmptySpawns.set(tileId(map, selfX, selfY), now);
+			}
+
+			targetResult = carrying
+				? null
+				: pickBestParcelTarget(
 						map,
 						bfs,
-						selfX,
-						selfY,
-						observationDistance,
-						freshVisited,
+						client.beliefs,
+						decayIntervalMs,
+						movementDurationMs,
+					);
+			detourResult = carrying
+				? pickBestDetourTarget(
+						map,
+						bfs,
+						client.beliefs,
+						carry,
+						decayIntervalMs,
+						movementDurationMs,
+						EXPECTED_STEAL_HORIZON_STEPS,
+						capacity,
+						DETOUR_UTILITY_EPSILON,
 					)
 				: null;
-		let candidate: Intention | null = null;
-		if (carrying && detourResult) {
-			candidate = makeIntention(
-				"detour",
-				{ x: detourResult.parcel.x, y: detourResult.parcel.y },
-				now,
-				detourResult.utility,
-				detourResult.parcel.id,
-			);
-		} else if (carrying) {
-			const deliveryXY = nearestDeliveryTile(map, bfs);
-			if (deliveryXY)
-				candidate = makeIntention("deliver", deliveryXY, now);
-		} else if (targetResult) {
-			candidate = makeIntention(
-				"pickup",
-				{ x: targetResult.parcel.x, y: targetResult.parcel.y },
-				now,
-				targetResult.utility,
-				targetResult.parcel.id,
-			);
-		} else if (explore) {
-			candidate = makeIntention("explore", explore, now);
-		}
+			const freshVisited = new Set<number>();
+			for (const [id, visitedAt] of observedEmptySpawns) {
+				if (now - visitedAt < spawnTtlMs) freshVisited.add(id);
+			}
+			explore =
+				!carrying && !targetResult
+					? nearestOutOfViewSpawn(
+							map,
+							bfs,
+							selfX,
+							selfY,
+							observationDistance,
+							freshVisited,
+						)
+					: null;
 
-		// Mark spawn as visited when we arrive at an explore target.
-		if (
-			intention?.kind === "explore" &&
-			selfX === intention.targetXY.x &&
-			selfY === intention.targetXY.y
-		) {
-			observedEmptySpawns.set(tileId(map, selfX, selfY), now);
-		}
-
-		const replanning = shouldReplan(
-			intention,
-			candidate,
-			client.beliefs,
-			map,
-			bfs,
-			selfX,
-			selfY,
-			now,
-			movementDurationMs,
-		);
-		if (replanning) {
-			intention = candidate
-				? { ...candidate, committedAt: now, moveFailStreak: 0 }
-				: null;
-			if (intention)
-				console.log(
-					`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`,
+			let candidate: Intention | null = null;
+			if (carrying && detourResult) {
+				candidate = makeIntention(
+					"detour",
+					{ x: detourResult.parcel.x, y: detourResult.parcel.y },
+					now,
+					detourResult.utility,
+					detourResult.parcel.id,
 				);
+			} else if (carrying) {
+				const deliveryXY = nearestDeliveryTile(map, bfs);
+				if (deliveryXY)
+					candidate = makeIntention("deliver", deliveryXY, now);
+			} else if (targetResult) {
+				candidate = makeIntention(
+					"pickup",
+					{ x: targetResult.parcel.x, y: targetResult.parcel.y },
+					now,
+					targetResult.utility,
+					targetResult.parcel.id,
+				);
+			} else if (explore) {
+				candidate = makeIntention("explore", explore, now);
+			}
+
+			if (shouldSwitch(intention, candidate)) {
+				intention = candidate
+					? { ...candidate, committedAt: now, moveFailStreak: 0 }
+					: null;
+				if (intention)
+					console.log(
+						`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`,
+					);
+			}
 		} else {
-			if (intention)
-				console.log(
-					`[intent] keep kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movementDurationMs)}steps fails=${intention.moveFailStreak}`,
-				);
+			console.log(
+				`[intent] commit kind=${intention!.kind} age=${Math.round((now - intention!.committedAt) / movementDurationMs)}steps fails=${intention!.moveFailStreak}`,
+			);
 		}
 
-		const commitTarget =
-			!replanning && intention ? intention.targetXY : null;
+		const commitTarget = intention?.targetXY ?? null;
 		const step = planStep(
 			map,
 			bfs,

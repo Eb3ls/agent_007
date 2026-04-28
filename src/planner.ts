@@ -342,10 +342,10 @@ export type Intention = {
 	moveFailStreak: number;
 };
 
-// Returns true when the agent should abandon current intention and replan.
-export function shouldReplan(
-	current: Intention | null,
-	candidate: Intention | null,
+// Intention filter: returns false if the current intention has become invalid.
+// Call this before deliberation to skip re-planning when the intention is still good.
+export function isIntentionStillValid(
+	intention: Intention,
 	beliefs: BeliefStore,
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -354,39 +354,32 @@ export function shouldReplan(
 	now: number,
 	movementDurationMs: number,
 ): boolean {
-	if (!current) return true;
-
-	// Reached target
-	if (selfX === current.targetXY.x && selfY === current.targetXY.y)
-		return true;
-
-	// Safety timeout
-	const ageSteps = (now - current.committedAt) / movementDurationMs;
-	if (ageSteps >= INTENTION_MAX_AGE_STEPS) return true;
-
-	// Too many consecutive move failures
-	if (current.moveFailStreak >= MAX_MOVE_FAIL_STREAK) return true;
-
-	// Target tile unreachable via BFS
-	const targetTileId = tileId(map, current.targetXY.x, current.targetXY.y);
-	if (bfs.dist[targetTileId] === -1) return true;
-
-	// For pickup/detour: parcel gone or carried by someone else
+	if (selfX === intention.targetXY.x && selfY === intention.targetXY.y)
+		return false;
+	const ageSteps = (now - intention.committedAt) / movementDurationMs;
+	if (ageSteps >= INTENTION_MAX_AGE_STEPS) return false;
+	if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK) return false;
+	const targetTileId = tileId(map, intention.targetXY.x, intention.targetXY.y);
+	if (bfs.dist[targetTileId] === -1) return false;
 	if (
-		(current.kind === "pickup" || current.kind === "detour") &&
-		current.targetId
+		(intention.kind === "pickup" || intention.kind === "detour") &&
+		intention.targetId
 	) {
-		const parcel = beliefs.parcels.get(current.targetId);
-		if (!parcel || parcel.carriedBy) return true;
+		const parcel = beliefs.parcels.get(intention.targetId);
+		if (!parcel || parcel.carriedBy) return false;
 	}
+	return true;
+}
 
-	// Better candidate appears
-	if (
-		candidate &&
+// Intention selection: returns true when a better candidate should replace current.
+export function shouldSwitch(
+	current: Intention | null,
+	candidate: Intention | null,
+): boolean {
+	if (!current) return true;
+	if (!candidate) return false;
+	return (
 		candidate.expectedUtility >
-			current.expectedUtility + INTENTION_UTILITY_EPSILON
-	)
-		return true;
-
-	return false;
+		current.expectedUtility + INTENTION_UTILITY_EPSILON
+	);
 }
