@@ -28,7 +28,7 @@ export const MAX_MOVE_FAIL_STREAK = 3;
 export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms
 
 // Exploration: how many steps to avoid re-visiting a spawn tile after arriving empty.
-export const SPAWN_VISITED_TTL_STEPS = 20;
+export const SPAWN_VISITED_TTL_STEPS = 100;
 
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
@@ -36,7 +36,8 @@ export const NO_STEP_WAIT_MS = 200; // no plan available → retry
 
 /** Parses Deliveroo decaying_event string ("infinite", "0", "500ms", "5s") into ms. */
 export function parseDecayInterval(rawInterval: string | undefined): number {
-	if (!rawInterval || rawInterval === "infinite" || rawInterval === "0") return Infinity;
+	if (!rawInterval || rawInterval === "infinite" || rawInterval === "0")
+		return Infinity;
 	const msMatch = rawInterval.match(/^(\d+)ms$/);
 	if (msMatch) return parseInt(msMatch[1]!, 10);
 	const secMatch = rawInterval.match(/^(\d+)s$/);

@@ -22,7 +22,6 @@ import {
 	pickBestParcelTarget,
 	planStep,
 	shouldDrop,
-	shouldSwitch,
 } from "./planner.js";
 import { applyDelivery, applyPickupResult } from "./belief_store.js";
 import { idToXY, tileId } from "./static_map.js";
@@ -238,15 +237,13 @@ async function loop(): Promise<void> {
 				candidate = makeIntention("explore", explore, now);
 			}
 
-			if (shouldSwitch(intention, candidate)) {
-				intention = candidate
-					? { ...candidate, committedAt: now, moveFailStreak: 0 }
-					: null;
-				if (intention)
-					console.log(
-						`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`,
-					);
-			}
+			intention = candidate
+				? { ...candidate, committedAt: now, moveFailStreak: 0 }
+				: null;
+			if (intention)
+				console.log(
+					`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`,
+				);
 		} else {
 			console.log(
 				`[intent] commit kind=${intention!.kind} age=${Math.round((now - intention!.committedAt) / movementDurationMs)}steps fails=${intention!.moveFailStreak}`,
