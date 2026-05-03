@@ -10,11 +10,9 @@ import {
 	parseDecayInterval,
 } from "./config.js";
 import {
-	type Intention,
 	type PickResult,
 	computeBlockedTiles,
 	deriveCarryState,
-	isIntentionStillValid,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
 	parcelHere,
@@ -24,6 +22,11 @@ import {
 	shouldDrop,
 } from "./planner.js";
 import { applyDelivery, applyPickupResult } from "./belief_store.js";
+import {
+	type Intention,
+	isIntentionStillValid,
+	makeIntention,
+} from "./intention.js";
 import { idToXY, tileId } from "./static_map.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
@@ -61,23 +64,6 @@ async function waitForReady(): Promise<{ id: string; x: number; y: number }> {
 		}
 		await sleep(READY_POLL_MS);
 	}
-}
-
-function makeIntention(
-	kind: Intention["kind"],
-	targetXY: { x: number; y: number },
-	now: number,
-	utility: number = 0,
-	targetId?: string,
-): Intention {
-	const base = {
-		kind,
-		targetXY,
-		expectedUtility: utility,
-		committedAt: now,
-		moveFailStreak: 0,
-	};
-	return targetId !== undefined ? { ...base, targetId } : base;
 }
 
 async function loop(): Promise<void> {

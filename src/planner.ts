@@ -12,6 +12,7 @@ import {
 } from "./pathfinder.js";
 import type { AgentBelief, BeliefStore, ParcelBelief } from "./belief_store.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
+import type { Intention } from "./intention.js";
 
 export function isAgentBlocking(
 	agent: AgentBelief,
@@ -333,53 +334,3 @@ export function planStep(
 	return reconstructPath(map, bfs, dest.x, dest.y)?.[0] ?? null;
 }
 
-export type Intention = {
-	kind: "deliver" | "pickup" | "detour" | "explore";
-	targetId?: string;
-	targetXY: { x: number; y: number };
-	expectedUtility: number;
-	committedAt: number;
-	moveFailStreak: number;
-};
-
-// Intention filter: returns false if the current intention has become invalid.
-// Call this before deliberation to skip re-planning when the intention is still good.
-export function isIntentionStillValid(
-	intention: Intention,
-	beliefs: BeliefStore,
-	map: StaticMap,
-	bfs: BfsFromSelf,
-	selfX: number,
-	selfY: number,
-	now: number,
-	movementDurationMs: number,
-): boolean {
-	if (selfX === intention.targetXY.x && selfY === intention.targetXY.y)
-		return false;
-	const ageSteps = (now - intention.committedAt) / movementDurationMs;
-	if (ageSteps >= INTENTION_MAX_AGE_STEPS) return false;
-	if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK) return false;
-	const targetTileId = tileId(map, intention.targetXY.x, intention.targetXY.y);
-	if (bfs.dist[targetTileId] === -1) return false;
-	if (
-		(intention.kind === "pickup" || intention.kind === "detour") &&
-		intention.targetId
-	) {
-		const parcel = beliefs.parcels.get(intention.targetId);
-		if (!parcel || parcel.carriedBy) return false;
-	}
-	return true;
-}
-
-// Intention selection: returns true when a better candidate should replace current.
-export function shouldSwitch(
-	current: Intention | null,
-	candidate: Intention | null,
-): boolean {
-	if (!current) return true;
-	if (!candidate) return false;
-	return (
-		candidate.expectedUtility >
-		current.expectedUtility + INTENTION_UTILITY_EPSILON
-	);
-}
