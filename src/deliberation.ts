@@ -18,6 +18,11 @@ import {
 } from "./planner.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 import { tileId, type StaticMap } from "./static_map.js";
+import {
+	selectBestIntention,
+	type IntentionCandidate,
+	type IntentionRuleContext,
+} from "./intention_rules.js";
 
 export type DeliberationContext = {
 	myId: string;
@@ -138,29 +143,81 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 				)
 			: null;
 
-	let candidate: Intention | null = null;
-	if (context.carry.n > 0 && detourResult) {
-		candidate = makeIntention(
-			"detour",
-			{ x: detourResult.parcel.x, y: detourResult.parcel.y },
-			context.now,
-			detourResult.utility,
-			detourResult.parcel.id,
-		);
-	} else if (context.carry.n > 0) {
-		const deliveryXY = nearestDeliveryTile(context.map, context.bfs);
-		if (deliveryXY) candidate = makeIntention("deliver", deliveryXY, context.now);
-	} else if (targetResult) {
-		candidate = makeIntention(
-			"pickup",
-			{ x: targetResult.parcel.x, y: targetResult.parcel.y },
-			context.now,
-			targetResult.utility,
-			targetResult.parcel.id,
-		);
-	} else if (explore) {
-		candidate = makeIntention("explore", explore, context.now);
+	// Compute delivery target once (always available when carrying)
+	const delivery =
+		context.carry.n > 0 ? nearestDeliveryTile(context.map, context.bfs) : null;
+
+	// Build candidates and let rules engine pick the best one
+	const candidates: IntentionCandidate[] = [];
+
+	// Add current intention (if still valid) as a candidate for retention
+	if (context.intention) {
+		candidates.push({
+			intention: context.intention,
+			source: "current",
+		});
 	}
+
+	// Add available actions based on carry state
+	if (context.carry.n > 0) {
+		// When carrying: detour and deliver are options
+		if (detourResult) {
+			candidates.push({
+				intention: makeIntention(
+					"detour",
+					{ x: detourResult.parcel.x, y: detourResult.parcel.y },
+					context.now,
+					detourResult.utility,
+					detourResult.parcel.id,
+				),
+				source: "detour",
+			});
+		}
+		if (delivery) {
+			candidates.push({
+				intention: makeIntention("deliver", delivery, context.now),
+				source: "deliver",
+			});
+		}
+	} else {
+		// When empty: pickup and explore are options
+		if (targetResult) {
+			candidates.push({
+				intention: makeIntention(
+					"pickup",
+					{ x: targetResult.parcel.x, y: targetResult.parcel.y },
+					context.now,
+					targetResult.utility,
+					targetResult.parcel.id,
+				),
+				source: "pickup",
+			});
+		}
+		if (explore) {
+			candidates.push({
+				intention: makeIntention("explore", explore, context.now),
+				source: "explore",
+			});
+		}
+	}
+
+	// Evaluate candidates using rules and pick the best
+	const ruleContext: IntentionRuleContext = {
+		map: context.map,
+		beliefs: context.beliefs,
+		bfs: context.bfs,
+		selfX: context.selfX,
+		selfY: context.selfY,
+		now: context.now,
+		movementDurationMs: context.movementDurationMs,
+		carry: {
+			n: context.carry.n,
+			nearestDeliveryDist: context.carry.nearestDeliveryDist,
+		},
+	};
+
+	const selectedCandidate = selectBestIntention(ruleContext, candidates);
+	const candidate = selectedCandidate?.intention ?? null;
 
 	return {
 		replanned: true,
