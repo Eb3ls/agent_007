@@ -181,7 +181,9 @@ async function loop(): Promise<void> {
 			if (intention) {
 				intention.moveFailStreak++;
 				const feedback = introspect({
+					myId,
 					intention,
+					beliefs: client.beliefs,
 					map,
 					bfs,
 					selfX,
@@ -192,9 +194,9 @@ async function loop(): Promise<void> {
 				});
 				if (feedback.shouldReconsider) {
 					console.log(
-						`[intent] reconsider kind=${intention.kind} reason=no_step_available fails=${intention.moveFailStreak}`,
+						`[intent] reconsider kind=${intention.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? "no_step_available"} fails=${intention.moveFailStreak}`,
 					);
-					intention = null;
+					if (feedback.recoveryAction !== "retry") intention = null;
 				}
 			}
 			
@@ -210,7 +212,9 @@ async function loop(): Promise<void> {
 			selfY = result.y;
 			const postMoveBfs = bfsFromSelf(map, selfX, selfY, blocked);
 			const feedback = introspect({
+				myId,
 				intention,
+				beliefs: client.beliefs,
 				map,
 				bfs: postMoveBfs,
 				selfX,
@@ -232,13 +236,15 @@ async function loop(): Promise<void> {
 			}
 			if (feedback.shouldReconsider) {
 				console.log(
-					`[intent] reconsider kind=${intention!.kind} reason=${feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled"}`,
+					`[intent] reconsider kind=${intention!.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? (feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled")}`,
 				);
-				intention = null;
+				if (feedback.recoveryAction !== "retry") intention = null;
 			}
 		} else {
 			const feedback = introspect({
+				myId,
 				intention,
+				beliefs: client.beliefs,
 				map,
 				bfs,
 				selfX,
@@ -258,9 +264,9 @@ async function loop(): Promise<void> {
 			}
 			if (feedback.shouldReconsider) {
 				console.log(
-					`[intent] reconsider kind=${intention!.kind} reason=${feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled"}`,
+					`[intent] reconsider kind=${intention!.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? (feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled")}`,
 				);
-				intention = null;
+				if (feedback.recoveryAction !== "retry") intention = null;
 			}
 			await sleep(movementDurationMs);
 		}

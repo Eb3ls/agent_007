@@ -1,4 +1,7 @@
 
+import type { BeliefStore } from "./belief_store.js";
+import type { FailureAssessment } from "./failure.js";
+import { classifyFailure } from "./failure.js";
 import type { Intention, IntentionProgress } from "./intention.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 import { tileId, type StaticMap } from "./static_map.js";
@@ -9,12 +12,16 @@ export type IntrospectionResult = {
 	failed: boolean;
 	stalled: boolean;
 	shouldReconsider: boolean;
+	recoveryAction: "retry" | "drop" | null;
+	failure: FailureAssessment | null;
 	distanceToTarget: number | null;
 	previousDistanceToTarget: number | null;
 };
 
 export type IntrospectionContext = {
+	myId: string;
 	intention: Intention | null;
+	beliefs: BeliefStore;
 	map: StaticMap;
 	bfs: BfsFromSelf;
 	selfX: number;
@@ -70,6 +77,8 @@ export function introspect(context: IntrospectionContext): IntrospectionResult {
 			failed: false,
 			stalled: false,
 			shouldReconsider: false,
+			recoveryAction: null,
+			failure: null,
 			distanceToTarget: null,
 			previousDistanceToTarget: null,
 		};
@@ -102,7 +111,21 @@ export function introspect(context: IntrospectionContext): IntrospectionResult {
 		previousDistance !== null &&
 		distanceToTargetValue !== null &&
 		distanceToTargetValue < previousDistance;
+	const failure = classifyFailure({
+		myId: context.myId,
+		intention: context.intention,
+		beliefs: context.beliefs,
+		map: context.map,
+		bfs: context.bfs,
+		now: context.now,
+		movementDurationMs: context.movementDurationMs,
+		moveSucceeded: context.moveSucceeded,
+		moveFailStreak: context.intention.moveFailStreak,
+		stalled,
+		reachedTarget,
+	});
 	const shouldReconsider = reachedTarget || failed || stalled;
+	const recoveryAction = failure?.recoveryAction ?? null;
 
 	return {
 		progressed,
@@ -110,6 +133,8 @@ export function introspect(context: IntrospectionContext): IntrospectionResult {
 		failed,
 		stalled,
 		shouldReconsider,
+		recoveryAction,
+		failure,
 		distanceToTarget: distanceToTargetValue,
 		previousDistanceToTarget: previousDistance,
 	};
