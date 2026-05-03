@@ -14,7 +14,28 @@ export type Intention = {
 	expectedUtility: number;
 	committedAt: number;
 	moveFailStreak: number;
+	progress: IntentionProgress;
 };
+
+export type IntentionProgress = {
+	startedAt: number;
+	lastCheckedAt: number;
+	stepsTaken: number;
+	lastDistance: number | null;
+	lastProgressAt: number;
+	failuresSinceProgress: number;
+};
+
+export function createIntentionProgress(now: number): IntentionProgress {
+	return {
+		startedAt: now,
+		lastCheckedAt: now,
+		stepsTaken: 0,
+		lastDistance: null,
+		lastProgressAt: now,
+		failuresSinceProgress: 0,
+	};
+}
 
 export function makeIntention(
 	kind: Intention["kind"],
@@ -29,6 +50,7 @@ export function makeIntention(
 		expectedUtility: utility,
 		committedAt: now,
 		moveFailStreak: 0,
+		progress: createIntentionProgress(now),
 	};
 	return targetId !== undefined ? { ...base, targetId } : base;
 }

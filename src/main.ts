@@ -16,6 +16,7 @@ import {
 import { applyDelivery, applyPickupResult } from "./belief_store.js";
 import { deliberate } from "./deliberation.js";
 import type { Intention } from "./intention.js";
+import { introspect } from "./introspection.js";
 import { tileId } from "./static_map.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
@@ -173,13 +174,48 @@ async function loop(): Promise<void> {
 		if (result) {
 			selfX = result.x;
 			selfY = result.y;
+			const postMoveBfs = bfsFromSelf(map, selfX, selfY, blocked);
+			const feedback = introspect({
+				intention,
+				map,
+				bfs: postMoveBfs,
+				selfX,
+				selfY,
+				now: Date.now(),
+				movementDurationMs,
+				moveSucceeded: true,
+			});
 			console.log(`[move] ${step} → ok@(${selfX},${selfY})`);
 			if (intention) intention.moveFailStreak = 0;
+			if (feedback.progressed) {
+				console.log(
+					`[introspect] progress kind=${intention!.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
+				);
+			} else if (feedback.stalled) {
+				console.log(
+					`[introspect] stalled kind=${intention!.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
+				);
+			}
 		} else {
+			const feedback = introspect({
+				intention,
+				map,
+				bfs,
+				selfX,
+				selfY,
+				now: Date.now(),
+				movementDurationMs,
+				moveSucceeded: false,
+			});
 			console.log(
 				`[move] ${step} → FAILED (wait ${movementDurationMs}ms)`,
 			);
 			if (intention) intention.moveFailStreak++;
+			if (feedback.failed) {
+				console.log(
+					`[introspect] failure kind=${intention!.kind} fails=${intention!.moveFailStreak}`,
+				);
+			}
 			await sleep(movementDurationMs);
 		}
 	}
