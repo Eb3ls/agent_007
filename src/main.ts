@@ -1,33 +1,22 @@
 import {
 	CAPACITY_OVERRIDE,
-	DETOUR_UTILITY_EPSILON,
-	EXPECTED_STEAL_HORIZON_STEPS,
 	FALLBACK_MOVEMENT_DURATION_MS,
 	FALLBACK_OBSERVATION_DISTANCE,
 	NO_STEP_WAIT_MS,
 	READY_POLL_MS,
-	SPAWN_VISITED_TTL_STEPS,
 	parseDecayInterval,
 } from "./config.js";
 import {
-	type PickResult,
 	computeBlockedTiles,
 	deriveCarryState,
-	nearestDeliveryTile,
-	nearestOutOfViewSpawn,
 	parcelHere,
-	pickBestDetourTarget,
-	pickBestParcelTarget,
 	planStep,
 	shouldDrop,
 } from "./planner.js";
 import { applyDelivery, applyPickupResult } from "./belief_store.js";
-import {
-	type Intention,
-	isIntentionStillValid,
-	makeIntention,
-} from "./intention.js";
-import { idToXY, tileId } from "./static_map.js";
+import { deliberate } from "./deliberation.js";
+import type { Intention } from "./intention.js";
+import { tileId } from "./static_map.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
 import dotenv from "dotenv";
@@ -92,7 +81,6 @@ async function loop(): Promise<void> {
 		client.config?.GAME.player.observation_distance ??
 		FALLBACK_OBSERVATION_DISTANCE;
 	const capacity = CAPACITY_OVERRIDE;
-	const spawnTtlMs = SPAWN_VISITED_TTL_STEPS * movementDurationMs;
 
 	let intention: Intention | null = null;
 	const observedEmptySpawns = new Map<number, number>(); // tileId → visitedAt ms
@@ -133,107 +121,33 @@ async function loop(): Promise<void> {
 		}
 
 		const now = Date.now();
-		let targetResult: PickResult | null = null;
-		let detourResult: PickResult | null = null;
-		let explore: { x: number; y: number } | null = null;
+		const deliberation = deliberate({
+			myId,
+			map,
+			beliefs: client.beliefs,
+			bfs,
+			selfX,
+			selfY,
+			now,
+			movementDurationMs,
+			observationDistance,
+			capacity,
+			decayIntervalMs,
+			carry,
+			intention,
+			observedEmptySpawns,
+		});
 
-		const needsDeliberation =
-			!intention ||
-			!isIntentionStillValid(
-				intention,
-				client.beliefs,
-				map,
-				bfs,
-				selfX,
-				selfY,
-				now,
-				movementDurationMs,
+		if (!deliberation.replanned && intention) {
+			console.log(
+				`[intent] commit kind=${intention!.kind} age=${Math.round((now - intention!.committedAt) / movementDurationMs)}steps fails=${intention!.moveFailStreak}`,
 			);
-
-		if (needsDeliberation) {
-			// Mark spawn as visited when arriving at an explore target (before invalidating intent).
-			if (
-				intention?.kind === "explore" &&
-				selfX === intention.targetXY.x &&
-				selfY === intention.targetXY.y
-			) {
-				observedEmptySpawns.set(tileId(map, selfX, selfY), now);
-			}
-
-			targetResult = carrying
-				? null
-				: pickBestParcelTarget(
-						map,
-						bfs,
-						client.beliefs,
-						decayIntervalMs,
-						movementDurationMs,
-					);
-			detourResult = carrying
-				? pickBestDetourTarget(
-						map,
-						bfs,
-						client.beliefs,
-						carry,
-						decayIntervalMs,
-						movementDurationMs,
-						EXPECTED_STEAL_HORIZON_STEPS,
-						capacity,
-						DETOUR_UTILITY_EPSILON,
-					)
-				: null;
-			const freshVisited = new Set<number>();
-			for (const [id, visitedAt] of observedEmptySpawns) {
-				if (now - visitedAt < spawnTtlMs) freshVisited.add(id);
-			}
-			explore =
-				!carrying && !targetResult
-					? nearestOutOfViewSpawn(
-							map,
-							bfs,
-							selfX,
-							selfY,
-							observationDistance,
-							freshVisited,
-						)
-					: null;
-
-			let candidate: Intention | null = null;
-			if (carrying && detourResult) {
-				candidate = makeIntention(
-					"detour",
-					{ x: detourResult.parcel.x, y: detourResult.parcel.y },
-					now,
-					detourResult.utility,
-					detourResult.parcel.id,
-				);
-			} else if (carrying) {
-				const deliveryXY = nearestDeliveryTile(map, bfs);
-				if (deliveryXY)
-					candidate = makeIntention("deliver", deliveryXY, now);
-			} else if (targetResult) {
-				candidate = makeIntention(
-					"pickup",
-					{ x: targetResult.parcel.x, y: targetResult.parcel.y },
-					now,
-					targetResult.utility,
-					targetResult.parcel.id,
-				);
-			} else if (explore) {
-				candidate = makeIntention("explore", explore, now);
-			}
-
-			intention = candidate
-				? { ...candidate, committedAt: now, moveFailStreak: 0 }
-				: null;
+		} else {
+			intention = deliberation.intention;
 			if (intention)
 				console.log(
 					`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`,
 				);
-		} else {
-			console.log(
-				`[intent] commit kind=${intention!.kind} age=${Math.round((now - intention!.committedAt) / movementDurationMs)}steps fails=${intention!.moveFailStreak}`,
-			);
 		}
 
 		const commitTarget = intention?.targetXY ?? null;
@@ -241,9 +155,9 @@ async function loop(): Promise<void> {
 			map,
 			bfs,
 			carrying,
-			targetResult,
-			detourResult,
-			explore,
+			deliberation.targetResult,
+			deliberation.detourResult,
+			deliberation.explore,
 			commitTarget,
 		);
 
