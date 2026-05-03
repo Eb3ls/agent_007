@@ -1,3 +1,4 @@
+
 import type { Intention, IntentionProgress } from "./intention.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 import { tileId, type StaticMap } from "./static_map.js";
@@ -7,6 +8,7 @@ export type IntrospectionResult = {
 	reachedTarget: boolean;
 	failed: boolean;
 	stalled: boolean;
+	shouldReconsider: boolean;
 	distanceToTarget: number | null;
 	previousDistanceToTarget: number | null;
 };
@@ -67,6 +69,7 @@ export function introspect(context: IntrospectionContext): IntrospectionResult {
 			reachedTarget: false,
 			failed: false,
 			stalled: false,
+			shouldReconsider: false,
 			distanceToTarget: null,
 			previousDistanceToTarget: null,
 		};
@@ -78,6 +81,7 @@ export function introspect(context: IntrospectionContext): IntrospectionResult {
 		context.bfs,
 	);
 	const previousDistance = context.intention.progress.lastDistance;
+	const previousFailures = context.intention.moveFailStreak;
 	context.intention.progress = updateProgressState(
 		context.intention.progress,
 		context.now,
@@ -89,8 +93,7 @@ export function introspect(context: IntrospectionContext): IntrospectionResult {
 		context.selfX === context.intention.targetXY.x &&
 		context.selfY === context.intention.targetXY.y;
 	const failed =
-		!context.moveSucceeded &&
-		context.intention.moveFailStreak >= STALL_MOVE_FAILS;
+		!context.moveSucceeded && previousFailures + 1 >= STALL_MOVE_FAILS;
 	const stalled =
 		context.intention.progress.stepsTaken >= STALL_NO_PROGRESS_STEPS &&
 		previousDistance !== null &&
@@ -99,12 +102,14 @@ export function introspect(context: IntrospectionContext): IntrospectionResult {
 		previousDistance !== null &&
 		distanceToTargetValue !== null &&
 		distanceToTargetValue < previousDistance;
+	const shouldReconsider = reachedTarget || failed || stalled;
 
 	return {
 		progressed,
 		reachedTarget,
 		failed,
 		stalled,
+		shouldReconsider,
 		distanceToTarget: distanceToTargetValue,
 		previousDistanceToTarget: previousDistance,
 	};

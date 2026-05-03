@@ -85,6 +85,7 @@ async function loop(): Promise<void> {
 
 	let intention: Intention | null = null;
 	const observedEmptySpawns = new Map<number, number>(); // tileId → visitedAt ms
+	let stuckIterations = 0; // count of iterations with no step
 
 	while (true) {
 		const selfId = tileId(map, selfX, selfY);
@@ -163,12 +164,45 @@ async function loop(): Promise<void> {
 		);
 
 		if (!step) {
+			stuckIterations++;
 			console.log(
-				`[wait] no step — carrying=${carrying} distToDelivery=${map.baseReverseDistToDelivery[selfId]} pos=(${selfX},${selfY})`,
+				`[wait] no step — carrying=${carrying} distToDelivery=${map.baseReverseDistToDelivery[selfId]} pos=(${selfX},${selfY}) intention=${intention ? intention.kind : "null"} targetResult=${deliberation.targetResult ? "yes" : "no"} explore=${deliberation.explore ? `(${deliberation.explore.x},${deliberation.explore.y})` : "no"} stuck=${stuckIterations}`,
 			);
+			
+			// If stuck for too long with no viable action, reset spawn tracking to force re-exploration
+			if (stuckIterations >= 5) {
+				console.log(`[stuck] resetting spawn tracking after ${stuckIterations} iterations`);
+				observedEmptySpawns.clear();
+				stuckIterations = 0;
+			}
+			
+			// Detect stall: if we have an intention but can't plan a step, 
+			// it's blocked and should be reconsidered
+			if (intention) {
+				intention.moveFailStreak++;
+				const feedback = introspect({
+					intention,
+					map,
+					bfs,
+					selfX,
+					selfY,
+					now: Date.now(),
+					movementDurationMs,
+					moveSucceeded: false,
+				});
+				if (feedback.shouldReconsider) {
+					console.log(
+						`[intent] reconsider kind=${intention.kind} reason=no_step_available fails=${intention.moveFailStreak}`,
+					);
+					intention = null;
+				}
+			}
+			
 			await sleep(NO_STEP_WAIT_MS);
 			continue;
 		}
+
+		stuckIterations = 0; // reset counter when we successfully plan a step
 
 		const result = await client.move(step);
 		if (result) {
@@ -196,6 +230,12 @@ async function loop(): Promise<void> {
 					`[introspect] stalled kind=${intention!.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
 				);
 			}
+			if (feedback.shouldReconsider) {
+				console.log(
+					`[intent] reconsider kind=${intention!.kind} reason=${feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled"}`,
+				);
+				intention = null;
+			}
 		} else {
 			const feedback = introspect({
 				intention,
@@ -215,6 +255,12 @@ async function loop(): Promise<void> {
 				console.log(
 					`[introspect] failure kind=${intention!.kind} fails=${intention!.moveFailStreak}`,
 				);
+			}
+			if (feedback.shouldReconsider) {
+				console.log(
+					`[intent] reconsider kind=${intention!.kind} reason=${feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled"}`,
+				);
+				intention = null;
 			}
 			await sleep(movementDurationMs);
 		}
