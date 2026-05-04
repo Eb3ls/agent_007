@@ -167,9 +167,9 @@ async function loop(): Promise<void> {
 				intention.targetXY.y,
 			);
 			if (intention.plan.length === 0) {
-				log.error(
-					"plan",
-					`target unreachable kind=${intention.kind}, clearing`,
+				log.warn(
+					"intent",
+					`terminal kind=${intention.kind} reason=unreachable`,
 				);
 				intention = null;
 			}

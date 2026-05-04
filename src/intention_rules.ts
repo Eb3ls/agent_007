@@ -1,7 +1,7 @@
+import { checkIntentionViability } from "./reconsider.js";
 import { tileId, type StaticMap } from "./static_map.js";
 import { INTENTION_UTILITY_EPSILON } from "./config.js";
 import type { BeliefStore } from "./belief_store.js";
-import { isIntentionViable } from "./reconsider.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 import type { Intention } from "./intention.js";
 
@@ -40,7 +40,7 @@ function evaluateCandidate(
 ): { pass: boolean; score: number } {
 	// Current intention gets a small bonus for retention
 	if (candidate.source === "current") {
-		const viable = isIntentionViable(
+		const viability = checkIntentionViability(
 			context.myId,
 			candidate.intention,
 			context.beliefs,
@@ -51,7 +51,7 @@ function evaluateCandidate(
 			context.now,
 			context.movementDurationMs,
 		);
-		if (!viable) return { pass: false, score: 0 };
+		if (!viability.viable) return { pass: false, score: 0 };
 		return { pass: true, score: INTENTION_UTILITY_EPSILON / 2 };
 	}
 

@@ -8,6 +8,17 @@ import type { BeliefStore } from "./belief_store.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 import type { Intention } from "./intention.js";
 
+export type TerminalReason =
+	| "succeeded" // target reached with expected outcome
+	| "target_lost" // parcel gone, stolen, or belief stale
+	| "unreachable" // no path to target in current BFS
+	| "move_blocked" // moveFailStreak >= MAX_MOVE_FAIL_STREAK
+	| "aged"; // intention exceeded INTENTION_MAX_AGE_STEPS
+
+export type ViabilityCheck =
+	| { viable: true }
+	| { viable: false; reason: TerminalReason };
+
 function computeTargetDistance(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -43,9 +54,9 @@ function checkTargetParcel(
 	return true;
 }
 
-// Structural validity check — safe to call multiple times per tick, no side-effects.
-// Returns false when the intention can no longer be pursued.
-export function isIntentionViable(
+// Gate function — returns why an intention is no longer viable, or viable=true.
+// Safe to call multiple times per tick (no side-effects).
+export function checkIntentionViability(
 	myId: string,
 	intention: Intention,
 	beliefs: BeliefStore,
@@ -55,14 +66,36 @@ export function isIntentionViable(
 	selfY: number,
 	now: number,
 	movementDurationMs: number,
-): boolean {
-	if (selfX === intention.targetXY.x && selfY === intention.targetXY.y)
-		return false;
+): ViabilityCheck {
+	// 1) Target reached — distinguish succeeded from target_lost for pickup/detour
+	if (selfX === intention.targetXY.x && selfY === intention.targetXY.y) {
+		if (intention.kind === "pickup" || intention.kind === "detour") {
+			const parcel = intention.targetId
+				? beliefs.parcels.get(intention.targetId)
+				: undefined;
+			if (parcel?.carriedBy === myId)
+				return { viable: false, reason: "succeeded" };
+			return { viable: false, reason: "target_lost" };
+		}
+		return { viable: false, reason: "succeeded" };
+	}
+
+	// 2) Parcel gone or belief stale while en route
 	if (!checkTargetParcel(myId, intention, beliefs, now, movementDurationMs))
-		return false;
-	if (computeTargetDistance(map, bfs, intention) === null) return false;
-	if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK) return false;
+		return { viable: false, reason: "target_lost" };
+
+	// 3) No path to target in current BFS
+	if (computeTargetDistance(map, bfs, intention) === null)
+		return { viable: false, reason: "unreachable" };
+
+	// 4) Too many consecutive move failures
+	if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK)
+		return { viable: false, reason: "move_blocked" };
+
+	// 5) Intention timed out
 	const ageSteps = (now - intention.committedAt) / movementDurationMs;
-	if (ageSteps >= INTENTION_MAX_AGE_STEPS) return false;
-	return true;
+	if (ageSteps >= INTENTION_MAX_AGE_STEPS)
+		return { viable: false, reason: "aged" };
+
+	return { viable: true };
 }

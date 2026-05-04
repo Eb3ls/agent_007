@@ -16,10 +16,11 @@ import {
 	SPAWN_VISITED_TTL_STEPS,
 } from "./config.js";
 import { type Intention, makeIntention } from "./intention.js";
+import { checkIntentionViability } from "./reconsider.js";
 import { tileId, type StaticMap } from "./static_map.js";
 import type { BeliefStore } from "./belief_store.js";
-import { isIntentionViable } from "./reconsider.js";
 import type { BfsFromSelf } from "./pathfinder.js";
+import { log } from "./logger.js";
 
 export type DeliberationContext = {
 	myId: string;
@@ -77,19 +78,28 @@ function markExploreArrival(context: DeliberationContext): void {
 export function deliberate(context: DeliberationContext): DeliberationOutcome {
 	markExploreArrival(context);
 
-	const needsDeliberation =
-		!context.intention ||
-		!isIntentionViable(
-			context.myId,
-			context.intention,
-			context.beliefs,
-			context.map,
-			context.bfs,
-			context.selfX,
-			context.selfY,
-			context.now,
-			context.movementDurationMs,
+	const viability = context.intention
+		? checkIntentionViability(
+				context.myId,
+				context.intention,
+				context.beliefs,
+				context.map,
+				context.bfs,
+				context.selfX,
+				context.selfY,
+				context.now,
+				context.movementDurationMs,
+			)
+		: null;
+
+	if (viability && !viability.viable) {
+		log.warn(
+			"intent",
+			`terminal kind=${context.intention!.kind} reason=${viability.reason}`,
 		);
+	}
+
+	const needsDeliberation = !viability || !viability.viable;
 
 	if (!needsDeliberation) {
 		return {
