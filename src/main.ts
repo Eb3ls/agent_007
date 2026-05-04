@@ -21,6 +21,7 @@ import {
 } from "./belief_store.js";
 import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
+import { checkIntentionViability, shouldReconsider } from "./reconsider.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
 import { tileId } from "./static_map.js";
@@ -130,34 +131,113 @@ async function loop(): Promise<void> {
 		}
 
 		const now = Date.now();
-		const deliberation = deliberate({
-			myId,
-			map,
-			beliefs: client.beliefs,
-			bfs,
-			selfX,
-			selfY,
-			now,
-			movementDurationMs,
-			observationDistance,
-			capacity,
-			decayIntervalMs,
-			carry,
-			intention,
-			observedEmptySpawns,
-		});
 
-		if (!deliberation.replanned && intention) {
-			log.debug(
-				"intent",
-				`commit kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movementDurationMs)}steps fails=${intention.moveFailStreak}`,
+		// Gate 1: viability — succeeded / impossible / aged / unreachable
+		if (intention) {
+			const viability = checkIntentionViability(
+				myId,
+				intention,
+				client.beliefs,
+				map,
+				bfs,
+				selfX,
+				selfY,
+				now,
+				movementDurationMs,
 			);
-		} else {
-			intention = deliberation.intention;
+			if (!viability.viable) {
+				log.warn(
+					"intent",
+					`terminal kind=${intention.kind} reason=${viability.reason}`,
+				);
+				intention = null;
+			}
+		}
+
+		// Gate 2: sound — next step blocked or plan empty → rebuild plan, keep I
+		if (intention && !isSoundPlan(intention.plan, selfX, selfY, map, blocked)) {
+			intention.plan = buildPlan(
+				map,
+				bfs,
+				intention.targetXY.x,
+				intention.targetXY.y,
+			);
+			if (intention.plan.length === 0) {
+				log.warn(
+					"intent",
+					`sound-fail kind=${intention.kind} reason=unreachable`,
+				);
+				intention = null;
+			}
+		}
+
+		// Gate 3: reconsider — meta-level gate, only when empty
+		if (
+			intention &&
+			shouldReconsider(
+				intention,
+				map,
+				bfs,
+				client.beliefs,
+				carry,
+				decayIntervalMs,
+				movementDurationMs,
+			)
+		) {
+			const candidate = deliberate({
+				myId,
+				map,
+				beliefs: client.beliefs,
+				bfs,
+				selfX,
+				selfY,
+				now,
+				movementDurationMs,
+				observationDistance,
+				capacity,
+				decayIntervalMs,
+				carry,
+				intention,
+				observedEmptySpawns,
+			});
+			if (
+				candidate &&
+				(candidate.kind !== intention.kind ||
+					candidate.targetXY.x !== intention.targetXY.x ||
+					candidate.targetXY.y !== intention.targetXY.y)
+			) {
+				log.warn(
+					"intent",
+					`reconsider→replan kind=${candidate.kind} target=(${candidate.targetXY.x},${candidate.targetXY.y}) plan=${candidate.plan.length}steps`,
+				);
+				intention = candidate;
+				// no re-sound needed: deliberate() built plan via buildPlan(bfs)
+				// which excludes `blocked` by construction → plan[0] is always sound
+			}
+		}
+
+		// Initial deliberation: no intention → option + filter + plan
+		if (!intention) {
+			intention = deliberate({
+				myId,
+				map,
+				beliefs: client.beliefs,
+				bfs,
+				selfX,
+				selfY,
+				now,
+				movementDurationMs,
+				observationDistance,
+				capacity,
+				decayIntervalMs,
+				carry,
+				intention: null,
+				observedEmptySpawns,
+			});
 			if (intention)
 				log.warn(
 					"intent",
-					`replan kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
+					`new kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
 				);
 		}
 
@@ -176,24 +256,11 @@ async function loop(): Promise<void> {
 			}
 		}
 
-		// Sound check: plan empty or next step blocked → rebuild (keep intention)
-		if (
-			intention &&
-			!isSoundPlan(intention.plan, selfX, selfY, map, blocked)
-		) {
-			intention.plan = buildPlan(
-				map,
-				bfs,
-				intention.targetXY.x,
-				intention.targetXY.y,
+		if (intention) {
+			log.debug(
+				"intent",
+				`commit kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movementDurationMs)}steps fails=${intention.moveFailStreak}`,
 			);
-			if (intention.plan.length === 0) {
-				log.warn(
-					"intent",
-					`terminal kind=${intention.kind} reason=unreachable`,
-				);
-				intention = null;
-			}
 		}
 
 		if (!intention) {

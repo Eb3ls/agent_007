@@ -24,6 +24,9 @@ export const DETOUR_UTILITY_EPSILON = 1;
 
 // Intention layer: thresholds for path commitment and forced replan.
 export const INTENTION_UTILITY_EPSILON = 2; // must be > DETOUR_UTILITY_EPSILON to avoid flicker
+// Opportunistic reconsider: when empty (kind=pickup/explore), trigger re-deliberation if
+// a fresh pickup candidate beats the committed intention's utility by this margin.
+export const RECONSIDER_OPPORTUNITY_MARGIN = 5;
 export const MAX_MOVE_FAIL_STREAK = 3;
 export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms
 export const PARCEL_BELIEF_STALE_STEPS = 4; // steps out-of-view before treating parcel as lost
