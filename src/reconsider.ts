@@ -2,7 +2,9 @@ import {
 	INTENTION_MAX_AGE_STEPS,
 	MAX_MOVE_FAIL_STREAK,
 	PARCEL_BELIEF_STALE_STEPS,
+	RECONSIDER_OPPORTUNITY_MARGIN,
 } from "./config.js";
+import { pickBestParcelTarget } from "./planner.js";
 import { tileId, type StaticMap } from "./static_map.js";
 import type { BeliefStore } from "./belief_store.js";
 import type { BfsFromSelf } from "./pathfinder.js";
@@ -52,6 +54,33 @@ function checkTargetParcel(
 	)
 		return false;
 	return true;
+}
+
+// Meta-level reconsider gate: should we re-deliberate even though intention is still viable?
+// Only triggers when empty — carrying agents commit to deliver/detour until viability fails.
+export function shouldReconsider(
+	intention: Intention,
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	beliefs: BeliefStore,
+	carry: { n: number },
+	decayIntervalMs: number,
+	movementDurationMs: number,
+): boolean {
+	if (carry.n > 0) return false;
+	if (intention.kind !== "pickup" && intention.kind !== "explore") return false;
+	const freshTarget = pickBestParcelTarget(
+		map,
+		bfs,
+		beliefs,
+		decayIntervalMs,
+		movementDurationMs,
+	);
+	return (
+		freshTarget !== null &&
+		freshTarget.utility >
+			(intention.expectedUtility ?? 0) + RECONSIDER_OPPORTUNITY_MARGIN
+	);
 }
 
 // Gate function — returns why an intention is no longer viable, or viable=true.

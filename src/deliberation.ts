@@ -16,11 +16,9 @@ import {
 	SPAWN_VISITED_TTL_STEPS,
 } from "./config.js";
 import { type Intention, makeIntention } from "./intention.js";
-import { checkIntentionViability } from "./reconsider.js";
 import { tileId, type StaticMap } from "./static_map.js";
 import type { BeliefStore } from "./belief_store.js";
 import type { BfsFromSelf } from "./pathfinder.js";
-import { log } from "./logger.js";
 
 export type DeliberationContext = {
 	myId: string;
@@ -42,11 +40,6 @@ export type DeliberationContext = {
 	};
 	intention: Intention | null;
 	observedEmptySpawns: Map<number, number>;
-};
-
-export type DeliberationOutcome = {
-	replanned: boolean;
-	intention: Intention | null;
 };
 
 function freshVisitedSpawns(
@@ -75,39 +68,14 @@ function markExploreArrival(context: DeliberationContext): void {
 	}
 }
 
-export function deliberate(context: DeliberationContext): DeliberationOutcome {
+// Pure option + filter + plan: generates candidates, selects best, builds plan.
+// Does NOT check viability or reconsider — caller is responsible for those gates.
+// If current intention is provided it is included as a candidate (retention bias).
+// Returns null if no viable candidate or no path found.
+export function deliberate(context: DeliberationContext): Intention | null {
 	markExploreArrival(context);
 
-	const viability = context.intention
-		? checkIntentionViability(
-				context.myId,
-				context.intention,
-				context.beliefs,
-				context.map,
-				context.bfs,
-				context.selfX,
-				context.selfY,
-				context.now,
-				context.movementDurationMs,
-			)
-		: null;
-
-	if (viability && !viability.viable) {
-		log.warn(
-			"intent",
-			`terminal kind=${context.intention!.kind} reason=${viability.reason}`,
-		);
-	}
-
-	const needsDeliberation = !viability || !viability.viable;
-
-	if (!needsDeliberation) {
-		return {
-			replanned: false,
-			intention: context.intention,
-		};
-	}
-
+	// option: generate candidates based on carry state
 	const targetResult =
 		context.carry.n > 0
 			? null
@@ -147,27 +115,19 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 					),
 				)
 			: null;
-
-	// Compute delivery target once (always available when carrying)
 	const delivery =
 		context.carry.n > 0
 			? nearestDeliveryTile(context.map, context.bfs)
 			: null;
 
-	// Build candidates and let rules engine pick the best one
+	// build candidate list
 	const candidates: IntentionCandidate[] = [];
 
-	// Add current intention (if still valid) as a candidate for retention
 	if (context.intention) {
-		candidates.push({
-			intention: context.intention,
-			source: "current",
-		});
+		candidates.push({ intention: context.intention, source: "current" });
 	}
 
-	// Add available actions based on carry state
 	if (context.carry.n > 0) {
-		// When carrying: detour and deliver are options
 		if (detourResult) {
 			candidates.push({
 				intention: makeIntention(
@@ -187,7 +147,6 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 			});
 		}
 	} else {
-		// When empty: pickup and explore are options
 		if (targetResult) {
 			candidates.push({
 				intention: makeIntention(
@@ -208,7 +167,7 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 		}
 	}
 
-	// Evaluate candidates using rules and pick the best
+	// filter: pick best candidate
 	const ruleContext: IntentionRuleContext = {
 		myId: context.myId,
 		map: context.map,
@@ -224,27 +183,21 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 		},
 	};
 
-	const selectedCandidate = selectBestIntention(ruleContext, candidates);
-	const candidate = selectedCandidate?.intention ?? null;
+	const selected = selectBestIntention(ruleContext, candidates);
+	if (!selected) return null;
 
-	let newIntention: Intention | null = null;
-	if (candidate) {
-		const plan = buildPlan(
-			context.map,
-			context.bfs,
-			candidate.targetXY.x,
-			candidate.targetXY.y,
-		);
-		newIntention = {
-			...candidate,
-			committedAt: context.now,
-			moveFailStreak: 0,
-			plan,
-		};
+	// plan: build path for selected intention
+	const plan = buildPlan(
+		context.map,
+		context.bfs,
+		selected.intention.targetXY.x,
+		selected.intention.targetXY.y,
+	);
+	if (plan.length === 0) return null;
+
+	// Preserve original intention fields (moveFailStreak, committedAt) when keeping current
+	if (selected.source === "current") {
+		return { ...context.intention!, plan };
 	}
-
-	return {
-		replanned: true,
-		intention: newIntention,
-	};
+	return { ...selected.intention, committedAt: context.now, moveFailStreak: 0, plan };
 }

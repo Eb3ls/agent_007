@@ -2,6 +2,7 @@ import {
 	createBeliefStore,
 	evictStale,
 	markAgentDisconnected,
+	recordCompetitorPositions,
 	updateFromSensing,
 	type BeliefStore,
 } from "./belief_store.js";
@@ -108,6 +109,12 @@ export class GameClient {
 					this.beliefs,
 					movMs * PARCEL_TTL_MULT,
 					movMs * AGENT_TTL_MULT,
+				);
+				recordCompetitorPositions(
+					this.beliefs,
+					sensing.agents,
+					Date.now(),
+					movMs,
 				);
 			}
 			// this.logEvent("sensing", {
