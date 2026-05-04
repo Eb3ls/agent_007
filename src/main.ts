@@ -21,6 +21,7 @@ import { deliberate } from "./deliberation.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
 import { tileId } from "./static_map.js";
+import { log } from "./logger.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -29,7 +30,7 @@ const host = process.env.DELIVEROO_HOST;
 const token = process.env.DELIVEROO_TOKEN;
 
 if (!host || !token) {
-	console.error("Missing DELIVEROO_HOST or DELIVEROO_TOKEN");
+	log.error("main", "Missing DELIVEROO_HOST or DELIVEROO_TOKEN");
 	process.exit(1);
 }
 
@@ -68,10 +69,11 @@ async function loop(): Promise<void> {
 		selfY = startY;
 
 	const map = client.staticMap;
-	console.log(
-		`[map] tiles=${map.tiles.size} | delivery_zones=${map.deliveryTileIds.length}`,
+	log.info(
+		"map",
+		`tiles=${map.tiles.size} delivery_zones=${map.deliveryTileIds.length}`,
 	);
-	console.log(`[main] starting loop at (${selfX},${selfY})`);
+	log.info("main", `starting loop at (${selfX},${selfY})`);
 
 	const decayIntervalMs = parseDecayInterval(
 		client.config?.GAME.parcels.decaying_event,
@@ -110,9 +112,7 @@ async function loop(): Promise<void> {
 		if (shouldDrop(map, selfId, carrying)) {
 			const dropped = await client.putdown();
 			applyDelivery(client.beliefs, myId);
-			console.log(
-				`[deliver] putdown=${dropped.length} cleared=${carry.n}`,
-			);
+			log.ok("deliver", `putdown=${dropped.length} cleared=${carry.n}`);
 			continue;
 		}
 
@@ -120,7 +120,7 @@ async function loop(): Promise<void> {
 		if (parcelAtFeet) {
 			const picked = await client.pickup();
 			applyPickupResult(client.beliefs, picked, myId);
-			console.log(`[pickup] picked=${picked.length}`);
+			log.ok("pickup", `picked=${picked.length}`);
 			continue;
 		}
 
@@ -143,14 +143,16 @@ async function loop(): Promise<void> {
 		});
 
 		if (!deliberation.replanned && intention) {
-			console.log(
-				`[intent] commit kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movementDurationMs)}steps fails=${intention.moveFailStreak}`,
+			log.debug(
+				"intent",
+				`commit kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movementDurationMs)}steps fails=${intention.moveFailStreak}`,
 			);
 		} else {
 			intention = deliberation.intention;
 			if (intention)
-				console.log(
-					`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)} plan=${intention.plan.length}steps`,
+				log.warn(
+					"intent",
+					`replan kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
 				);
 		}
 
@@ -166,21 +168,25 @@ async function loop(): Promise<void> {
 				intention.targetXY.y,
 			);
 			if (intention.plan.length === 0) {
-				console.log(
-					`[plan] target unreachable kind=${intention.kind}, clearing`,
+				log.error(
+					"plan",
+					`target unreachable kind=${intention.kind}, clearing`,
 				);
 				intention = null;
 			}
 		}
 
 		if (!intention) {
+			if (stuckIterations === 0)
+				log.warn(
+					"wait",
+					`no intention — carrying=${carrying} pos=(${selfX},${selfY})`,
+				);
 			stuckIterations++;
-			console.log(
-				`[wait] no intention — carrying=${carrying} pos=(${selfX},${selfY}) stuck=${stuckIterations}`,
-			);
 			if (stuckIterations >= 5) {
-				console.log(
-					`[stuck] resetting spawn tracking after ${stuckIterations} iterations`,
+				log.warn(
+					"stuck",
+					`resetting spawn tracking after ${stuckIterations} iterations`,
 				);
 				observedEmptySpawns.clear();
 				stuckIterations = 0;
@@ -191,8 +197,9 @@ async function loop(): Promise<void> {
 
 		stuckIterations = 0;
 		const step = intention.plan.shift()!;
-		console.log(
-			`[plan] step=${step} remaining=${intention.plan.length} kind=${intention.kind}`,
+		log.debug(
+			"plan",
+			`step=${step} remaining=${intention.plan.length} kind=${intention.kind}`,
 		);
 
 		const result = await client.move(step);
@@ -212,20 +219,24 @@ async function loop(): Promise<void> {
 				movementDurationMs,
 				moveSucceeded: true,
 			});
-			console.log(`[move] ${step} → ok@(${selfX},${selfY})`);
+			log.ok("move", `${step} → (${selfX},${selfY})`);
 			intention.moveFailStreak = 0;
-			if (feedback.progressed) {
-				console.log(
-					`[introspect] progress kind=${intention.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
+			if (feedback.stalled)
+				log.warn(
+					"introspect",
+					`stalled kind=${intention.kind} dist=${feedback.distanceToTarget ?? "n/a"}`,
 				);
-			} else if (feedback.stalled) {
-				console.log(
-					`[introspect] stalled kind=${intention.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
-				);
-			}
 			if (feedback.shouldReconsider) {
-				console.log(
-					`[intent] reconsider kind=${intention.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? (feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled")}`,
+				const reason =
+					feedback.failure?.reason ??
+					(feedback.reachedTarget
+						? "reached"
+						: feedback.failed
+							? "failed"
+							: "stalled");
+				log.warn(
+					"intent",
+					`reconsider kind=${intention.kind} reason=${reason} action=${feedback.recoveryAction ?? "drop"}`,
 				);
 				if (feedback.recoveryAction !== "retry") intention = null;
 				else intention.plan = []; // retry: rebuild plan next tick
@@ -247,17 +258,21 @@ async function loop(): Promise<void> {
 				movementDurationMs,
 				moveSucceeded: false,
 			});
-			console.log(
-				`[move] ${step} → FAILED (wait ${movementDurationMs}ms)`,
+			log.error(
+				"move",
+				`${step} → FAILED fails=${intention?.moveFailStreak ?? 0}`,
 			);
-			if (intention && feedback.failed) {
-				console.log(
-					`[introspect] failure kind=${intention.kind} fails=${intention.moveFailStreak}`,
-				);
-			}
 			if (feedback.shouldReconsider) {
-				console.log(
-					`[intent] reconsider kind=${intention!.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? (feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled")}`,
+				const reason =
+					feedback.failure?.reason ??
+					(feedback.reachedTarget
+						? "reached"
+						: feedback.failed
+							? "failed"
+							: "stalled");
+				log.warn(
+					"intent",
+					`reconsider kind=${intention!.kind} reason=${reason} action=${feedback.recoveryAction ?? "drop"}`,
 				);
 				if (feedback.recoveryAction !== "retry") intention = null;
 				// else: plan already cleared, rebuild next tick
