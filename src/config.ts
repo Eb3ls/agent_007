@@ -31,6 +31,10 @@ export const PARCEL_BELIEF_STALE_STEPS = 4; // steps out-of-view before treating
 // Exploration: how many steps to avoid re-visiting a spawn tile after arriving empty.
 export const SPAWN_VISITED_TTL_STEPS = 100;
 
+// Competitor heatmap: exponential decay horizon in steps.
+// weight(t) = weight(0) * exp(-Δsteps / MEMORY_DECAY_HORIZON_STEPS)
+export const MEMORY_DECAY_HORIZON_STEPS = 50; // ~5s @ 100ms/step, calibratable from logs
+
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
 export const NO_STEP_WAIT_MS = 200; // no plan available → retry

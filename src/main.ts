@@ -14,7 +14,11 @@ import {
 	parcelHere,
 	shouldDrop,
 } from "./planner.js";
-import { applyDelivery, applyPickupResult } from "./belief_store.js";
+import {
+	applyDelivery,
+	applyPickupResult,
+	topCompetitorTiles,
+} from "./belief_store.js";
 import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
 import { GameClient } from "./game_client.js";
@@ -88,8 +92,10 @@ async function loop(): Promise<void> {
 	let intention: Intention | null = null;
 	const observedEmptySpawns = new Map<number, number>(); // tileId → visitedAt ms
 	let stuckIterations = 0; // count of iterations with no step
+	let loopCount = 0;
 
 	while (true) {
+		loopCount++;
 		const selfId = tileId(map, selfX, selfY);
 		const blocked = computeBlockedTiles(
 			map,
@@ -153,6 +159,21 @@ async function loop(): Promise<void> {
 					"intent",
 					`replan kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
 				);
+		}
+
+		if (loopCount % 50 === 0) {
+			const top = topCompetitorTiles(
+				client.beliefs,
+				5,
+				now,
+				movementDurationMs,
+			);
+			if (top.length > 0) {
+				log.info(
+					"memory",
+					`competitor top5: ${top.map((t) => `(${t.x},${t.y})=${t.weight.toFixed(1)}`).join(" ")}`,
+				);
+			}
 		}
 
 		// Sound check: plan empty or next step blocked → rebuild (keep intention)

@@ -4,23 +4,27 @@ import type {
 	IOParcel,
 	IOSensing,
 } from "@unitn-asa/deliveroo-js-sdk";
+import { MEMORY_DECAY_HORIZON_STEPS } from "./config.js";
 
 export type ParcelBelief = IOParcel & {
-	firstSeenAt: number;
 	lastSeenAt: number;
 	inView: boolean;
 };
 export type AgentBelief = IOAgent & {
-	firstSeenAt: number;
 	lastSeenAt: number;
 	inView: boolean;
 };
 export type CrateBelief = IOCrate & { lastSeenAt: number; inView: boolean };
 
+// Accumulated presence weight for competitor agents, keyed by "x,y".
+// Decays exponentially between updates; updated each sensing from in-view agents.
+export type CompetitorEntry = { weight: number; lastUpdate: number };
+
 export type BeliefStore = {
 	parcels: Map<string, ParcelBelief>;
 	agents: Map<string, AgentBelief>;
 	crates: Map<string, CrateBelief>;
+	competitorHeatmap: Map<string, CompetitorEntry>; // key = "x,y"
 };
 
 export function createBeliefStore(): BeliefStore {
@@ -28,6 +32,7 @@ export function createBeliefStore(): BeliefStore {
 		parcels: new Map(),
 		agents: new Map(),
 		crates: new Map(),
+		competitorHeatmap: new Map(),
 	};
 }
 
@@ -47,20 +52,13 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 	const now = Date.now();
 
 	for (const p of sensing.parcels) {
-		const existing = b.parcels.get(p.id);
-		b.parcels.set(p.id, {
-			...p,
-			firstSeenAt: existing?.firstSeenAt ?? now,
-			lastSeenAt: now,
-			inView: true,
-		});
+		b.parcels.set(p.id, { ...p, lastSeenAt: now, inView: true });
 	}
 	markAbsentOutOfView(b.parcels, sensing.parcels);
 
 	for (const a of sensing.agents) {
 		b.agents.set(a.id, {
 			...a,
-			firstSeenAt: b.agents.get(a.id)?.firstSeenAt ?? now,
 			lastSeenAt: now,
 			inView: true,
 		});
@@ -114,4 +112,65 @@ export function evictStale(
 	for (const [id, a] of b.agents) {
 		if (!a.inView && now - a.lastSeenAt > agentTtlMs) b.agents.delete(id);
 	}
+}
+
+// Records in-view competitor positions into the heatmap.
+// sensing.agents never includes self — no filter needed.
+export function recordCompetitorPositions(
+	b: BeliefStore,
+	agents: IOAgent[],
+	now: number,
+	movementDurationMs: number,
+): void {
+	for (const a of agents) {
+		if (a.x === undefined || a.y === undefined) continue;
+		const key = `${Math.round(a.x)},${Math.round(a.y)}`;
+		const existing = b.competitorHeatmap.get(key);
+		if (existing) {
+			const ageSteps = (now - existing.lastUpdate) / movementDurationMs;
+			existing.weight =
+				existing.weight *
+					Math.exp(-ageSteps / MEMORY_DECAY_HORIZON_STEPS) +
+				1;
+			existing.lastUpdate = now;
+		} else {
+			b.competitorHeatmap.set(key, { weight: 1, lastUpdate: now });
+		}
+	}
+}
+
+// Returns current decayed weight at (x, y). 0 if never seen.
+export function competitorWeight(
+	b: BeliefStore,
+	x: number,
+	y: number,
+	now: number,
+	movementDurationMs: number,
+): number {
+	const entry = b.competitorHeatmap.get(`${x},${y}`);
+	if (!entry) return 0;
+	const ageSteps = (now - entry.lastUpdate) / movementDurationMs;
+	return entry.weight * Math.exp(-ageSteps / MEMORY_DECAY_HORIZON_STEPS);
+}
+
+// Returns top-N tiles sorted by decayed weight descending.
+export function topCompetitorTiles(
+	b: BeliefStore,
+	n: number,
+	now: number,
+	movementDurationMs: number,
+): { x: number; y: number; weight: number }[] {
+	const results: { x: number; y: number; weight: number }[] = [];
+	for (const [key, entry] of b.competitorHeatmap) {
+		const ageSteps = (now - entry.lastUpdate) / movementDurationMs;
+		const weight =
+			entry.weight * Math.exp(-ageSteps / MEMORY_DECAY_HORIZON_STEPS);
+		if (weight < 0.1) continue; // skip effectively-zero entries
+		const commaIdx = key.indexOf(",");
+		const x = Number(key.slice(0, commaIdx));
+		const y = Number(key.slice(commaIdx + 1));
+		results.push({ x, y, weight });
+	}
+	results.sort((a, b) => b.weight - a.weight);
+	return results.slice(0, n);
 }
