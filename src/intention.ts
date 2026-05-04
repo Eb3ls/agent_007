@@ -3,9 +3,9 @@ import {
 	INTENTION_UTILITY_EPSILON,
 	MAX_MOVE_FAIL_STREAK,
 } from "./config.js";
-import type { BeliefStore } from "./belief_store.js";
-import type { BfsFromSelf } from "./pathfinder.js";
+import type { BfsFromSelf, Direction } from "./pathfinder.js";
 import { tileId, type StaticMap } from "./static_map.js";
+import type { BeliefStore } from "./belief_store.js";
 
 export type Intention = {
 	kind: "deliver" | "pickup" | "detour" | "explore";
@@ -15,6 +15,7 @@ export type Intention = {
 	committedAt: number;
 	moveFailStreak: number;
 	progress: IntentionProgress;
+	plan: Direction[];
 };
 
 export type IntentionProgress = {
@@ -51,6 +52,7 @@ export function makeIntention(
 		committedAt: now,
 		moveFailStreak: 0,
 		progress: createIntentionProgress(now),
+		plan: [] as Direction[],
 	};
 	return targetId !== undefined ? { ...base, targetId } : base;
 }
@@ -72,7 +74,11 @@ export function isIntentionStillValid(
 	const ageSteps = (now - intention.committedAt) / movementDurationMs;
 	if (ageSteps >= INTENTION_MAX_AGE_STEPS) return false;
 	if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK) return false;
-	const targetTileId = tileId(map, intention.targetXY.x, intention.targetXY.y);
+	const targetTileId = tileId(
+		map,
+		intention.targetXY.x,
+		intention.targetXY.y,
+	);
 	if (bfs.dist[targetTileId] === -1) return false;
 	if (
 		(intention.kind === "pickup" || intention.kind === "detour") &&

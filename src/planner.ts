@@ -1,18 +1,11 @@
 import {
-	AGENT_GRACE_STEPS,
-	EXPECTED_STEAL_HORIZON_STEPS,
-	INTENTION_MAX_AGE_STEPS,
-	INTENTION_UTILITY_EPSILON,
-	MAX_MOVE_FAIL_STREAK,
-} from "./config.js";
-import {
 	reconstructPath,
 	type BfsFromSelf,
 	type Direction,
 } from "./pathfinder.js";
+import { AGENT_GRACE_STEPS, EXPECTED_STEAL_HORIZON_STEPS } from "./config.js";
 import type { AgentBelief, BeliefStore, ParcelBelief } from "./belief_store.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
-import type { Intention } from "./intention.js";
 
 export function isAgentBlocking(
 	agent: AgentBelief,
@@ -309,28 +302,11 @@ export function pickBestDetourTarget(
 	return best ? { parcel: best, utility: bestSurplus } : null;
 }
 
-export function planStep(
+export function buildPlan(
 	map: StaticMap,
 	bfs: BfsFromSelf,
-	carrying: boolean,
-	target: PickResult | null,
-	detourTarget: PickResult | null,
-	exploreTarget: { x: number; y: number } | null,
-	commitTarget?: { x: number; y: number } | null,
-): Direction | null {
-	let dest: { x: number; y: number } | null;
-	if (commitTarget) {
-		dest = commitTarget;
-	} else if (carrying && detourTarget) {
-		dest = { x: detourTarget.parcel.x, y: detourTarget.parcel.y };
-	} else if (carrying) {
-		dest = nearestDeliveryTile(map, bfs);
-	} else if (target) {
-		dest = { x: target.parcel.x, y: target.parcel.y };
-	} else {
-		dest = exploreTarget;
-	}
-	if (!dest) return null;
-	return reconstructPath(map, bfs, dest.x, dest.y)?.[0] ?? null;
+	targetX: number,
+	targetY: number,
+): Direction[] {
+	return reconstructPath(map, bfs, targetX, targetY) ?? [];
 }
-

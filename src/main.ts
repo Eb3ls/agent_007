@@ -7,19 +7,19 @@ import {
 	parseDecayInterval,
 } from "./config.js";
 import {
+	buildPlan,
 	computeBlockedTiles,
 	deriveCarryState,
 	parcelHere,
-	planStep,
 	shouldDrop,
 } from "./planner.js";
 import { applyDelivery, applyPickupResult } from "./belief_store.js";
-import { deliberate } from "./deliberation.js";
-import type { Intention } from "./intention.js";
 import { introspect } from "./introspection.js";
-import { tileId } from "./static_map.js";
+import type { Intention } from "./intention.js";
+import { deliberate } from "./deliberation.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
+import { tileId } from "./static_map.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -94,6 +94,7 @@ async function loop(): Promise<void> {
 			client.beliefs,
 			movementDurationMs,
 		);
+		// dist to every tile
 		const bfs = bfsFromSelf(map, selfX, selfY, blocked);
 		const carry = deriveCarryState(
 			client.beliefs.parcels,
@@ -142,69 +143,53 @@ async function loop(): Promise<void> {
 
 		if (!deliberation.replanned && intention) {
 			console.log(
-				`[intent] commit kind=${intention!.kind} age=${Math.round((now - intention!.committedAt) / movementDurationMs)}steps fails=${intention!.moveFailStreak}`,
+				`[intent] commit kind=${intention.kind} age=${Math.round((now - intention.committedAt) / movementDurationMs)}steps fails=${intention.moveFailStreak}`,
 			);
 		} else {
 			intention = deliberation.intention;
 			if (intention)
 				console.log(
-					`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)}`,
+					`[intent] replan kind=${intention.kind} target=${JSON.stringify(intention.targetXY)} plan=${intention.plan.length}steps`,
 				);
 		}
 
-		const commitTarget = intention?.targetXY ?? null;
-		const step = planStep(
-			map,
-			bfs,
-			carrying,
-			deliberation.targetResult,
-			deliberation.detourResult,
-			deliberation.explore,
-			commitTarget,
-		);
+		// Rebuild plan if intention is valid but plan is empty (e.g. after a failed move)
+		if (intention && intention.plan.length === 0) {
+			intention.plan = buildPlan(
+				map,
+				bfs,
+				intention.targetXY.x,
+				intention.targetXY.y,
+			);
+			if (intention.plan.length === 0) {
+				console.log(
+					`[plan] target unreachable kind=${intention.kind}, clearing`,
+				);
+				intention = null;
+			}
+		}
 
-		if (!step) {
+		if (!intention) {
 			stuckIterations++;
 			console.log(
-				`[wait] no step — carrying=${carrying} distToDelivery=${map.baseReverseDistToDelivery[selfId]} pos=(${selfX},${selfY}) intention=${intention ? intention.kind : "null"} targetResult=${deliberation.targetResult ? "yes" : "no"} explore=${deliberation.explore ? `(${deliberation.explore.x},${deliberation.explore.y})` : "no"} stuck=${stuckIterations}`,
+				`[wait] no intention — carrying=${carrying} pos=(${selfX},${selfY}) stuck=${stuckIterations}`,
 			);
-			
-			// If stuck for too long with no viable action, reset spawn tracking to force re-exploration
 			if (stuckIterations >= 5) {
-				console.log(`[stuck] resetting spawn tracking after ${stuckIterations} iterations`);
+				console.log(
+					`[stuck] resetting spawn tracking after ${stuckIterations} iterations`,
+				);
 				observedEmptySpawns.clear();
 				stuckIterations = 0;
 			}
-			
-			// Detect stall: if we have an intention but can't plan a step, 
-			// it's blocked and should be reconsidered
-			if (intention) {
-				intention.moveFailStreak++;
-				const feedback = introspect({
-					myId,
-					intention,
-					beliefs: client.beliefs,
-					map,
-					bfs,
-					selfX,
-					selfY,
-					now: Date.now(),
-					movementDurationMs,
-					moveSucceeded: false,
-				});
-				if (feedback.shouldReconsider) {
-					console.log(
-						`[intent] reconsider kind=${intention.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? "no_step_available"} fails=${intention.moveFailStreak}`,
-					);
-					if (feedback.recoveryAction !== "retry") intention = null;
-				}
-			}
-			
 			await sleep(NO_STEP_WAIT_MS);
 			continue;
 		}
 
-		stuckIterations = 0; // reset counter when we successfully plan a step
+		stuckIterations = 0;
+		const step = intention.plan.shift()!;
+		console.log(
+			`[plan] step=${step} remaining=${intention.plan.length} kind=${intention.kind}`,
+		);
 
 		const result = await client.move(step);
 		if (result) {
@@ -224,23 +209,28 @@ async function loop(): Promise<void> {
 				moveSucceeded: true,
 			});
 			console.log(`[move] ${step} → ok@(${selfX},${selfY})`);
-			if (intention) intention.moveFailStreak = 0;
+			intention.moveFailStreak = 0;
 			if (feedback.progressed) {
 				console.log(
-					`[introspect] progress kind=${intention!.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
+					`[introspect] progress kind=${intention.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
 				);
 			} else if (feedback.stalled) {
 				console.log(
-					`[introspect] stalled kind=${intention!.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
+					`[introspect] stalled kind=${intention.kind} distance=${feedback.distanceToTarget ?? "n/a"} prev=${feedback.previousDistanceToTarget ?? "n/a"}`,
 				);
 			}
 			if (feedback.shouldReconsider) {
 				console.log(
-					`[intent] reconsider kind=${intention!.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? (feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled")}`,
+					`[intent] reconsider kind=${intention.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? (feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled")}`,
 				);
 				if (feedback.recoveryAction !== "retry") intention = null;
+				else intention.plan = []; // retry: rebuild plan next tick
 			}
 		} else {
+			if (intention) {
+				intention.moveFailStreak++;
+				intention.plan = []; // force plan rebuild next tick
+			}
 			const feedback = introspect({
 				myId,
 				intention,
@@ -256,10 +246,9 @@ async function loop(): Promise<void> {
 			console.log(
 				`[move] ${step} → FAILED (wait ${movementDurationMs}ms)`,
 			);
-			if (intention) intention.moveFailStreak++;
-			if (feedback.failed) {
+			if (intention && feedback.failed) {
 				console.log(
-					`[introspect] failure kind=${intention!.kind} fails=${intention!.moveFailStreak}`,
+					`[introspect] failure kind=${intention.kind} fails=${intention.moveFailStreak}`,
 				);
 			}
 			if (feedback.shouldReconsider) {
@@ -267,6 +256,7 @@ async function loop(): Promise<void> {
 					`[intent] reconsider kind=${intention!.kind} action=${feedback.recoveryAction ?? "drop"} reason=${feedback.failure?.reason ?? (feedback.reachedTarget ? "reached" : feedback.failed ? "failed" : "stalled")}`,
 				);
 				if (feedback.recoveryAction !== "retry") intention = null;
+				// else: plan already cleared, rebuild next tick
 			}
 			await sleep(movementDurationMs);
 		}

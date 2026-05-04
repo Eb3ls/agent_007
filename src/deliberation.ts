@@ -1,28 +1,28 @@
 import {
-	DETOUR_UTILITY_EPSILON,
-	EXPECTED_STEAL_HORIZON_STEPS,
-	SPAWN_VISITED_TTL_STEPS,
-} from "./config.js";
-import type { BeliefStore } from "./belief_store.js";
-import {
-	type Intention,
-	isIntentionStillValid,
-	makeIntention,
-} from "./intention.js";
-import type { PickResult } from "./planner.js";
-import {
+	buildPlan,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
 	pickBestDetourTarget,
 	pickBestParcelTarget,
 } from "./planner.js";
-import type { BfsFromSelf } from "./pathfinder.js";
-import { tileId, type StaticMap } from "./static_map.js";
 import {
 	selectBestIntention,
 	type IntentionCandidate,
 	type IntentionRuleContext,
 } from "./intention_rules.js";
+import {
+	DETOUR_UTILITY_EPSILON,
+	EXPECTED_STEAL_HORIZON_STEPS,
+	SPAWN_VISITED_TTL_STEPS,
+} from "./config.js";
+import {
+	type Intention,
+	isIntentionStillValid,
+	makeIntention,
+} from "./intention.js";
+import { tileId, type StaticMap } from "./static_map.js";
+import type { BeliefStore } from "./belief_store.js";
+import type { BfsFromSelf } from "./pathfinder.js";
 
 export type DeliberationContext = {
 	myId: string;
@@ -36,7 +36,12 @@ export type DeliberationContext = {
 	observationDistance: number;
 	capacity: number;
 	decayIntervalMs: number;
-	carry: { n: number; rewards: number[]; nearestDeliveryDist: number; ids: string[] };
+	carry: {
+		n: number;
+		rewards: number[];
+		nearestDeliveryDist: number;
+		ids: string[];
+	};
 	intention: Intention | null;
 	observedEmptySpawns: Map<number, number>;
 };
@@ -44,9 +49,6 @@ export type DeliberationContext = {
 export type DeliberationOutcome = {
 	replanned: boolean;
 	intention: Intention | null;
-	targetResult: PickResult | null;
-	detourResult: PickResult | null;
-	explore: { x: number; y: number } | null;
 };
 
 function freshVisitedSpawns(
@@ -62,9 +64,7 @@ function freshVisitedSpawns(
 	return freshVisited;
 }
 
-function markExploreArrival(
-	context: DeliberationContext,
-): void {
+function markExploreArrival(context: DeliberationContext): void {
 	if (
 		context.intention?.kind === "explore" &&
 		context.selfX === context.intention.targetXY.x &&
@@ -97,9 +97,6 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 		return {
 			replanned: false,
 			intention: context.intention,
-			targetResult: null,
-			detourResult: null,
-			explore: null,
 		};
 	}
 
@@ -145,7 +142,9 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 
 	// Compute delivery target once (always available when carrying)
 	const delivery =
-		context.carry.n > 0 ? nearestDeliveryTile(context.map, context.bfs) : null;
+		context.carry.n > 0
+			? nearestDeliveryTile(context.map, context.bfs)
+			: null;
 
 	// Build candidates and let rules engine pick the best one
 	const candidates: IntentionCandidate[] = [];
@@ -219,11 +218,24 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 	const selectedCandidate = selectBestIntention(ruleContext, candidates);
 	const candidate = selectedCandidate?.intention ?? null;
 
+	let newIntention: Intention | null = null;
+	if (candidate) {
+		const plan = buildPlan(
+			context.map,
+			context.bfs,
+			candidate.targetXY.x,
+			candidate.targetXY.y,
+		);
+		newIntention = {
+			...candidate,
+			committedAt: context.now,
+			moveFailStreak: 0,
+			plan,
+		};
+	}
+
 	return {
 		replanned: true,
-		intention: candidate ? { ...candidate, committedAt: context.now, moveFailStreak: 0 } : null,
-		targetResult,
-		detourResult,
-		explore,
+		intention: newIntention,
 	};
 }
