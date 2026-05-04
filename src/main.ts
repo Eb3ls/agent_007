@@ -1,5 +1,4 @@
 import {
-	CAPACITY_OVERRIDE,
 	FALLBACK_MOVEMENT_DURATION_MS,
 	FALLBACK_OBSERVATION_DISTANCE,
 	NO_STEP_WAIT_MS,
@@ -10,7 +9,6 @@ import {
 	buildPlan,
 	computeBlockedTiles,
 	deriveCarryState,
-	extendDeliveryPlan,
 	isSoundPlan,
 	parcelHere,
 	shouldDrop,
@@ -24,7 +22,6 @@ import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
 import {
 	checkIntentionViability,
-	shouldExtendDeliveryPlan,
 	shouldReconsider,
 } from "./reconsider.js";
 import { GameClient } from "./game_client.js";
@@ -93,8 +90,6 @@ async function loop(): Promise<void> {
 	const observationDistance =
 		client.config?.GAME.player.observation_distance ??
 		FALLBACK_OBSERVATION_DISTANCE;
-	const capacity = CAPACITY_OVERRIDE;
-
 	let intention: Intention | null = null;
 	const observedEmptySpawns = new Map<number, number>(); // tileId → visitedAt ms
 	let stuckIterations = 0; // count of iterations with no step
@@ -182,32 +177,6 @@ async function loop(): Promise<void> {
 			}
 		}
 
-		// Gate extension: opportunistic parcel pickup while delivering (carrying lock bypassed at plan level).
-		if (intention?.kind === "deliver") {
-			const via = shouldExtendDeliveryPlan(
-				intention,
-				map,
-				bfs,
-				client.beliefs,
-				carry,
-				decayIntervalMs,
-				movementDurationMs,
-				capacity,
-			);
-			if (via) {
-				const extended =
-					extendDeliveryPlan(map, bfs, via.parcel, blocked) ??
-					intention.plan;
-				if (extended !== intention.plan) {
-					intention.plan = extended;
-					log.info(
-						"extend",
-						`kind=deliver via=(${via.parcel.x},${via.parcel.y}) surplus=${via.utility.toFixed(1)}`,
-					);
-				}
-			}
-		}
-
 		// Gate 3 + initial deliberation: single call.
 		// Pass current intention when reconsidering so it competes as candidate (retention bias).
 		const reconsider =
@@ -248,7 +217,7 @@ async function loop(): Promise<void> {
 				if (changed)
 					log.warn(
 						"intent",
-						`${reconsider && prev ? "reconsider→replan" : "new"} kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
+						`${reconsider && prev ? "reconsider→replan" : "new"} kind=${intention.kind} carrying=${carry.n > 0} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
 					);
 			}
 		}

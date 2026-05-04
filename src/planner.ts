@@ -1,18 +1,22 @@
 import {
-	bfsFromSelf,
-	reconstructPath,
-	type BfsFromSelf,
-	type Direction,
-} from "./pathfinder.js";
-import {
 	beliefTrust,
 	type AgentBelief,
 	type BeliefStore,
 	type ParcelBelief,
 } from "./belief_store.js";
-import { AGENT_GRACE_STEPS, EXPECTED_STEAL_HORIZON_STEPS } from "./config.js";
+import {
+	AGENT_GRACE_STEPS,
+	CAPACITY_OVERRIDE,
+	EXPECTED_STEAL_HORIZON_STEPS,
+} from "./config.js";
+import {
+	reconstructPath,
+	type BfsFromSelf,
+	type Direction,
+} from "./pathfinder.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
 
+// In-view agents always block; out-of-view ones block only while last-seen belief retains trust ≥ 0.5.
 export function isAgentBlocking(
 	agent: AgentBelief,
 	movementDurationMs: number,
@@ -66,6 +70,7 @@ export function nearestDeliveryTile(
 	return bestId === -1 ? null : idToXY(map, bestId);
 }
 
+// Prefers spawns that minimize walk + delivery distance, skipping tiles in current FOV or recently visited.
 export function nearestOutOfViewSpawn(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -86,6 +91,7 @@ export function nearestOutOfViewSpawn(
 		const { x, y } = idToXY(map, spawnId);
 		if (Math.abs(x - selfX) + Math.abs(y - selfY) <= observationDistance)
 			continue;
+
 		const cost = distToSpawn + distSpawnToDelivery;
 		if (cost < bestCost) {
 			bestCost = cost;
@@ -95,6 +101,7 @@ export function nearestOutOfViewSpawn(
 	return bestId === -1 ? null : idToXY(map, bestId);
 }
 
+// True when standing on a delivery tile (dist=0) while carrying at least one parcel.
 export function shouldDrop(
 	map: StaticMap,
 	selfId: number,
@@ -115,6 +122,7 @@ export function parcelHere(
 	return undefined;
 }
 
+// In-view parcels report current value as-is; out-of-view ones decay by floor(elapsedMs / decayIntervalMs).
 export function currentReward(
 	p: ParcelBelief,
 	decayIntervalMs: number,
@@ -150,14 +158,20 @@ export function expectedReward(
 
 export type PickResult = { parcel: ParcelBelief; utility: number };
 
+// Returns the best parcel to target, with absolute pickup utility.
+// When empty (carry.n === 0): utility = parcel net value after decay to delivery.
+// When carrying: utility = total portfolio value (all carried + new parcel) after
+// taking the detour path self → parcel → delivery.
 export function pickBestParcelTarget(
 	map: StaticMap,
 	bfs: BfsFromSelf,
 	beliefs: BeliefStore,
 	decayIntervalMs: number,
 	movementDurationMs: number,
+	carry: CarryState,
 	stealHorizonSteps: number = EXPECTED_STEAL_HORIZON_STEPS,
 ): PickResult | null {
+	if (carry.n >= CAPACITY_OVERRIDE) return null;
 	const now = Date.now();
 	const decayPerStep = computeDecayPerStep(
 		decayIntervalMs,
@@ -175,17 +189,31 @@ export function pickBestParcelTarget(
 			map.baseReverseDistToDelivery[parcelTileId];
 		if (distParcelToDelivery === undefined || distParcelToDelivery === -1)
 			continue;
-		const reward = expectedReward(
+
+		const totalDist = distToParcel + distParcelToDelivery;
+		const parcelReward = expectedReward(
 			p,
 			decayIntervalMs,
 			movementDurationMs,
 			stealHorizonSteps,
 			now,
 		);
-		if (reward <= 0) continue;
-		const utility =
-			reward - decayPerStep * (distToParcel + distParcelToDelivery);
-		if (utility <= 0) continue;
+		if (parcelReward <= 0) continue;
+		const parcelNet =
+			parcelReward - decayCost(parcelReward, decayPerStep, totalDist);
+		if (parcelNet <= 0) continue;
+
+		let utility: number;
+		if (carry.n === 0) {
+			utility = parcelNet;
+		} else {
+			const carriedNet = carry.rewards.reduce(
+				(s, r) => s + r - decayCost(r, decayPerStep, totalDist),
+				0,
+			);
+			utility = carriedNet + parcelNet;
+		}
+
 		if (
 			utility > bestUtility ||
 			(utility === bestUtility && distToParcel < bestDistToParcel)
@@ -229,7 +257,8 @@ export function deriveCarryState(
 	};
 }
 
-function computeDecayPerStep(
+// Returns 0 when decayInterval is non-finite (game configured without decay).
+export function computeDecayPerStep(
 	decayIntervalMs: number,
 	movementDurationMs: number,
 ): number {
@@ -248,7 +277,7 @@ function nearestDeliveryDist(map: StaticMap, bfs: BfsFromSelf): number {
 }
 
 // Saturated decay cost: a parcel with reward R cannot lose more than R over t steps.
-function decayCost(
+export function decayCost(
 	reward: number,
 	decayPerStep: number,
 	steps: number,
@@ -256,69 +285,16 @@ function decayCost(
 	return Math.min(reward, decayPerStep * steps);
 }
 
-// Evaluates whether a mid-carry detour to pick up an additional parcel is worth it.
-// Uses the portfolio-aware formula with per-parcel saturation:
-//   surplus = R_p_expected − (decay_detour − decay_direct)
-// where decay costs are capped at each parcel's current reward.
-export function pickBestDetourTarget(
-	map: StaticMap,
-	bfs: BfsFromSelf,
-	beliefs: BeliefStore,
-	carry: CarryState,
-	decayIntervalMs: number,
-	movementDurationMs: number,
-	stealHorizonSteps: number,
-	capacity: number,
-	epsilon: number,
-): PickResult | null {
-	if (carry.n >= capacity) return null;
-	const now = Date.now();
-	const decayPerStep = computeDecayPerStep(
-		decayIntervalMs,
-		movementDurationMs,
-	);
-	const directDeliveryDist = carry.nearestDeliveryDist;
-
-	const decayDirect = carry.rewards.reduce(
-		(sum, reward) =>
-			sum + decayCost(reward, decayPerStep, directDeliveryDist),
+// Net portfolio value when delivering from dist steps away (per-parcel saturated decay).
+export function computeDeliverUtility(
+	rewards: number[],
+	decayPerStep: number,
+	dist: number,
+): number {
+	return rewards.reduce(
+		(s, r) => s + r - decayCost(r, decayPerStep, dist),
 		0,
 	);
-
-	let best: ParcelBelief | null = null;
-	let bestSurplus = -Infinity;
-
-	for (const p of beliefs.parcels.values()) {
-		if (p.carriedBy) continue;
-		const parcelTileId = tileId(map, p.x, p.y);
-		const distToParcel = bfs.dist[parcelTileId];
-		if (distToParcel === undefined || distToParcel === -1) continue;
-		const distParcelToDelivery =
-			map.baseReverseDistToDelivery[parcelTileId];
-		if (distParcelToDelivery === undefined || distParcelToDelivery === -1)
-			continue;
-		const detourTotalDist = distToParcel + distParcelToDelivery;
-		const parcelReward = expectedReward(
-			p,
-			decayIntervalMs,
-			movementDurationMs,
-			stealHorizonSteps,
-			now,
-		);
-		if (parcelReward <= 0) continue;
-		const decayDetour =
-			carry.rewards.reduce(
-				(sum, reward) =>
-					sum + decayCost(reward, decayPerStep, detourTotalDist),
-				0,
-			) + decayCost(parcelReward, decayPerStep, detourTotalDist);
-		const surplus = parcelReward - decayDetour + decayDirect;
-		if (surplus > epsilon && surplus > bestSurplus) {
-			bestSurplus = surplus;
-			best = p;
-		}
-	}
-	return best ? { parcel: best, utility: bestSurplus } : null;
 }
 
 export function buildPlan(
@@ -328,23 +304,6 @@ export function buildPlan(
 	targetY: number,
 ): Direction[] {
 	return reconstructPath(map, bfs, targetX, targetY) ?? [];
-}
-
-// Builds a two-leg plan: self→parcel then parcel→nearest-delivery, using dynamic BFS for both legs.
-export function extendDeliveryPlan(
-	map: StaticMap,
-	selfBfs: BfsFromSelf,
-	parcelXY: { x: number; y: number },
-	blocked: ReadonlySet<number>,
-): Direction[] | null {
-	const leg1 = reconstructPath(map, selfBfs, parcelXY.x, parcelXY.y);
-	if (!leg1) return null;
-	const parcelBfs = bfsFromSelf(map, parcelXY.x, parcelXY.y, blocked);
-	const delivery = nearestDeliveryTile(map, parcelBfs);
-	if (!delivery) return null;
-	const leg2 = reconstructPath(map, parcelBfs, delivery.x, delivery.y);
-	if (!leg2) return null;
-	return [...leg1, ...leg2];
 }
 
 // Returns false if the next planned step leads into a currently blocked tile.

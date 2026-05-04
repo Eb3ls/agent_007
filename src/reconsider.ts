@@ -1,5 +1,4 @@
 import {
-	DETOUR_UTILITY_EPSILON,
 	EXPECTED_STEAL_HORIZON_STEPS,
 	INTENTION_MAX_AGE_STEPS,
 	MAX_MOVE_FAIL_STREAK,
@@ -7,11 +6,12 @@ import {
 	RECONSIDER_OPPORTUNITY_MARGIN,
 } from "./config.js";
 import {
+	computeDecayPerStep,
+	computeDeliverUtility,
+	decayCost,
 	expectedReward,
-	pickBestDetourTarget,
 	pickBestParcelTarget,
 	type CarryState,
-	type PickResult,
 } from "./planner.js";
 import { tileId, type StaticMap } from "./static_map.js";
 import type { BeliefStore } from "./belief_store.js";
@@ -39,6 +39,7 @@ function computeTargetDistance(
 	return d === undefined || d === -1 ? null : d;
 }
 
+// False if the target parcel was stolen, has moved in-view, or belief has gone stale out-of-view.
 function checkTargetParcel(
 	myId: string,
 	intention: Intention,
@@ -51,6 +52,8 @@ function checkTargetParcel(
 	const parcel = beliefs.parcels.get(intention.targetId);
 	if (!parcel) return false;
 	if (parcel.carriedBy && parcel.carriedBy !== myId) return false;
+
+
 	if (
 		parcel.inView &&
 		(parcel.x !== intention.targetXY.x || parcel.y !== intention.targetXY.y)
@@ -64,67 +67,9 @@ function checkTargetParcel(
 	return true;
 }
 
-// Computes utility of a specific parcel at the current tick (same formula as pickBestParcelTarget).
-function computeCurrentTargetUtility(
-	targetId: string,
-	map: StaticMap,
-	bfs: BfsFromSelf,
-	beliefs: BeliefStore,
-	decayIntervalMs: number,
-	movementDurationMs: number,
-): number {
-	const p = beliefs.parcels.get(targetId);
-	if (!p || p.carriedBy) return 0;
-	const parcelTileId = tileId(map, p.x, p.y);
-	const dist = bfs.dist[parcelTileId];
-	const distToDel = map.baseReverseDistToDelivery[parcelTileId];
-	if (dist === undefined || dist === -1 || distToDel === undefined || distToDel === -1) return 0;
-	const reward = expectedReward(p, decayIntervalMs, movementDurationMs, EXPECTED_STEAL_HORIZON_STEPS, Date.now());
-	if (reward <= 0) return 0;
-	const decayPerStep = Number.isFinite(decayIntervalMs) ? movementDurationMs / decayIntervalMs : 0;
-	const utility = reward - decayPerStep * (dist + distToDel);
-	return utility > 0 ? utility : 0;
-}
-
-// Meta-level reconsider gate: should we re-deliberate even though intention is still viable?
-// Only triggers when empty — carrying agents commit to deliver until viability fails.
-export function shouldReconsider(
-	intention: Intention,
-	map: StaticMap,
-	bfs: BfsFromSelf,
-	beliefs: BeliefStore,
-	carry: { n: number },
-	decayIntervalMs: number,
-	movementDurationMs: number,
-): boolean {
-	if (carry.n > 0) return false;
-	if (intention.kind !== "pickup" && intention.kind !== "explore") return false;
-	const freshTarget = pickBestParcelTarget(
-		map,
-		bfs,
-		beliefs,
-		decayIntervalMs,
-		movementDurationMs,
-	);
-	if (!freshTarget) return false;
-	if (freshTarget.parcel.id === intention.targetId) return false;
-	const currentUtility =
-		intention.kind === "pickup" && intention.targetId
-			? computeCurrentTargetUtility(
-					intention.targetId,
-					map,
-					bfs,
-					beliefs,
-					decayIntervalMs,
-					movementDurationMs,
-				)
-			: 0;
-	return freshTarget.utility > currentUtility + RECONSIDER_OPPORTUNITY_MARGIN;
-}
-
-// Returns the best opportunistic parcel to pick up while en route to delivery, or null.
-// Decision uses static baseReverseDistToDelivery (cheap); plan construction uses dynamic BFS (caller's job).
-export function shouldExtendDeliveryPlan(
+// Computes absolute utility of the current intention — same formula as pickBestParcelTarget
+// so the comparison with freshTarget.utility is on the same scale.
+function computeCurrentIntentionUtility(
 	intention: Intention,
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -132,20 +77,81 @@ export function shouldExtendDeliveryPlan(
 	carry: CarryState,
 	decayIntervalMs: number,
 	movementDurationMs: number,
-	capacity: number,
-): PickResult | null {
-	if (intention.kind !== "deliver") return null;
-	return pickBestDetourTarget(
+): number {
+	const decayPerStep = computeDecayPerStep(decayIntervalMs, movementDurationMs);
+
+	if (intention.kind === "deliver") {
+		return computeDeliverUtility(carry.rewards, decayPerStep, carry.nearestDeliveryDist);
+	}
+	if (intention.kind === "explore") return 0;
+
+	// kind === "pickup"
+	if (!intention.targetId) return 0;
+	const p = beliefs.parcels.get(intention.targetId);
+	if (!p || p.carriedBy) return 0;
+
+	const parcelTileId = tileId(map, p.x, p.y);
+	const dist = bfs.dist[parcelTileId];
+	const distToDel = map.baseReverseDistToDelivery[parcelTileId];
+	if (
+		dist === undefined ||
+		dist === -1 ||
+		distToDel === undefined ||
+		distToDel === -1
+	)
+		return 0;
+
+	const reward = expectedReward(
+		p,
+		decayIntervalMs,
+		movementDurationMs,
+		EXPECTED_STEAL_HORIZON_STEPS,
+		Date.now(),
+	);
+	if (reward <= 0) return 0;
+
+	const totalDist = dist + distToDel; // detour path: self → parcel → delivery
+	const parcelNet = reward - decayCost(reward, decayPerStep, totalDist);
+	if (carry.n === 0) return parcelNet;
+	return computeDeliverUtility(carry.rewards, decayPerStep, totalDist) + parcelNet;
+}
+
+// Meta-level reconsider gate: should we re-deliberate even though intention is still viable?
+// Utilities are absolute and comparable: freshTarget uses pickBestParcelTarget,
+// currentUtility uses the same formula for the committed intention.
+export function shouldReconsider(
+	intention: Intention,
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	beliefs: BeliefStore,
+	carry: CarryState,
+	decayIntervalMs: number,
+	movementDurationMs: number,
+): boolean {
+	const freshTarget = pickBestParcelTarget(
+		map,
+		bfs,
+		beliefs,
+		decayIntervalMs,
+		movementDurationMs,
+		carry,
+	);
+	if (!freshTarget) return false;
+	if (
+		intention.kind === "pickup" &&
+		freshTarget.parcel.id === intention.targetId
+	)
+		return false;
+	const currentUtility = computeCurrentIntentionUtility(
+		intention,
 		map,
 		bfs,
 		beliefs,
 		carry,
 		decayIntervalMs,
 		movementDurationMs,
-		EXPECTED_STEAL_HORIZON_STEPS,
-		capacity,
-		DETOUR_UTILITY_EPSILON,
 	);
+	return freshTarget.utility > currentUtility + RECONSIDER_OPPORTUNITY_MARGIN;
 }
 
 // Gate function — returns why an intention is no longer viable, or viable=true.

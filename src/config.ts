@@ -16,16 +16,14 @@ export const EXPECTED_STEAL_HORIZON_STEPS = 15;
 // Replaces SHORT_BLOCK_TTL_MS once commit C lands. ~3 steps @ 100ms/step.
 export const AGENT_GRACE_STEPS = 3;
 
-// Multi-parcel detour: capacity fallback and minimum surplus to commit a detour.
-// Server does not enforce capacity; set to 100 to disable the cap.
+// Multi-parcel capacity: server does not enforce it; set to 100 to disable.
 export const FALLBACK_AGENT_CAPACITY = 5;
 export const CAPACITY_OVERRIDE = 100;
-export const DETOUR_UTILITY_EPSILON = 1;
 
 // Intention layer: thresholds for path commitment and forced replan.
-export const INTENTION_UTILITY_EPSILON = 2; // must be > DETOUR_UTILITY_EPSILON to avoid flicker
-// Opportunistic reconsider: when empty (kind=pickup/explore), trigger re-deliberation if
-// a fresh pickup candidate beats the committed intention's utility by this margin.
+export const INTENTION_UTILITY_EPSILON = 2;
+// Opportunistic reconsider: trigger re-deliberation if a fresh candidate beats
+// the committed intention's utility by this margin.
 export const RECONSIDER_OPPORTUNITY_MARGIN = 5;
 export const MAX_MOVE_FAIL_STREAK = 3;
 export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms

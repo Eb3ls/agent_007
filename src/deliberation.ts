@@ -1,19 +1,22 @@
 import {
 	buildPlan,
+	computeDecayPerStep,
+	computeDeliverUtility,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
 	pickBestParcelTarget,
+	type CarryState,
 } from "./planner.js";
 import {
 	selectBestIntention,
 	type IntentionCandidate,
 	type IntentionRuleContext,
 } from "./intention_rules.js";
-import { SPAWN_VISITED_TTL_STEPS } from "./config.js";
 import { type Intention, makeIntention } from "./intention.js";
-import { type StaticMap } from "./static_map.js";
+import { SPAWN_VISITED_TTL_STEPS } from "./config.js";
 import type { BeliefStore } from "./belief_store.js";
 import type { BfsFromSelf } from "./pathfinder.js";
+import { type StaticMap } from "./static_map.js";
 
 export type DeliberationContext = {
 	myId: string;
@@ -26,16 +29,12 @@ export type DeliberationContext = {
 	movementDurationMs: number;
 	observationDistance: number;
 	decayIntervalMs: number;
-	carry: {
-		n: number;
-		rewards: number[];
-		nearestDeliveryDist: number;
-		ids: string[];
-	};
+	carry: CarryState;
 	intention: Intention | null;
 	observedEmptySpawns: Map<number, number>;
 };
 
+// Keeps only spawn IDs visited within SPAWN_VISITED_TTL_STEPS — older entries expire and become re-explorable.
 function freshVisitedSpawns(
 	observedEmptySpawns: Map<number, number>,
 	now: number,
@@ -62,11 +61,47 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	}
 
 	if (context.carry.n > 0) {
+		const decayPerStep = computeDecayPerStep(
+			context.decayIntervalMs,
+			context.movementDurationMs,
+		);
+		const deliverUtility = computeDeliverUtility(
+			context.carry.rewards,
+			decayPerStep,
+			context.carry.nearestDeliveryDist,
+		);
+
 		const delivery = nearestDeliveryTile(context.map, context.bfs);
 		if (delivery) {
 			candidates.push({
-				intention: makeIntention("deliver", delivery, context.now),
+				intention: makeIntention(
+					"deliver",
+					delivery,
+					context.now,
+					deliverUtility,
+				),
 				source: "deliver",
+			});
+		}
+
+		const pickupResult = pickBestParcelTarget(
+			context.map,
+			context.bfs,
+			context.beliefs,
+			context.decayIntervalMs,
+			context.movementDurationMs,
+			context.carry,
+		);
+		if (pickupResult) {
+			candidates.push({
+				intention: makeIntention(
+					"pickup",
+					{ x: pickupResult.parcel.x, y: pickupResult.parcel.y },
+					context.now,
+					pickupResult.utility,
+					pickupResult.parcel.id,
+				),
+				source: "pickup",
 			});
 		}
 	} else {
@@ -76,22 +111,22 @@ export function deliberate(context: DeliberationContext): Intention | null {
 			context.beliefs,
 			context.decayIntervalMs,
 			context.movementDurationMs,
+			context.carry,
 		);
-		const explore =
-			!targetResult
-				? nearestOutOfViewSpawn(
-						context.map,
-						context.bfs,
-						context.selfX,
-						context.selfY,
-						context.observationDistance,
-						freshVisitedSpawns(
-							context.observedEmptySpawns,
-							context.now,
-							context.movementDurationMs,
-						),
-					)
-				: null;
+		const explore = !targetResult
+			? nearestOutOfViewSpawn(
+					context.map,
+					context.bfs,
+					context.selfX,
+					context.selfY,
+					context.observationDistance,
+					freshVisitedSpawns(
+						context.observedEmptySpawns,
+						context.now,
+						context.movementDurationMs,
+					),
+				)
+			: null;
 		if (targetResult) {
 			candidates.push({
 				intention: makeIntention(
@@ -114,18 +149,8 @@ export function deliberate(context: DeliberationContext): Intention | null {
 
 	// filter: pick best candidate
 	const ruleContext: IntentionRuleContext = {
-		myId: context.myId,
 		map: context.map,
-		beliefs: context.beliefs,
 		bfs: context.bfs,
-		selfX: context.selfX,
-		selfY: context.selfY,
-		now: context.now,
-		movementDurationMs: context.movementDurationMs,
-		carry: {
-			n: context.carry.n,
-			nearestDeliveryDist: context.carry.nearestDeliveryDist,
-		},
 	};
 
 	const selected = selectBestIntention(ruleContext, candidates);
@@ -144,5 +169,10 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	if (selected.source === "current") {
 		return { ...context.intention!, plan };
 	}
-	return { ...selected.intention, committedAt: context.now, moveFailStreak: 0, plan };
+	return {
+		...selected.intention,
+		committedAt: context.now,
+		moveFailStreak: 0,
+		plan,
+	};
 }
