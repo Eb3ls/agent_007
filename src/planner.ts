@@ -3,7 +3,12 @@ import {
 	type BfsFromSelf,
 	type Direction,
 } from "./pathfinder.js";
-import type { AgentBelief, BeliefStore, ParcelBelief } from "./belief_store.js";
+import {
+	beliefTrust,
+	type AgentBelief,
+	type BeliefStore,
+	type ParcelBelief,
+} from "./belief_store.js";
 import { AGENT_GRACE_STEPS, EXPECTED_STEAL_HORIZON_STEPS } from "./config.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
 
@@ -14,8 +19,14 @@ export function isAgentBlocking(
 	now: number,
 ): boolean {
 	if (agent.inView) return true;
-	const ageSteps = (now - agent.lastSeenAt) / movementDurationMs;
-	return ageSteps <= graceSteps;
+	const trust = beliefTrust(
+		agent.confidence,
+		agent.lastSeenAt,
+		now,
+		movementDurationMs * graceSteps,
+		agent.inView,
+	);
+	return trust >= 0.5;
 }
 
 export function computeBlockedTiles(
@@ -124,9 +135,16 @@ export function expectedReward(
 ): number {
 	const base = currentReward(p, decayIntervalMs, now);
 	if (base <= 0) return 0;
-	if (p.inView) return base;
-	const ageSteps = (now - p.lastSeenAt) / movementDurationMs;
-	return base * Math.exp(-ageSteps / stealHorizonSteps);
+	return (
+		base *
+		beliefTrust(
+			p.confidence,
+			p.lastSeenAt,
+			now,
+			movementDurationMs * stealHorizonSteps,
+			p.inView,
+		)
+	);
 }
 
 export type PickResult = { parcel: ParcelBelief; utility: number };
