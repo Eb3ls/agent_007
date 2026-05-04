@@ -1,11 +1,9 @@
+import { tileId, type StaticMap } from "./static_map.js";
 import { INTENTION_UTILITY_EPSILON } from "./config.js";
 import type { BeliefStore } from "./belief_store.js";
-import {
-	type Intention,
-	isIntentionStillValid,
-} from "./intention.js";
+import { isIntentionViable } from "./reconsider.js";
 import type { BfsFromSelf } from "./pathfinder.js";
-import { tileId, type StaticMap } from "./static_map.js";
+import type { Intention } from "./intention.js";
 
 export type IntentionCandidateSource =
 	| "current"
@@ -20,6 +18,7 @@ export type IntentionCandidate = {
 };
 
 export type IntentionRuleContext = {
+	myId: string;
 	map: StaticMap;
 	beliefs: BeliefStore;
 	bfs: BfsFromSelf;
@@ -41,7 +40,8 @@ function evaluateCandidate(
 ): { pass: boolean; score: number } {
 	// Current intention gets a small bonus for retention
 	if (candidate.source === "current") {
-		const valid = isIntentionStillValid(
+		const viable = isIntentionViable(
+			context.myId,
 			candidate.intention,
 			context.beliefs,
 			context.map,
@@ -51,8 +51,7 @@ function evaluateCandidate(
 			context.now,
 			context.movementDurationMs,
 		);
-		if (!valid) return { pass: false, score: 0 };
-		// Small bonus to prefer continuing current intention
+		if (!viable) return { pass: false, score: 0 };
 		return { pass: true, score: INTENTION_UTILITY_EPSILON / 2 };
 	}
 
@@ -71,12 +70,18 @@ function evaluateCandidate(
 	const carrying = context.carry.n > 0;
 	if (carrying) {
 		// Can only do deliver or detour when carrying
-		if (candidate.intention.kind === "pickup" || candidate.intention.kind === "explore") {
+		if (
+			candidate.intention.kind === "pickup" ||
+			candidate.intention.kind === "explore"
+		) {
 			return { pass: false, score: 0 };
 		}
 	} else {
 		// Can only do pickup or explore when empty
-		if (candidate.intention.kind === "deliver" || candidate.intention.kind === "detour") {
+		if (
+			candidate.intention.kind === "deliver" ||
+			candidate.intention.kind === "detour"
+		) {
 			return { pass: false, score: 0 };
 		}
 	}
@@ -99,7 +104,10 @@ function evaluateCandidate(
 
 		case "detour": {
 			// Detour priority increases when delivery is getting urgent
-			const deliveryPressure = Math.max(0, 6 - context.carry.nearestDeliveryDist);
+			const deliveryPressure = Math.max(
+				0,
+				6 - context.carry.nearestDeliveryDist,
+			);
 			score = utility * 10 - distance - deliveryPressure * 3;
 			break;
 		}

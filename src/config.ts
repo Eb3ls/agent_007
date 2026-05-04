@@ -26,6 +26,7 @@ export const DETOUR_UTILITY_EPSILON = 1;
 export const INTENTION_UTILITY_EPSILON = 2; // must be > DETOUR_UTILITY_EPSILON to avoid flicker
 export const MAX_MOVE_FAIL_STREAK = 3;
 export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms
+export const PARCEL_BELIEF_STALE_STEPS = 4; // steps out-of-view before treating parcel as lost
 
 // Exploration: how many steps to avoid re-visiting a spawn tile after arriving empty.
 export const SPAWN_VISITED_TTL_STEPS = 100;

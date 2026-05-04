@@ -15,7 +15,6 @@ import {
 	shouldDrop,
 } from "./planner.js";
 import { applyDelivery, applyPickupResult } from "./belief_store.js";
-import { introspect } from "./introspection.js";
 import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
 import { GameClient } from "./game_client.js";
@@ -206,77 +205,15 @@ async function loop(): Promise<void> {
 		if (result) {
 			selfX = result.x;
 			selfY = result.y;
-			const postMoveBfs = bfsFromSelf(map, selfX, selfY, blocked);
-			const feedback = introspect({
-				myId,
-				intention,
-				beliefs: client.beliefs,
-				map,
-				bfs: postMoveBfs,
-				selfX,
-				selfY,
-				now: Date.now(),
-				movementDurationMs,
-				moveSucceeded: true,
-			});
-			log.ok("move", `${step} → (${selfX},${selfY})`);
 			intention.moveFailStreak = 0;
-			if (feedback.stalled)
-				log.warn(
-					"introspect",
-					`stalled kind=${intention.kind} dist=${feedback.distanceToTarget ?? "n/a"}`,
-				);
-			if (feedback.shouldReconsider) {
-				const reason =
-					feedback.failure?.reason ??
-					(feedback.reachedTarget
-						? "reached"
-						: feedback.failed
-							? "failed"
-							: "stalled");
-				log.warn(
-					"intent",
-					`reconsider kind=${intention.kind} reason=${reason} action=${feedback.recoveryAction ?? "drop"}`,
-				);
-				if (feedback.recoveryAction !== "retry") intention = null;
-				else intention.plan = []; // retry: rebuild plan next tick
-			}
+			log.ok("move", `${step} → (${selfX},${selfY})`);
 		} else {
-			if (intention) {
-				intention.moveFailStreak++;
-				intention.plan = []; // force plan rebuild next tick
-			}
-			const feedback = introspect({
-				myId,
-				intention,
-				beliefs: client.beliefs,
-				map,
-				bfs,
-				selfX,
-				selfY,
-				now: Date.now(),
-				movementDurationMs,
-				moveSucceeded: false,
-			});
+			intention.moveFailStreak++;
+			intention.plan = []; // force plan rebuild next tick
 			log.error(
 				"move",
-				`${step} → FAILED fails=${intention?.moveFailStreak ?? 0}`,
+				`${step} → FAILED fails=${intention.moveFailStreak}`,
 			);
-			if (feedback.shouldReconsider) {
-				const reason =
-					feedback.failure?.reason ??
-					(feedback.reachedTarget
-						? "reached"
-						: feedback.failed
-							? "failed"
-							: "stalled");
-				log.warn(
-					"intent",
-					`reconsider kind=${intention!.kind} reason=${reason} action=${feedback.recoveryAction ?? "drop"}`,
-				);
-				if (feedback.recoveryAction !== "retry") intention = null;
-				// else: plan already cleared, rebuild next tick
-			}
 			await sleep(movementDurationMs);
 		}
 	}

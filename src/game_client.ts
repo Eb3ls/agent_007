@@ -87,12 +87,12 @@ export class GameClient {
 
 		this.api.onTile((tile) => {
 			updateTile(this.staticMap, tile);
-			this.logEvent("tile", tile);
+			//this.logEvent("tile", tile);
 		});
 
 		this.api.onYou((agent) => {
 			setSelf(this.perception, agent);
-			this.logEvent("you", agent);
+			//this.logEvent("you", agent);
 		});
 
 		this.api.onceYou((agent) => {
@@ -110,11 +110,11 @@ export class GameClient {
 					movMs * AGENT_TTL_MULT,
 				);
 			}
-			this.logEvent("sensing", {
-				agents: sensing.agents.length,
-				parcels: sensing.parcels.length,
-				crates: sensing.crates.length,
-			});
+			// this.logEvent("sensing", {
+			// 	agents: sensing.agents.length,
+			// 	parcels: sensing.parcels.length,
+			// 	crates: sensing.crates.length,
+			// });
 		});
 
 		this.api.onMsg((id, name, msg, reply) => {

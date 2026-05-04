@@ -15,13 +15,10 @@ import {
 	EXPECTED_STEAL_HORIZON_STEPS,
 	SPAWN_VISITED_TTL_STEPS,
 } from "./config.js";
-import {
-	type Intention,
-	isIntentionStillValid,
-	makeIntention,
-} from "./intention.js";
+import { type Intention, makeIntention } from "./intention.js";
 import { tileId, type StaticMap } from "./static_map.js";
 import type { BeliefStore } from "./belief_store.js";
+import { isIntentionViable } from "./reconsider.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 
 export type DeliberationContext = {
@@ -82,7 +79,8 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 
 	const needsDeliberation =
 		!context.intention ||
-		!isIntentionStillValid(
+		!isIntentionViable(
+			context.myId,
 			context.intention,
 			context.beliefs,
 			context.map,
@@ -202,6 +200,7 @@ export function deliberate(context: DeliberationContext): DeliberationOutcome {
 
 	// Evaluate candidates using rules and pick the best
 	const ruleContext: IntentionRuleContext = {
+		myId: context.myId,
 		map: context.map,
 		beliefs: context.beliefs,
 		bfs: context.bfs,
