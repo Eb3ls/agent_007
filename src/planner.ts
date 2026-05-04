@@ -1,4 +1,5 @@
 import {
+	bfsFromSelf,
 	reconstructPath,
 	type BfsFromSelf,
 	type Direction,
@@ -327,6 +328,23 @@ export function buildPlan(
 	targetY: number,
 ): Direction[] {
 	return reconstructPath(map, bfs, targetX, targetY) ?? [];
+}
+
+// Builds a two-leg plan: self→parcel then parcel→nearest-delivery, using dynamic BFS for both legs.
+export function extendDeliveryPlan(
+	map: StaticMap,
+	selfBfs: BfsFromSelf,
+	parcelXY: { x: number; y: number },
+	blocked: ReadonlySet<number>,
+): Direction[] | null {
+	const leg1 = reconstructPath(map, selfBfs, parcelXY.x, parcelXY.y);
+	if (!leg1) return null;
+	const parcelBfs = bfsFromSelf(map, parcelXY.x, parcelXY.y, blocked);
+	const delivery = nearestDeliveryTile(map, parcelBfs);
+	if (!delivery) return null;
+	const leg2 = reconstructPath(map, parcelBfs, delivery.x, delivery.y);
+	if (!leg2) return null;
+	return [...leg1, ...leg2];
 }
 
 // Returns false if the next planned step leads into a currently blocked tile.

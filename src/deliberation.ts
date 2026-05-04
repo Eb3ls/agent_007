@@ -2,7 +2,6 @@ import {
 	buildPlan,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
-	pickBestDetourTarget,
 	pickBestParcelTarget,
 } from "./planner.js";
 import {
@@ -10,13 +9,9 @@ import {
 	type IntentionCandidate,
 	type IntentionRuleContext,
 } from "./intention_rules.js";
-import {
-	DETOUR_UTILITY_EPSILON,
-	EXPECTED_STEAL_HORIZON_STEPS,
-	SPAWN_VISITED_TTL_STEPS,
-} from "./config.js";
+import { SPAWN_VISITED_TTL_STEPS } from "./config.js";
 import { type Intention, makeIntention } from "./intention.js";
-import { tileId, type StaticMap } from "./static_map.js";
+import { type StaticMap } from "./static_map.js";
 import type { BeliefStore } from "./belief_store.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 
@@ -30,7 +25,6 @@ export type DeliberationContext = {
 	now: number;
 	movementDurationMs: number;
 	observationDistance: number;
-	capacity: number;
 	decayIntervalMs: number;
 	carry: {
 		n: number;
@@ -55,72 +49,12 @@ function freshVisitedSpawns(
 	return freshVisited;
 }
 
-function markExploreArrival(context: DeliberationContext): void {
-	if (
-		context.intention?.kind === "explore" &&
-		context.selfX === context.intention.targetXY.x &&
-		context.selfY === context.intention.targetXY.y
-	) {
-		context.observedEmptySpawns.set(
-			tileId(context.map, context.selfX, context.selfY),
-			context.now,
-		);
-	}
-}
-
 // Pure option + filter + plan: generates candidates, selects best, builds plan.
 // Does NOT check viability or reconsider — caller is responsible for those gates.
 // If current intention is provided it is included as a candidate (retention bias).
 // Returns null if no viable candidate or no path found.
 export function deliberate(context: DeliberationContext): Intention | null {
-	markExploreArrival(context);
-
 	// option: generate candidates based on carry state
-	const targetResult =
-		context.carry.n > 0
-			? null
-			: pickBestParcelTarget(
-					context.map,
-					context.bfs,
-					context.beliefs,
-					context.decayIntervalMs,
-					context.movementDurationMs,
-				);
-	const detourResult =
-		context.carry.n > 0
-			? pickBestDetourTarget(
-					context.map,
-					context.bfs,
-					context.beliefs,
-					context.carry,
-					context.decayIntervalMs,
-					context.movementDurationMs,
-					EXPECTED_STEAL_HORIZON_STEPS,
-					context.capacity,
-					DETOUR_UTILITY_EPSILON,
-				)
-			: null;
-	const explore =
-		!context.carry.n && !targetResult
-			? nearestOutOfViewSpawn(
-					context.map,
-					context.bfs,
-					context.selfX,
-					context.selfY,
-					context.observationDistance,
-					freshVisitedSpawns(
-						context.observedEmptySpawns,
-						context.now,
-						context.movementDurationMs,
-					),
-				)
-			: null;
-	const delivery =
-		context.carry.n > 0
-			? nearestDeliveryTile(context.map, context.bfs)
-			: null;
-
-	// build candidate list
 	const candidates: IntentionCandidate[] = [];
 
 	if (context.intention) {
@@ -128,18 +62,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	}
 
 	if (context.carry.n > 0) {
-		if (detourResult) {
-			candidates.push({
-				intention: makeIntention(
-					"detour",
-					{ x: detourResult.parcel.x, y: detourResult.parcel.y },
-					context.now,
-					detourResult.utility,
-					detourResult.parcel.id,
-				),
-				source: "detour",
-			});
-		}
+		const delivery = nearestDeliveryTile(context.map, context.bfs);
 		if (delivery) {
 			candidates.push({
 				intention: makeIntention("deliver", delivery, context.now),
@@ -147,6 +70,28 @@ export function deliberate(context: DeliberationContext): Intention | null {
 			});
 		}
 	} else {
+		const targetResult = pickBestParcelTarget(
+			context.map,
+			context.bfs,
+			context.beliefs,
+			context.decayIntervalMs,
+			context.movementDurationMs,
+		);
+		const explore =
+			!targetResult
+				? nearestOutOfViewSpawn(
+						context.map,
+						context.bfs,
+						context.selfX,
+						context.selfY,
+						context.observationDistance,
+						freshVisitedSpawns(
+							context.observedEmptySpawns,
+							context.now,
+							context.movementDurationMs,
+						),
+					)
+				: null;
 		if (targetResult) {
 			candidates.push({
 				intention: makeIntention(

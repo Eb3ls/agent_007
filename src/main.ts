@@ -10,6 +10,7 @@ import {
 	buildPlan,
 	computeBlockedTiles,
 	deriveCarryState,
+	extendDeliveryPlan,
 	isSoundPlan,
 	parcelHere,
 	shouldDrop,
@@ -21,7 +22,11 @@ import {
 } from "./belief_store.js";
 import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
-import { checkIntentionViability, shouldReconsider } from "./reconsider.js";
+import {
+	checkIntentionViability,
+	shouldExtendDeliveryPlan,
+	shouldReconsider,
+} from "./reconsider.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
 import { tileId } from "./static_map.js";
@@ -150,6 +155,12 @@ async function loop(): Promise<void> {
 					"intent",
 					`terminal kind=${intention.kind} reason=${viability.reason}`,
 				);
+				if (
+					intention.kind === "explore" &&
+					viability.reason === "succeeded"
+				) {
+					observedEmptySpawns.set(tileId(map, selfX, selfY), now);
+				}
 				intention = null;
 			}
 		}
@@ -171,9 +182,36 @@ async function loop(): Promise<void> {
 			}
 		}
 
-		// Gate 3: reconsider — meta-level gate, only when empty
-		if (
-			intention &&
+		// Gate extension: opportunistic parcel pickup while delivering (carrying lock bypassed at plan level).
+		if (intention?.kind === "deliver") {
+			const via = shouldExtendDeliveryPlan(
+				intention,
+				map,
+				bfs,
+				client.beliefs,
+				carry,
+				decayIntervalMs,
+				movementDurationMs,
+				capacity,
+			);
+			if (via) {
+				const extended =
+					extendDeliveryPlan(map, bfs, via.parcel, blocked) ??
+					intention.plan;
+				if (extended !== intention.plan) {
+					intention.plan = extended;
+					log.info(
+						"extend",
+						`kind=deliver via=(${via.parcel.x},${via.parcel.y}) surplus=${via.utility.toFixed(1)}`,
+					);
+				}
+			}
+		}
+
+		// Gate 3 + initial deliberation: single call.
+		// Pass current intention when reconsidering so it competes as candidate (retention bias).
+		const reconsider =
+			intention !== null &&
 			shouldReconsider(
 				intention,
 				map,
@@ -182,42 +220,10 @@ async function loop(): Promise<void> {
 				carry,
 				decayIntervalMs,
 				movementDurationMs,
-			)
-		) {
-			const candidate = deliberate({
-				myId,
-				map,
-				beliefs: client.beliefs,
-				bfs,
-				selfX,
-				selfY,
-				now,
-				movementDurationMs,
-				observationDistance,
-				capacity,
-				decayIntervalMs,
-				carry,
-				intention,
-				observedEmptySpawns,
-			});
-			if (
-				candidate &&
-				(candidate.kind !== intention.kind ||
-					candidate.targetXY.x !== intention.targetXY.x ||
-					candidate.targetXY.y !== intention.targetXY.y)
-			) {
-				log.warn(
-					"intent",
-					`reconsider→replan kind=${candidate.kind} target=(${candidate.targetXY.x},${candidate.targetXY.y}) plan=${candidate.plan.length}steps`,
-				);
-				intention = candidate;
-				// no re-sound needed: deliberate() built plan via buildPlan(bfs)
-				// which excludes `blocked` by construction → plan[0] is always sound
-			}
-		}
+			);
 
-		// Initial deliberation: no intention → option + filter + plan
-		if (!intention) {
+		if (!intention || reconsider) {
+			const prev = intention;
 			intention = deliberate({
 				myId,
 				map,
@@ -228,17 +234,23 @@ async function loop(): Promise<void> {
 				now,
 				movementDurationMs,
 				observationDistance,
-				capacity,
 				decayIntervalMs,
 				carry,
-				intention: null,
+				intention: reconsider ? intention : null,
 				observedEmptySpawns,
 			});
-			if (intention)
-				log.warn(
-					"intent",
-					`new kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
-				);
+			if (intention) {
+				const changed =
+					!prev ||
+					intention.kind !== prev.kind ||
+					intention.targetXY.x !== prev.targetXY.x ||
+					intention.targetXY.y !== prev.targetXY.y;
+				if (changed)
+					log.warn(
+						"intent",
+						`${reconsider && prev ? "reconsider→replan" : "new"} kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
+					);
+			}
 		}
 
 		if (loopCount % 50 === 0) {

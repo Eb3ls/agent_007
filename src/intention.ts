@@ -1,7 +1,7 @@
 import type { Direction } from "./pathfinder.js";
 
 export type Intention = {
-	kind: "deliver" | "pickup" | "detour" | "explore";
+	kind: "deliver" | "pickup" | "explore";
 	targetId?: string;
 	targetXY: { x: number; y: number };
 	expectedUtility: number;

@@ -9,7 +9,6 @@ export type IntentionCandidateSource =
 	| "current"
 	| "pickup"
 	| "deliver"
-	| "detour"
 	| "explore";
 
 export type IntentionCandidate = {
@@ -69,19 +68,11 @@ function evaluateCandidate(
 	// Check: is this action compatible with current carry state?
 	const carrying = context.carry.n > 0;
 	if (carrying) {
-		// Can only do deliver or detour when carrying
-		if (
-			candidate.intention.kind === "pickup" ||
-			candidate.intention.kind === "explore"
-		) {
+		if (candidate.intention.kind === "pickup" || candidate.intention.kind === "explore") {
 			return { pass: false, score: 0 };
 		}
 	} else {
-		// Can only do pickup or explore when empty
-		if (
-			candidate.intention.kind === "deliver" ||
-			candidate.intention.kind === "detour"
-		) {
+		if (candidate.intention.kind === "deliver") {
 			return { pass: false, score: 0 };
 		}
 	}
@@ -99,16 +90,6 @@ function evaluateCandidate(
 			// Delivery is high priority; add urgency based on distance to nearest delivery
 			const urgency = Math.max(0, 10 - context.carry.nearestDeliveryDist);
 			score = 100 + urgency * 5 - distance;
-			break;
-		}
-
-		case "detour": {
-			// Detour priority increases when delivery is getting urgent
-			const deliveryPressure = Math.max(
-				0,
-				6 - context.carry.nearestDeliveryDist,
-			);
-			score = utility * 10 - distance - deliveryPressure * 3;
 			break;
 		}
 
