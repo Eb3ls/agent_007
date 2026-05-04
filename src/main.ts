@@ -10,6 +10,7 @@ import {
 	buildPlan,
 	computeBlockedTiles,
 	deriveCarryState,
+	isSoundPlan,
 	parcelHere,
 	shouldDrop,
 } from "./planner.js";
@@ -153,8 +154,11 @@ async function loop(): Promise<void> {
 				);
 		}
 
-		// Rebuild plan if intention is valid but plan is empty (e.g. after a failed move)
-		if (intention && intention.plan.length === 0) {
+		// Sound check: plan empty or next step blocked → rebuild (keep intention)
+		if (
+			intention &&
+			!isSoundPlan(intention.plan, selfX, selfY, map, blocked)
+		) {
 			intention.plan = buildPlan(
 				map,
 				bfs,

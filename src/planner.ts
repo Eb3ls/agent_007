@@ -3,8 +3,8 @@ import {
 	type BfsFromSelf,
 	type Direction,
 } from "./pathfinder.js";
-import { AGENT_GRACE_STEPS, EXPECTED_STEAL_HORIZON_STEPS } from "./config.js";
 import type { AgentBelief, BeliefStore, ParcelBelief } from "./belief_store.js";
+import { AGENT_GRACE_STEPS, EXPECTED_STEAL_HORIZON_STEPS } from "./config.js";
 import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
 
 export function isAgentBlocking(
@@ -309,4 +309,20 @@ export function buildPlan(
 	targetY: number,
 ): Direction[] {
 	return reconstructPath(map, bfs, targetX, targetY) ?? [];
+}
+
+// Returns false if the next planned step leads into a currently blocked tile.
+export function isSoundPlan(
+	plan: Direction[],
+	selfX: number,
+	selfY: number,
+	map: StaticMap,
+	blocked: ReadonlySet<number>,
+): boolean {
+	if (plan.length === 0) return false;
+	const dir = plan[0]!;
+	const nx = selfX + (dir === "right" ? 1 : dir === "left" ? -1 : 0);
+	const ny = selfY + (dir === "up" ? 1 : dir === "down" ? -1 : 0);
+	if (!inBounds(map, nx, ny)) return false;
+	return !blocked.has(tileId(map, nx, ny));
 }
