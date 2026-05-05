@@ -14,7 +14,7 @@ import {
 } from "./intention_rules.js";
 import { type Intention, makeIntention } from "./intention.js";
 import { computeCurrentIntentionUtility } from "./reconsider.js";
-import { SPAWN_VISITED_TTL_STEPS } from "./config.js";
+import { SPAWN_OBSERVED_TTL_STEPS } from "./config.js";
 import type { BeliefStore } from "./belief_store.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 import { type StaticMap } from "./static_map.js";
@@ -34,13 +34,13 @@ export type DeliberationContext = {
 	intention: Intention | null;
 };
 
-// Returns spawn IDs observed empty within SPAWN_VISITED_TTL_STEPS — older entries expire and become re-explorable.
-function freshVisitedSpawns(
+// Returns spawn IDs observed empty within SPAWN_OBSERVED_TTL_STEPS — older entries expire and become re-explorable.
+function freshObservedEmptySpawns(
 	beliefs: BeliefStore,
 	now: number,
 	movementDurationMs: number,
 ): Set<number> {
-	const spawnTtlMs = SPAWN_VISITED_TTL_STEPS * movementDurationMs;
+	const spawnTtlMs = SPAWN_OBSERVED_TTL_STEPS * movementDurationMs;
 	const fresh = new Set<number>();
 	for (const [id, seenAt] of beliefs.observedEmptySpawns) {
 		if (now - seenAt < spawnTtlMs) fresh.add(id);
@@ -128,7 +128,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 					context.selfX,
 					context.selfY,
 					context.observationDistance,
-					freshVisitedSpawns(
+					freshObservedEmptySpawns(
 						context.beliefs,
 						context.now,
 						context.movementDurationMs,

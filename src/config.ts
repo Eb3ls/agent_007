@@ -29,8 +29,8 @@ export const MAX_MOVE_FAIL_STREAK = 3;
 export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms
 export const PARCEL_BELIEF_STALE_STEPS = 4; // steps out-of-view before treating parcel as lost
 
-// Exploration: how many steps to avoid re-visiting a spawn tile after arriving empty.
-export const SPAWN_VISITED_TTL_STEPS = 100;
+// Exploration: how many steps a spawn observed empty stays excluded from explore candidates.
+export const SPAWN_OBSERVED_TTL_STEPS = 100;
 
 // Competitor heatmap: exponential decay horizon in steps.
 // weight(t) = weight(0) * exp(-Δsteps / MEMORY_DECAY_HORIZON_STEPS)
