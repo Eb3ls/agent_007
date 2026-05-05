@@ -13,12 +13,10 @@ export const AGENT_TTL_MULT = 10;
 export const EXPECTED_STEAL_HORIZON_STEPS = 15;
 
 // Grace window: keep an out-of-view agent's tile hard-blocked for this many steps.
-// Replaces SHORT_BLOCK_TTL_MS once commit C lands. ~3 steps @ 100ms/step.
 export const AGENT_GRACE_STEPS = 3;
+// Trust threshold below which an out-of-view agent no longer blocks pathfinding.
+export const AGENT_BLOCKING_TRUST_THRESHOLD = 0.5;
 
-// Multi-parcel capacity: server does not enforce it; set to 100 to disable.
-export const FALLBACK_AGENT_CAPACITY = 5;
-export const CAPACITY_OVERRIDE = 100;
 
 // Intention layer: fraction by which a new candidate must exceed the current
 // intention's utility to trigger a switch (anti-flicker hysteresis).
@@ -42,6 +40,7 @@ export const MEMORY_DECAY_HORIZON_STEPS = 50; // ~5s @ 100ms/step, calibratable 
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
 export const NO_STEP_WAIT_MS = 200; // no plan available → retry
+export const STUCK_RESET_ITERATIONS = 5; // no-intention iterations before resetting spawn tracking
 
 /** Parses Deliveroo decaying_event string ("infinite", "0", "500ms", "5s") into ms. */
 export function parseDecayInterval(rawInterval: string | undefined): number {
