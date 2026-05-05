@@ -5,6 +5,7 @@ import {
 	type ParcelBelief,
 } from "./belief_store.js";
 import {
+	AGENT_BLOCKING_TRUST_THRESHOLD,
 	AGENT_GRACE_STEPS,
 	EXPECTED_STEAL_HORIZON_STEPS,
 } from "./config.js";
@@ -30,7 +31,7 @@ export function isAgentBlocking(
 		movementDurationMs * graceSteps,
 		agent.inView,
 	);
-	return trust >= 0.5;
+	return trust >= AGENT_BLOCKING_TRUST_THRESHOLD;
 }
 
 export function computeBlockedTiles(
@@ -129,7 +130,7 @@ export function currentReward(
 ): number {
 	if (!Number.isFinite(decayIntervalMs)) return p.reward;
 	if (p.inView) return p.reward;
-	return p.reward - Math.floor((now - p.lastSeenAt) / decayIntervalMs);
+	return Math.max(0, p.reward - Math.floor((now - p.lastSeenAt) / decayIntervalMs));
 }
 
 // Expected reward accounting for probabilistic availability: in-view parcels are
@@ -177,7 +178,6 @@ export function pickBestParcelTarget(
 	);
 	let best: ParcelBelief | null = null;
 	let bestUtility = -Infinity;
-	let bestDistToParcel = Infinity;
 	for (const p of beliefs.parcels.values()) {
 		if (p.carriedBy) continue;
 		const parcelTileId = tileId(map, p.x, p.y);
@@ -208,12 +208,8 @@ export function pickBestParcelTarget(
 			utility = computeDeliverUtility(carry.rewards, decayPerStep, totalDist) + parcelNet;
 		}
 
-		if (
-			utility > bestUtility ||
-			(utility === bestUtility && distToParcel < bestDistToParcel)
-		) {
+		if (utility > bestUtility) {
 			bestUtility = utility;
-			bestDistToParcel = distToParcel;
 			best = p;
 		}
 	}

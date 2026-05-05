@@ -3,6 +3,7 @@ import {
 	FALLBACK_OBSERVATION_DISTANCE,
 	NO_STEP_WAIT_MS,
 	READY_POLL_MS,
+	STUCK_RESET_ITERATIONS,
 	parseDecayInterval,
 } from "./config.js";
 import {
@@ -243,7 +244,7 @@ async function loop(): Promise<void> {
 					`no intention — carrying=${carrying} pos=(${selfX},${selfY})`,
 				);
 			stuckIterations++;
-			if (stuckIterations >= 5) {
+			if (stuckIterations >= STUCK_RESET_ITERATIONS) {
 				log.warn(
 					"stuck",
 					`resetting spawn tracking after ${stuckIterations} iterations`,
