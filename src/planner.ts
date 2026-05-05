@@ -69,14 +69,14 @@ export function nearestDeliveryTile(
 	return bestId === -1 ? null : idToXY(map, bestId);
 }
 
-// Prefers spawns that minimize walk + delivery distance, skipping tiles in current FOV or recently visited.
+// Prefers spawns that minimize walk + delivery distance, skipping tiles in current FOV or recently observed empty.
 export function nearestOutOfViewSpawn(
 	map: StaticMap,
 	bfs: BfsFromSelf,
 	selfX: number,
 	selfY: number,
 	observationDistance: number,
-	visitedSpawnIds?: ReadonlySet<number>,
+	observedEmptySpawnIds?: ReadonlySet<number>,
 ): { x: number; y: number } | null {
 	let bestId = -1;
 	let bestCost = Infinity;
@@ -86,7 +86,7 @@ export function nearestOutOfViewSpawn(
 		const distSpawnToDelivery = map.baseReverseDistToDelivery[spawnId];
 		if (distSpawnToDelivery === undefined || distSpawnToDelivery === -1)
 			continue;
-		if (visitedSpawnIds?.has(spawnId)) continue;
+		if (observedEmptySpawnIds?.has(spawnId)) continue;
 		const { x, y } = idToXY(map, spawnId);
 		if (Math.abs(x - selfX) + Math.abs(y - selfY) <= observationDistance)
 			continue;
