@@ -4,6 +4,7 @@ import {
 	MAX_MOVE_FAIL_STREAK,
 	PARCEL_BELIEF_STALE_STEPS,
 	RECONSIDER_OPPORTUNITY_MARGIN_FRACTION,
+	SPAWN_OBSERVED_TTL_STEPS,
 } from "./config.js";
 import {
 	computeDecayPerStep,
@@ -182,15 +183,26 @@ export function checkIntentionViability(
 	if (!checkTargetParcel(myId, intention, beliefs, now, movementDurationMs))
 		return { viable: false, reason: "target_lost" };
 
-	// 3) No path to target in current BFS
+	// 3) Explore: target already in FOV and marked empty — no need to walk all the way there
+	if (intention.kind === "explore") {
+		const targetId = tileId(map, intention.targetXY.x, intention.targetXY.y);
+		const seenAt = beliefs.observedEmptySpawns.get(targetId);
+		if (
+			seenAt !== undefined &&
+			now - seenAt < SPAWN_OBSERVED_TTL_STEPS * movementDurationMs
+		)
+			return { viable: false, reason: "succeeded" };
+	}
+
+	// 4) No path to target in current BFS
 	if (computeTargetDistance(map, bfs, intention) === null)
 		return { viable: false, reason: "unreachable" };
 
-	// 4) Too many consecutive move failures
+	// 5) Too many consecutive move failures
 	if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK)
 		return { viable: false, reason: "move_blocked" };
 
-	// 5) Intention timed out
+	// 6) Intention timed out
 	const ageSteps = (now - intention.committedAt) / movementDurationMs;
 	if (ageSteps >= INTENTION_MAX_AGE_STEPS)
 		return { viable: false, reason: "aged" };

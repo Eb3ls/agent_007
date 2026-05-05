@@ -104,7 +104,12 @@ export class GameClient {
 		this.api.onSensing((sensing) => {
 			setSensing(this.perception, sensing);
 			updateFromSensing(this.beliefs, sensing);
-			updateObservedEmptySpawns(this.beliefs, this.staticMap, sensing, Date.now());
+			updateObservedEmptySpawns(
+				this.beliefs,
+				this.staticMap,
+				sensing,
+				Date.now(),
+			);
 			if (this.config) {
 				const movMs = this.config.GAME.player.movement_duration;
 				evictStale(
@@ -128,7 +133,6 @@ export class GameClient {
 
 		this.api.onMsg((id, name, msg, reply) => {
 			this.logEvent("msg", { from: { id, name }, msg });
-			reply({ received: true });
 		});
 
 		this.api.onAgentConnected((status, agent) => {

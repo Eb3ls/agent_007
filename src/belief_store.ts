@@ -101,9 +101,10 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 	updateOutOfView(b.crates, sensing.crates);
 }
 
-// Keeps observedEmptySpawns consistent with current sensing:
-// - ADD: positions in FOV that are spawn tiles (no agent/parcel/crate confirmed by server).
-// - REMOVE: parcels currently on a spawn tile cancel the empty mark.
+// Keeps observedEmptySpawns consistent with current sensing.
+// sensing.positions = ALL tiles in FOV (BFS Manhattan), regardless of what is on them.
+// ADD: every spawn tile in FOV.
+// REMOVE: spawn tiles that have a parcel (not carried) or a crate on them.
 export function updateObservedEmptySpawns(
 	b: BeliefStore,
 	map: StaticMap,
@@ -118,6 +119,9 @@ export function updateObservedEmptySpawns(
 	for (const p of sensing.parcels) {
 		if (p.carriedBy) continue;
 		b.observedEmptySpawns.delete(tileId(map, p.x, p.y));
+	}
+	for (const c of sensing.crates) {
+		b.observedEmptySpawns.delete(tileId(map, c.x, c.y));
 	}
 }
 

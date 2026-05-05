@@ -133,6 +133,9 @@ export function deliberate(context: DeliberationContext): Intention | null {
 						context.now,
 						context.movementDurationMs,
 					),
+					context.beliefs,
+					context.now,
+					context.movementDurationMs,
 				)
 			: null;
 		if (targetResult) {

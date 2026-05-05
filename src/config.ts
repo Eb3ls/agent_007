@@ -32,6 +32,10 @@ export const PARCEL_BELIEF_STALE_STEPS = 4; // steps out-of-view before treating
 
 // Exploration: how many steps a spawn observed empty stays excluded from explore candidates.
 export const SPAWN_OBSERVED_TTL_STEPS = 100;
+// Weight applied to competitor heatmap when ranking explore targets.
+// cost += EXPLORE_COMPETITOR_PENALTY_ALPHA * competitorWeight(spawn)
+// Higher → more strongly avoid zones where competitors are frequently seen.
+export const EXPLORE_COMPETITOR_PENALTY_ALPHA = 3;
 
 // Competitor heatmap: exponential decay horizon in steps.
 // weight(t) = weight(0) * exp(-Δsteps / MEMORY_DECAY_HORIZON_STEPS)
@@ -44,7 +48,6 @@ export const RACE_HORIZON_STEPS = 2;
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
 export const NO_STEP_WAIT_MS = 200; // no plan available → retry
-export const STUCK_RESET_ITERATIONS = 5; // no-intention iterations before resetting spawn tracking
 
 /** Parses Deliveroo decaying_event string ("infinite", "0", "500ms", "5s") into ms. */
 export function parseDecayInterval(rawInterval: string | undefined): number {

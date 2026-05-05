@@ -2,10 +2,12 @@ import {
 	AGENT_BLOCKING_TRUST_THRESHOLD,
 	AGENT_GRACE_STEPS,
 	EXPECTED_STEAL_HORIZON_STEPS,
+	EXPLORE_COMPETITOR_PENALTY_ALPHA,
 	RACE_HORIZON_STEPS,
 } from "./config.js";
 import {
 	beliefTrust,
+	competitorWeight,
 	type AgentBelief,
 	type BeliefStore,
 	type ParcelBelief,
@@ -71,7 +73,8 @@ export function nearestDeliveryTile(
 	return bestId === -1 ? null : idToXY(map, bestId);
 }
 
-// Prefers spawns that minimize walk + delivery distance, skipping tiles in current FOV or recently observed empty.
+// Prefers spawns that minimize walk + delivery distance + competitor presence,
+// skipping tiles in current FOV or recently observed empty.
 export function nearestOutOfViewSpawn(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -79,12 +82,15 @@ export function nearestOutOfViewSpawn(
 	selfY: number,
 	observationDistance: number,
 	observedEmptySpawnIds?: ReadonlySet<number>,
+	beliefs?: BeliefStore,
+	now?: number,
+	movementDurationMs?: number,
 ): { x: number; y: number } | null {
 	let bestId = -1;
 	let bestCost = Infinity;
 	for (const spawnId of map.spawnTileIds) {
 		const distToSpawn = bfs.dist[spawnId];
-		if (distToSpawn === undefined || distToSpawn <= 0) continue;
+		if (distToSpawn === undefined || distToSpawn === -1) continue;
 		const distSpawnToDelivery = map.baseReverseDistToDelivery[spawnId];
 		if (distSpawnToDelivery === undefined || distSpawnToDelivery === -1)
 			continue;
@@ -93,7 +99,12 @@ export function nearestOutOfViewSpawn(
 		if (Math.abs(x - selfX) + Math.abs(y - selfY) <= observationDistance)
 			continue;
 
-		const cost = distToSpawn + distSpawnToDelivery;
+		let cost = distToSpawn + distSpawnToDelivery;
+		if (beliefs && now !== undefined && movementDurationMs !== undefined) {
+			cost +=
+				EXPLORE_COMPETITOR_PENALTY_ALPHA *
+				competitorWeight(beliefs, x, y, now, movementDurationMs);
+		}
 		if (cost < bestCost) {
 			bestCost = cost;
 			bestId = spawnId;

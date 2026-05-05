@@ -3,7 +3,6 @@ import {
 	FALLBACK_OBSERVATION_DISTANCE,
 	NO_STEP_WAIT_MS,
 	READY_POLL_MS,
-	STUCK_RESET_ITERATIONS,
 	parseDecayInterval,
 } from "./config.js";
 import {
@@ -19,12 +18,9 @@ import {
 	applyPickupResult,
 	topCompetitorTiles,
 } from "./belief_store.js";
+import { checkIntentionViability, shouldReconsider } from "./reconsider.js";
 import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
-import {
-	checkIntentionViability,
-	shouldReconsider,
-} from "./reconsider.js";
 import { GameClient } from "./game_client.js";
 import { bfsFromSelf } from "./pathfinder.js";
 import { tileId } from "./static_map.js";
@@ -155,7 +151,10 @@ async function loop(): Promise<void> {
 		}
 
 		// Gate 2: sound — next step blocked or plan empty → rebuild plan, keep I
-		if (intention && !isSoundPlan(intention.plan, selfX, selfY, map, blocked)) {
+		if (
+			intention &&
+			!isSoundPlan(intention.plan, selfX, selfY, map, blocked)
+		) {
 			intention.plan = buildPlan(
 				map,
 				bfs,
@@ -244,14 +243,6 @@ async function loop(): Promise<void> {
 					`no intention — carrying=${carrying} pos=(${selfX},${selfY})`,
 				);
 			stuckIterations++;
-			if (stuckIterations >= STUCK_RESET_ITERATIONS) {
-				log.warn(
-					"stuck",
-					`resetting spawn tracking after ${stuckIterations} iterations`,
-				);
-				client.beliefs.observedEmptySpawns.clear();
-				stuckIterations = 0;
-			}
 			await sleep(NO_STEP_WAIT_MS);
 			continue;
 		}
