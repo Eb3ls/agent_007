@@ -91,7 +91,6 @@ async function loop(): Promise<void> {
 		client.config?.GAME.player.observation_distance ??
 		FALLBACK_OBSERVATION_DISTANCE;
 	let intention: Intention | null = null;
-	const observedEmptySpawns = new Map<number, number>(); // tileId → visitedAt ms
 	let stuckIterations = 0; // count of iterations with no step
 	let loopCount = 0;
 
@@ -150,12 +149,6 @@ async function loop(): Promise<void> {
 					"intent",
 					`terminal kind=${intention.kind} reason=${viability.reason}`,
 				);
-				if (
-					intention.kind === "explore" &&
-					viability.reason === "succeeded"
-				) {
-					observedEmptySpawns.set(tileId(map, selfX, selfY), now);
-				}
 				intention = null;
 			}
 		}
@@ -206,7 +199,6 @@ async function loop(): Promise<void> {
 				decayIntervalMs,
 				carry,
 				intention: reconsider ? intention : null,
-				observedEmptySpawns,
 			});
 			if (intention) {
 				const changed =
@@ -256,7 +248,7 @@ async function loop(): Promise<void> {
 					"stuck",
 					`resetting spawn tracking after ${stuckIterations} iterations`,
 				);
-				observedEmptySpawns.clear();
+				client.beliefs.observedEmptySpawns.clear();
 				stuckIterations = 0;
 			}
 			await sleep(NO_STEP_WAIT_MS);

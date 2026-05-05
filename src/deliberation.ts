@@ -32,21 +32,20 @@ export type DeliberationContext = {
 	decayIntervalMs: number;
 	carry: CarryState;
 	intention: Intention | null;
-	observedEmptySpawns: Map<number, number>;
 };
 
-// Keeps only spawn IDs visited within SPAWN_VISITED_TTL_STEPS — older entries expire and become re-explorable.
+// Returns spawn IDs observed empty within SPAWN_VISITED_TTL_STEPS — older entries expire and become re-explorable.
 function freshVisitedSpawns(
-	observedEmptySpawns: Map<number, number>,
+	beliefs: BeliefStore,
 	now: number,
 	movementDurationMs: number,
 ): Set<number> {
 	const spawnTtlMs = SPAWN_VISITED_TTL_STEPS * movementDurationMs;
-	const freshVisited = new Set<number>();
-	for (const [id, visitedAt] of observedEmptySpawns) {
-		if (now - visitedAt < spawnTtlMs) freshVisited.add(id);
+	const fresh = new Set<number>();
+	for (const [id, seenAt] of beliefs.observedEmptySpawns) {
+		if (now - seenAt < spawnTtlMs) fresh.add(id);
 	}
-	return freshVisited;
+	return fresh;
 }
 
 // Pure option + filter + plan: generates candidates, selects best, builds plan.
@@ -130,7 +129,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 					context.selfY,
 					context.observationDistance,
 					freshVisitedSpawns(
-						context.observedEmptySpawns,
+						context.beliefs,
 						context.now,
 						context.movementDurationMs,
 					),

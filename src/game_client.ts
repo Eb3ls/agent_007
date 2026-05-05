@@ -4,6 +4,7 @@ import {
 	markAgentDisconnected,
 	recordCompetitorPositions,
 	updateFromSensing,
+	updateObservedEmptySpawns,
 	type BeliefStore,
 } from "./belief_store.js";
 import {
@@ -103,6 +104,7 @@ export class GameClient {
 		this.api.onSensing((sensing) => {
 			setSensing(this.perception, sensing);
 			updateFromSensing(this.beliefs, sensing);
+			updateObservedEmptySpawns(this.beliefs, this.staticMap, sensing, Date.now());
 			if (this.config) {
 				const movMs = this.config.GAME.player.movement_duration;
 				evictStale(

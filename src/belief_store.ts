@@ -4,6 +4,7 @@ import type {
 	IOParcel,
 	IOSensing,
 } from "@unitn-asa/deliveroo-js-sdk";
+import { tileId, type StaticMap } from "./static_map.js";
 import { MEMORY_DECAY_HORIZON_STEPS } from "./config.js";
 
 export type ParcelBelief = IOParcel & {
@@ -31,6 +32,7 @@ export type BeliefStore = {
 	agents: Map<string, AgentBelief>;
 	crates: Map<string, CrateBelief>;
 	competitorHeatmap: Map<string, CompetitorEntry>; // key = "x,y"
+	observedEmptySpawns: Map<number, number>; // tileId → lastSeenEmptyAt ms
 };
 
 const OUT_OF_VIEW_DECAY = 0.8;
@@ -55,6 +57,7 @@ export function createBeliefStore(): BeliefStore {
 		agents: new Map(),
 		crates: new Map(),
 		competitorHeatmap: new Map(),
+		observedEmptySpawns: new Map(),
 	};
 }
 
@@ -99,6 +102,26 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 		b.crates.set(c.id, { ...c, lastSeenAt: now, confidence: 1, inView: true });
 	}
 	updateOutOfView(b.crates, sensing.crates);
+}
+
+// Keeps observedEmptySpawns consistent with current sensing:
+// - ADD: positions in FOV that are spawn tiles (no agent/parcel/crate confirmed by server).
+// - REMOVE: parcels currently on a spawn tile cancel the empty mark.
+export function updateObservedEmptySpawns(
+	b: BeliefStore,
+	map: StaticMap,
+	sensing: IOSensing,
+	now: number,
+): void {
+	const spawnSet = new Set(map.spawnTileIds);
+	for (const pos of sensing.positions) {
+		const id = tileId(map, pos.x, pos.y);
+		if (spawnSet.has(id)) b.observedEmptySpawns.set(id, now);
+	}
+	for (const p of sensing.parcels) {
+		if (p.carriedBy) continue;
+		b.observedEmptySpawns.delete(tileId(map, p.x, p.y));
+	}
 }
 
 // Marks picked-up parcels as carried by myId immediately (before next sensing).
