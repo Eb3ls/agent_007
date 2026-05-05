@@ -20,11 +20,14 @@ export const AGENT_GRACE_STEPS = 3;
 export const FALLBACK_AGENT_CAPACITY = 5;
 export const CAPACITY_OVERRIDE = 100;
 
-// Intention layer: thresholds for path commitment and forced replan.
-export const INTENTION_UTILITY_EPSILON = 2;
+// Intention layer: fraction by which a new candidate must exceed the current
+// intention's utility to trigger a switch (anti-flicker hysteresis).
+// e.g. 0.10 → new candidate must be >10% better than current.
+// INVARIANT: INTENTION_SWITCH_MARGIN_FRACTION < RECONSIDER_OPPORTUNITY_MARGIN_FRACTION
+export const INTENTION_SWITCH_MARGIN_FRACTION = 0.10;
 // Opportunistic reconsider: trigger re-deliberation if a fresh candidate beats
-// the committed intention's utility by this margin.
-export const RECONSIDER_OPPORTUNITY_MARGIN = 5;
+// the committed intention's utility by this fraction.
+export const RECONSIDER_OPPORTUNITY_MARGIN_FRACTION = 0.25;
 export const MAX_MOVE_FAIL_STREAK = 3;
 export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms
 export const PARCEL_BELIEF_STALE_STEPS = 4; // steps out-of-view before treating parcel as lost

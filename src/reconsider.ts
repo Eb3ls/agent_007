@@ -3,7 +3,7 @@ import {
 	INTENTION_MAX_AGE_STEPS,
 	MAX_MOVE_FAIL_STREAK,
 	PARCEL_BELIEF_STALE_STEPS,
-	RECONSIDER_OPPORTUNITY_MARGIN,
+	RECONSIDER_OPPORTUNITY_MARGIN_FRACTION,
 } from "./config.js";
 import {
 	computeDecayPerStep,
@@ -149,7 +149,7 @@ export function shouldReconsider(
 		decayIntervalMs,
 		movementDurationMs,
 	);
-	return freshTarget.utility > currentUtility + RECONSIDER_OPPORTUNITY_MARGIN;
+	return freshTarget.utility > currentUtility * (1 + RECONSIDER_OPPORTUNITY_MARGIN_FRACTION);
 }
 
 // Gate function — returns why an intention is no longer viable, or viable=true.
