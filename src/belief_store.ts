@@ -35,8 +35,6 @@ export type BeliefStore = {
 	observedEmptySpawns: Map<number, number>; // tileId → lastSeenEmptyAt ms
 };
 
-const OUT_OF_VIEW_DECAY = 0.8;
-const STALE_CONFIDENCE = 0.1;
 
 export function beliefTrust(
 	confidence: number,
@@ -69,7 +67,6 @@ function updateOutOfView<T extends { confidence: number; inView: boolean }>(
 	for (const [id, entry] of map) {
 		if (inViewIds.has(id)) continue;
 		entry.inView = false;
-		entry.confidence *= OUT_OF_VIEW_DECAY;
 	}
 }
 
@@ -161,11 +158,11 @@ export function evictStale(
 ): void {
 	const now = Date.now();
 	for (const [id, p] of b.parcels) {
-		if (!p.inView && (now - p.lastSeenAt > parcelTtlMs || p.confidence <= STALE_CONFIDENCE))
+		if (!p.inView && now - p.lastSeenAt > parcelTtlMs)
 			b.parcels.delete(id);
 	}
 	for (const [id, a] of b.agents) {
-		if (!a.inView && (now - a.lastSeenAt > agentTtlMs || a.confidence <= STALE_CONFIDENCE))
+		if (!a.inView && now - a.lastSeenAt > agentTtlMs)
 			b.agents.delete(id);
 	}
 }
