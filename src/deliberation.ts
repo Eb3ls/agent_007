@@ -13,6 +13,7 @@ import {
 	type IntentionRuleContext,
 } from "./intention_rules.js";
 import { type Intention, makeIntention } from "./intention.js";
+import { computeCurrentIntentionUtility } from "./reconsider.js";
 import { SPAWN_VISITED_TTL_STEPS } from "./config.js";
 import type { BeliefStore } from "./belief_store.js";
 import type { BfsFromSelf } from "./pathfinder.js";
@@ -57,7 +58,19 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	const candidates: IntentionCandidate[] = [];
 
 	if (context.intention) {
-		candidates.push({ intention: context.intention, source: "current" });
+		candidates.push({
+			intention: context.intention,
+			source: "current",
+			utility: computeCurrentIntentionUtility(
+				context.intention,
+				context.map,
+				context.bfs,
+				context.beliefs,
+				context.carry,
+				context.decayIntervalMs,
+				context.movementDurationMs,
+			),
+		});
 	}
 
 	if (context.carry.n > 0) {
@@ -74,13 +87,9 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		const delivery = nearestDeliveryTile(context.map, context.bfs);
 		if (delivery) {
 			candidates.push({
-				intention: makeIntention(
-					"deliver",
-					delivery,
-					context.now,
-					deliverUtility,
-				),
+				intention: makeIntention("deliver", delivery, context.now),
 				source: "deliver",
+				utility: deliverUtility,
 			});
 		}
 
@@ -98,10 +107,10 @@ export function deliberate(context: DeliberationContext): Intention | null {
 					"pickup",
 					{ x: pickupResult.parcel.x, y: pickupResult.parcel.y },
 					context.now,
-					pickupResult.utility,
 					pickupResult.parcel.id,
 				),
 				source: "pickup",
+				utility: pickupResult.utility,
 			});
 		}
 	} else {
@@ -133,16 +142,17 @@ export function deliberate(context: DeliberationContext): Intention | null {
 					"pickup",
 					{ x: targetResult.parcel.x, y: targetResult.parcel.y },
 					context.now,
-					targetResult.utility,
 					targetResult.parcel.id,
 				),
 				source: "pickup",
+				utility: targetResult.utility,
 			});
 		}
 		if (explore) {
 			candidates.push({
 				intention: makeIntention("explore", explore, context.now),
 				source: "explore",
+				utility: 0,
 			});
 		}
 	}
@@ -165,7 +175,6 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	);
 	if (plan.length === 0) return null;
 
-	// Preserve original intention fields (moveFailStreak, committedAt) when keeping current
 	if (selected.source === "current") {
 		return { ...context.intention!, plan };
 	}

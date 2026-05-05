@@ -58,24 +58,15 @@ export function createBeliefStore(): BeliefStore {
 	};
 }
 
-function markAbsentOutOfView<T extends { inView: boolean }>(
-	map: Map<string, T>,
-	sensed: { id: string }[],
-): void {
-	const inViewIds = new Set(sensed.map((e) => e.id));
-	for (const [id, entry] of map) {
-		if (entry.inView && !inViewIds.has(id)) entry.inView = false;
-	}
-}
-
-function decayBeliefConfidence<T extends { confidence: number; inView: boolean }>(
+function updateOutOfView<T extends { confidence: number; inView: boolean }>(
 	map: Map<string, T>,
 	sensed: { id: string }[],
 ): void {
 	const inViewIds = new Set(sensed.map((e) => e.id));
 	for (const [id, entry] of map) {
 		if (inViewIds.has(id)) continue;
-		if (!entry.inView) entry.confidence *= OUT_OF_VIEW_DECAY;
+		entry.inView = false;
+		entry.confidence *= OUT_OF_VIEW_DECAY;
 	}
 }
 
@@ -92,8 +83,7 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 			inView: true,
 		});
 	}
-	markAbsentOutOfView(b.parcels, sensing.parcels);
-	decayBeliefConfidence(b.parcels, sensing.parcels);
+	updateOutOfView(b.parcels, sensing.parcels);
 
 	for (const a of sensing.agents) {
 		b.agents.set(a.id, {
@@ -103,14 +93,12 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 			inView: true,
 		});
 	}
-	markAbsentOutOfView(b.agents, sensing.agents);
-	decayBeliefConfidence(b.agents, sensing.agents);
+	updateOutOfView(b.agents, sensing.agents);
 
 	for (const c of sensing.crates) {
 		b.crates.set(c.id, { ...c, lastSeenAt: now, confidence: 1, inView: true });
 	}
-	markAbsentOutOfView(b.crates, sensing.crates);
-	decayBeliefConfidence(b.crates, sensing.crates);
+	updateOutOfView(b.crates, sensing.crates);
 }
 
 // Marks picked-up parcels as carried by myId immediately (before next sensing).

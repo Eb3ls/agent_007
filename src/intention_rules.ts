@@ -3,15 +3,12 @@ import { INTENTION_UTILITY_EPSILON } from "./config.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 import type { Intention } from "./intention.js";
 
-export type IntentionCandidateSource =
-	| "current"
-	| "pickup"
-	| "deliver"
-	| "explore";
+export type IntentionCandidateSource = "current" | "pickup" | "deliver" | "explore";
 
 export type IntentionCandidate = {
 	intention: Intention;
 	source: IntentionCandidateSource;
+	utility: number;
 };
 
 export type IntentionRuleContext = {
@@ -19,17 +16,10 @@ export type IntentionRuleContext = {
 	bfs: BfsFromSelf;
 };
 
-// Scores one candidate; "current" source uses viability check + retention bonus instead of utility scoring.
 function evaluateCandidate(
 	candidate: IntentionCandidate,
 	context: IntentionRuleContext,
 ): { pass: boolean; score: number } {
-	// Viability already confirmed by Gate 1 in main.ts; apply retention bonus to discourage thrash.
-	if (candidate.source === "current") {
-		return { pass: true, score: INTENTION_UTILITY_EPSILON / 2 };
-	}
-
-	// Check: is target reachable?
 	const targetTileId = tileId(
 		context.map,
 		candidate.intention.targetXY.x,
@@ -37,15 +27,12 @@ function evaluateCandidate(
 	);
 	const distance = context.bfs.dist[targetTileId];
 	if (distance === undefined || distance === -1) {
-		return { pass: false, score: 0 }; // target not reachable
+		return { pass: false, score: 0 };
 	}
 
-	// Score: higher is better. pickup/deliver use expectedUtility × 10 − distance; explore uses a fixed distance-only score.
-	const utility = candidate.intention.expectedUtility;
+	// Explore is a fallback — prefer nearer spawns. pickup/deliver score = absolute utility (decay-adjusted, distance already inside).
 	const score =
-		candidate.intention.kind === "explore"
-			? 5 - distance
-			: utility * 10 - distance;
+		candidate.intention.kind === "explore" ? -distance : candidate.utility;
 
 	return { pass: true, score };
 }

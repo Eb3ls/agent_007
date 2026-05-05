@@ -6,7 +6,6 @@ import {
 } from "./belief_store.js";
 import {
 	AGENT_GRACE_STEPS,
-	CAPACITY_OVERRIDE,
 	EXPECTED_STEAL_HORIZON_STEPS,
 } from "./config.js";
 import {
@@ -171,7 +170,6 @@ export function pickBestParcelTarget(
 	carry: CarryState,
 	stealHorizonSteps: number = EXPECTED_STEAL_HORIZON_STEPS,
 ): PickResult | null {
-	if (carry.n >= CAPACITY_OVERRIDE) return null;
 	const now = Date.now();
 	const decayPerStep = computeDecayPerStep(
 		decayIntervalMs,
@@ -207,11 +205,7 @@ export function pickBestParcelTarget(
 		if (carry.n === 0) {
 			utility = parcelNet;
 		} else {
-			const carriedNet = carry.rewards.reduce(
-				(s, r) => s + r - decayCost(r, decayPerStep, totalDist),
-				0,
-			);
-			utility = carriedNet + parcelNet;
+			utility = computeDeliverUtility(carry.rewards, decayPerStep, totalDist) + parcelNet;
 		}
 
 		if (
@@ -268,12 +262,9 @@ export function computeDecayPerStep(
 }
 
 function nearestDeliveryDist(map: StaticMap, bfs: BfsFromSelf): number {
-	let best = Infinity;
-	for (const deliveryId of map.deliveryTileIds) {
-		const dist = bfs.dist[deliveryId];
-		if (dist !== undefined && dist !== -1 && dist < best) best = dist;
-	}
-	return best;
+	const tile = nearestDeliveryTile(map, bfs);
+	if (!tile) return Infinity;
+	return bfs.dist[tileId(map, tile.x, tile.y)] ?? Infinity;
 }
 
 // Saturated decay cost: a parcel with reward R cannot lose more than R over t steps.

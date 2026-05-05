@@ -48,8 +48,7 @@ function checkTargetParcel(
 	movementDurationMs: number,
 ): boolean {
 	if (intention.kind !== "pickup") return true;
-	if (!intention.targetId) return true;
-	const parcel = beliefs.parcels.get(intention.targetId);
+	const parcel = beliefs.parcels.get(intention.targetId!);
 	if (!parcel) return false;
 	if (parcel.carriedBy && parcel.carriedBy !== myId) return false;
 
@@ -69,7 +68,7 @@ function checkTargetParcel(
 
 // Computes absolute utility of the current intention — same formula as pickBestParcelTarget
 // so the comparison with freshTarget.utility is on the same scale.
-function computeCurrentIntentionUtility(
+export function computeCurrentIntentionUtility(
 	intention: Intention,
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -86,8 +85,7 @@ function computeCurrentIntentionUtility(
 	if (intention.kind === "explore") return 0;
 
 	// kind === "pickup"
-	if (!intention.targetId) return 0;
-	const p = beliefs.parcels.get(intention.targetId);
+	const p = beliefs.parcels.get(intention.targetId!);
 	if (!p || p.carriedBy) return 0;
 
 	const parcelTileId = tileId(map, p.x, p.y);
