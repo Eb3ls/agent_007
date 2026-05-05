@@ -1,14 +1,15 @@
 import {
+	AGENT_BLOCKING_TRUST_THRESHOLD,
+	AGENT_GRACE_STEPS,
+	EXPECTED_STEAL_HORIZON_STEPS,
+	RACE_HORIZON_STEPS,
+} from "./config.js";
+import {
 	beliefTrust,
 	type AgentBelief,
 	type BeliefStore,
 	type ParcelBelief,
 } from "./belief_store.js";
-import {
-	AGENT_BLOCKING_TRUST_THRESHOLD,
-	AGENT_GRACE_STEPS,
-	EXPECTED_STEAL_HORIZON_STEPS,
-} from "./config.js";
 import {
 	reconstructPath,
 	type BfsFromSelf,
@@ -130,7 +131,10 @@ export function currentReward(
 ): number {
 	if (!Number.isFinite(decayIntervalMs)) return p.reward;
 	if (p.inView) return p.reward;
-	return Math.max(0, p.reward - Math.floor((now - p.lastSeenAt) / decayIntervalMs));
+	return Math.max(
+		0,
+		p.reward - Math.floor((now - p.lastSeenAt) / decayIntervalMs),
+	);
 }
 
 // Expected reward accounting for probabilistic availability: in-view parcels are
@@ -157,6 +161,39 @@ export function expectedReward(
 }
 
 export type PickResult = { parcel: ParcelBelief; utility: number };
+
+// P_steal for one competitor: grows with its tile advantage over self,
+// weighted by belief trust so uncertain positions contribute proportionally.
+// Uses Manhattan distance as approximation (no per-competitor BFS needed).
+function computeContestFactor(
+	beliefs: BeliefStore,
+	parcelX: number,
+	parcelY: number,
+	distSelf: number,
+	movementDurationMs: number,
+	now: number,
+): number {
+	let maxSteal = 0;
+	for (const agent of beliefs.agents.values()) {
+		if (agent.x === undefined || agent.y === undefined) continue;
+		const trust = beliefTrust(
+			agent.confidence,
+			agent.lastSeenAt,
+			now,
+			movementDurationMs * AGENT_GRACE_STEPS,
+			agent.inView,
+		);
+		if (trust < 0.05) continue;
+		const distComp =
+			Math.abs(Math.round(agent.x) - parcelX) +
+			Math.abs(Math.round(agent.y) - parcelY);
+		const margin = distSelf - distComp; // positive = competitor closer
+		if (margin <= 0) continue;
+		const pSteal = trust * (1 - Math.exp(-margin / RACE_HORIZON_STEPS));
+		if (pSteal > maxSteal) maxSteal = pSteal;
+	}
+	return maxSteal;
+}
 
 // Returns the best parcel to target, with absolute pickup utility.
 // When empty (carry.n === 0): utility = parcel net value after decay to delivery.
@@ -189,13 +226,23 @@ export function pickBestParcelTarget(
 			continue;
 
 		const totalDist = distToParcel + distParcelToDelivery;
-		const parcelReward = expectedReward(
-			p,
-			decayIntervalMs,
-			movementDurationMs,
-			stealHorizonSteps,
-			now,
-		);
+		const parcelReward =
+			expectedReward(
+				p,
+				decayIntervalMs,
+				movementDurationMs,
+				stealHorizonSteps,
+				now,
+			) *
+			(1 -
+				computeContestFactor(
+					beliefs,
+					p.x,
+					p.y,
+					distToParcel,
+					movementDurationMs,
+					now,
+				));
 		if (parcelReward <= 0) continue;
 		const parcelNet =
 			parcelReward - decayCost(parcelReward, decayPerStep, totalDist);
@@ -205,7 +252,9 @@ export function pickBestParcelTarget(
 		if (carry.n === 0) {
 			utility = parcelNet;
 		} else {
-			utility = computeDeliverUtility(carry.rewards, decayPerStep, totalDist) + parcelNet;
+			utility =
+				computeDeliverUtility(carry.rewards, decayPerStep, totalDist) +
+				parcelNet;
 		}
 
 		if (utility > bestUtility) {

@@ -37,6 +37,10 @@ export const SPAWN_OBSERVED_TTL_STEPS = 100;
 // weight(t) = weight(0) * exp(-Δsteps / MEMORY_DECAY_HORIZON_STEPS)
 export const MEMORY_DECAY_HORIZON_STEPS = 50; // ~5s @ 100ms/step, calibratable from logs
 
+// Race-aware utility: steepness of P_steal = 1 - exp(-margin / k).
+// margin = distSelf - distCompetitor (steps). k=2 → 1-tile advantage ≈ 0.39, 2-tile ≈ 0.63, 4-tile ≈ 0.86.
+export const RACE_HORIZON_STEPS = 2;
+
 // Loop timing constants
 export const READY_POLL_MS = 50; // waitForReady polling interval
 export const NO_STEP_WAIT_MS = 200; // no plan available → retry
