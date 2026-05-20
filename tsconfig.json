@@ -1,24 +1,25 @@
 {
-  "compilerOptions": {
-    "rootDir": "./src",
-    "outDir": "./dist",
+	"compilerOptions": {
+		"rootDir": "./src",
+		"outDir": "./dist",
 
-    "module": "nodenext",
-    "target": "es2020",
-    "lib": ["es2020"],
-    "types": ["node"],
+		"module": "nodenext",
+		"target": "es2020",
+		"lib": ["es2020"],
+		"types": ["node"],
 
-    "sourceMap": true,
-    "declaration": true,
-    "declarationMap": true,
+		"sourceMap": true,
+		"declaration": true,
+		"declarationMap": true,
 
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
 
-    "strict": true,
-    "isolatedModules": true,
-    "noUncheckedSideEffectImports": true,
-    "moduleDetection": "force",
-    "skipLibCheck": true
-  }
+		"strict": true,
+		"isolatedModules": true,
+		"noUncheckedSideEffectImports": true,
+		"moduleDetection": "force",
+		"skipLibCheck": true
+	},
+	"include": ["src/**/*.ts"]
 }

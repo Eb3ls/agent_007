@@ -12,8 +12,8 @@ import {
 	type IntentionCandidate,
 	type IntentionRuleContext,
 } from "./intention_rules.js";
-import { type Intention, makeIntention } from "./intention.js";
 import { computeCurrentIntentionUtility } from "./reconsider.js";
+import { type Intention, makeIntention } from "./intention.js";
 import { SPAWN_OBSERVED_TTL_STEPS } from "./config.js";
 import type { BeliefStore } from "./belief_store.js";
 import type { BfsFromSelf } from "./pathfinder.js";

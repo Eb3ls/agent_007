@@ -5,10 +5,17 @@ dist/
 node_modules/
 
 # Environment variables
-.env
-.env.*
+.env*
+!.env.example
 .editorconfig
 
 # Claude Code (personal config)
 .claude/
 CLAUDE.md
+ARCHITECTURE.md
+
+# Text notes
+*.txt
+
+# Logs
+logs/

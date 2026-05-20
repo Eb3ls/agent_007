@@ -54,7 +54,6 @@ function checkTargetParcel(
 	if (!parcel) return false;
 	if (parcel.carriedBy && parcel.carriedBy !== myId) return false;
 
-
 	if (
 		parcel.inView &&
 		(parcel.x !== intention.targetXY.x || parcel.y !== intention.targetXY.y)
@@ -79,10 +78,17 @@ export function computeCurrentIntentionUtility(
 	decayIntervalMs: number,
 	movementDurationMs: number,
 ): number {
-	const decayPerStep = computeDecayPerStep(decayIntervalMs, movementDurationMs);
+	const decayPerStep = computeDecayPerStep(
+		decayIntervalMs,
+		movementDurationMs,
+	);
 
 	if (intention.kind === "deliver") {
-		return computeDeliverUtility(carry.rewards, decayPerStep, carry.nearestDeliveryDist);
+		return computeDeliverUtility(
+			carry.rewards,
+			decayPerStep,
+			carry.nearestDeliveryDist,
+		);
 	}
 	if (intention.kind === "explore") return 0;
 
@@ -113,7 +119,10 @@ export function computeCurrentIntentionUtility(
 	const totalDist = dist + distToDel; // detour path: self → parcel → delivery
 	const parcelNet = reward - decayCost(reward, decayPerStep, totalDist);
 	if (carry.n === 0) return parcelNet;
-	return computeDeliverUtility(carry.rewards, decayPerStep, totalDist) + parcelNet;
+	return (
+		computeDeliverUtility(carry.rewards, decayPerStep, totalDist) +
+		parcelNet
+	);
 }
 
 // Meta-level reconsider gate: should we re-deliberate even though intention is still viable?
@@ -151,7 +160,10 @@ export function shouldReconsider(
 		decayIntervalMs,
 		movementDurationMs,
 	);
-	return freshTarget.utility > currentUtility * (1 + RECONSIDER_OPPORTUNITY_MARGIN_FRACTION);
+	return (
+		freshTarget.utility >
+		currentUtility * (1 + RECONSIDER_OPPORTUNITY_MARGIN_FRACTION)
+	);
 }
 
 // Gate function — returns why an intention is no longer viable, or viable=true.
@@ -186,7 +198,11 @@ export function checkIntentionViability(
 
 	// 3) Explore: target in FOV and close enough to react quickly if a parcel spawns
 	if (intention.kind === "explore") {
-		const targetId = tileId(map, intention.targetXY.x, intention.targetXY.y);
+		const targetId = tileId(
+			map,
+			intention.targetXY.x,
+			intention.targetXY.y,
+		);
 		const seenAt = beliefs.observedEmptySpawns.get(targetId);
 		const distToTarget =
 			Math.abs(selfX - intention.targetXY.x) +

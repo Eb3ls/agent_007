@@ -35,7 +35,6 @@ export type BeliefStore = {
 	observedEmptySpawns: Map<number, number>; // tileId → lastSeenEmptyAt ms
 };
 
-
 export function beliefTrust(
 	confidence: number,
 	lastSeenAt: number,
@@ -96,7 +95,12 @@ export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
 	updateOutOfView(b.agents, sensing.agents);
 
 	for (const c of sensing.crates) {
-		b.crates.set(c.id, { ...c, lastSeenAt: now, confidence: 1, inView: true });
+		b.crates.set(c.id, {
+			...c,
+			lastSeenAt: now,
+			confidence: 1,
+			inView: true,
+		});
 	}
 	updateOutOfView(b.crates, sensing.crates);
 }
@@ -161,12 +165,10 @@ export function evictStale(
 ): void {
 	const now = Date.now();
 	for (const [id, p] of b.parcels) {
-		if (!p.inView && now - p.lastSeenAt > parcelTtlMs)
-			b.parcels.delete(id);
+		if (!p.inView && now - p.lastSeenAt > parcelTtlMs) b.parcels.delete(id);
 	}
 	for (const [id, a] of b.agents) {
-		if (!a.inView && now - a.lastSeenAt > agentTtlMs)
-			b.agents.delete(id);
+		if (!a.inView && now - a.lastSeenAt > agentTtlMs) b.agents.delete(id);
 	}
 }
 

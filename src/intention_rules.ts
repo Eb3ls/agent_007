@@ -1,9 +1,13 @@
-import { tileId, type StaticMap } from "./static_map.js";
 import { INTENTION_SWITCH_MARGIN_FRACTION } from "./config.js";
+import { tileId, type StaticMap } from "./static_map.js";
 import type { BfsFromSelf } from "./pathfinder.js";
 import type { Intention } from "./intention.js";
 
-export type IntentionCandidateSource = "current" | "pickup" | "deliver" | "explore";
+export type IntentionCandidateSource =
+	| "current"
+	| "pickup"
+	| "deliver"
+	| "explore";
 
 export type IntentionCandidate = {
 	intention: Intention;
@@ -66,7 +70,8 @@ export function selectBestIntention(
 	// If the current intention is viable, require the new best to exceed it by
 	// the hysteresis margin before switching.
 	if (currentScore > -Infinity && best.source !== "current") {
-		const switchThreshold = currentScore * (1 + INTENTION_SWITCH_MARGIN_FRACTION);
+		const switchThreshold =
+			currentScore * (1 + INTENTION_SWITCH_MARGIN_FRACTION);
 		if (bestScore <= switchThreshold) {
 			return candidates.find((c) => c.source === "current")!;
 		}

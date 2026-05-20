@@ -17,12 +17,11 @@ export const AGENT_GRACE_STEPS = 3;
 // Trust threshold below which an out-of-view agent no longer blocks pathfinding.
 export const AGENT_BLOCKING_TRUST_THRESHOLD = 0.5;
 
-
 // Intention layer: fraction by which a new candidate must exceed the current
 // intention's utility to trigger a switch (anti-flicker hysteresis).
 // e.g. 0.10 → new candidate must be >10% better than current.
 // INVARIANT: INTENTION_SWITCH_MARGIN_FRACTION < RECONSIDER_OPPORTUNITY_MARGIN_FRACTION
-export const INTENTION_SWITCH_MARGIN_FRACTION = 0.10;
+export const INTENTION_SWITCH_MARGIN_FRACTION = 0.1;
 // Opportunistic reconsider: trigger re-deliberation if a fresh candidate beats
 // the committed intention's utility by this fraction.
 export const RECONSIDER_OPPORTUNITY_MARGIN_FRACTION = 0.25;
