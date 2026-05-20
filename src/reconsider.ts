@@ -1,5 +1,6 @@
 import {
 	EXPECTED_STEAL_HORIZON_STEPS,
+	EXPLORE_TERMINATION_DISTANCE,
 	INTENTION_MAX_AGE_STEPS,
 	MAX_MOVE_FAIL_STREAK,
 	PARCEL_BELIEF_STALE_STEPS,
@@ -183,13 +184,17 @@ export function checkIntentionViability(
 	if (!checkTargetParcel(myId, intention, beliefs, now, movementDurationMs))
 		return { viable: false, reason: "target_lost" };
 
-	// 3) Explore: target already in FOV and marked empty — no need to walk all the way there
+	// 3) Explore: target in FOV and close enough to react quickly if a parcel spawns
 	if (intention.kind === "explore") {
 		const targetId = tileId(map, intention.targetXY.x, intention.targetXY.y);
 		const seenAt = beliefs.observedEmptySpawns.get(targetId);
+		const distToTarget =
+			Math.abs(selfX - intention.targetXY.x) +
+			Math.abs(selfY - intention.targetXY.y);
 		if (
 			seenAt !== undefined &&
-			now - seenAt < SPAWN_OBSERVED_TTL_STEPS * movementDurationMs
+			now - seenAt < SPAWN_OBSERVED_TTL_STEPS * movementDurationMs &&
+			distToTarget <= EXPLORE_TERMINATION_DISTANCE
 		)
 			return { viable: false, reason: "succeeded" };
 	}

@@ -111,10 +111,9 @@ export function updateObservedEmptySpawns(
 	sensing: IOSensing,
 	now: number,
 ): void {
-	const spawnSet = new Set(map.spawnTileIds);
 	for (const pos of sensing.positions) {
 		const id = tileId(map, pos.x, pos.y);
-		if (spawnSet.has(id)) b.observedEmptySpawns.set(id, now);
+		if (map.spawnTileIdSet.has(id)) b.observedEmptySpawns.set(id, now);
 	}
 	for (const p of sensing.parcels) {
 		if (p.carriedBy) continue;

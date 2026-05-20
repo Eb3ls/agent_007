@@ -133,9 +133,11 @@ export function deliberate(context: DeliberationContext): Intention | null {
 						context.now,
 						context.movementDurationMs,
 					),
-					context.beliefs,
-					context.now,
-					context.movementDurationMs,
+					{
+						beliefs: context.beliefs,
+						now: context.now,
+						movementDurationMs: context.movementDurationMs,
+					},
 				)
 			: null;
 		if (targetResult) {

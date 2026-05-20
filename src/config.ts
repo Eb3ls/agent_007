@@ -32,6 +32,9 @@ export const PARCEL_BELIEF_STALE_STEPS = 4; // steps out-of-view before treating
 
 // Exploration: how many steps a spawn observed empty stays excluded from explore candidates.
 export const SPAWN_OBSERVED_TTL_STEPS = 100;
+// Explore terminates as succeeded when target is in FOV AND Manhattan distance ≤ this value.
+// Lower = more reactive to pickups (stay close), higher = faster coverage (skip sooner).
+export const EXPLORE_TERMINATION_DISTANCE = 2;
 // Weight applied to competitor heatmap when ranking explore targets.
 // cost += EXPLORE_COMPETITOR_PENALTY_ALPHA * competitorWeight(spawn)
 // Higher → more strongly avoid zones where competitors are frequently seen.

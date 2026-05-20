@@ -29,6 +29,7 @@ export type StaticMap = {
 	hasMovingWalls: boolean;
 	// Precomputed at setMap — used by pathfinder
 	spawnTileIds: number[];
+	spawnTileIdSet: Set<number>; // same as spawnTileIds, Set for O(1) lookup
 	deliveryTileIds: number[];
 	baseReverseDistToDelivery: Int32Array; // min steps to any delivery; -1 = unreachable
 };
@@ -42,6 +43,7 @@ export function createStaticMap(): StaticMap {
 		gridHeight: 0,
 		hasMovingWalls: false,
 		spawnTileIds: [],
+		spawnTileIdSet: new Set(),
 		deliveryTileIds: [],
 		baseReverseDistToDelivery: new Int32Array(0),
 	};
@@ -72,9 +74,14 @@ export function setMap(m: StaticMap, tiles: IOTile[]): void {
 	m.gridHeight = maxY === -Infinity ? 0 : maxY - minY + 1;
 
 	m.spawnTileIds = [];
+	m.spawnTileIdSet = new Set();
 	for (const [, t] of m.tiles) {
 		// type "1" is parcel spawner server-side (Deliveroo.js Tile.js:61-63)
-		if (t.type === TILE.WALKABLE) m.spawnTileIds.push(tileId(m, t.x, t.y));
+		if (t.type === TILE.WALKABLE) {
+			const id = tileId(m, t.x, t.y);
+			m.spawnTileIds.push(id);
+			m.spawnTileIdSet.add(id);
+		}
 	}
 
 	const size = m.gridWidth * m.gridHeight;

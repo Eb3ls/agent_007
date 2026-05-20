@@ -88,7 +88,7 @@ async function loop(): Promise<void> {
 		client.config?.GAME.player.observation_distance ??
 		FALLBACK_OBSERVATION_DISTANCE;
 	let intention: Intention | null = null;
-	let stuckIterations = 0; // count of iterations with no step
+	let intentionMissing = false;
 	let loopCount = 0;
 
 	while (true) {
@@ -237,17 +237,18 @@ async function loop(): Promise<void> {
 		}
 
 		if (!intention) {
-			if (stuckIterations === 0)
+			if (!intentionMissing) {
 				log.warn(
 					"wait",
 					`no intention — carrying=${carrying} pos=(${selfX},${selfY})`,
 				);
-			stuckIterations++;
+				intentionMissing = true;
+			}
 			await sleep(NO_STEP_WAIT_MS);
 			continue;
 		}
 
-		stuckIterations = 0;
+		intentionMissing = false;
 		const step = intention.plan.shift()!;
 		log.debug(
 			"plan",

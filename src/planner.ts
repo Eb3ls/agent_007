@@ -73,6 +73,12 @@ export function nearestDeliveryTile(
 	return bestId === -1 ? null : idToXY(map, bestId);
 }
 
+type CompetitorPenaltyConfig = {
+	beliefs: BeliefStore;
+	now: number;
+	movementDurationMs: number;
+};
+
 // Prefers spawns that minimize walk + delivery distance + competitor presence,
 // skipping tiles in current FOV or recently observed empty.
 export function nearestOutOfViewSpawn(
@@ -82,9 +88,7 @@ export function nearestOutOfViewSpawn(
 	selfY: number,
 	observationDistance: number,
 	observedEmptySpawnIds?: ReadonlySet<number>,
-	beliefs?: BeliefStore,
-	now?: number,
-	movementDurationMs?: number,
+	competitorPenalty?: CompetitorPenaltyConfig,
 ): { x: number; y: number } | null {
 	let bestId = -1;
 	let bestCost = Infinity;
@@ -100,7 +104,8 @@ export function nearestOutOfViewSpawn(
 			continue;
 
 		let cost = distToSpawn + distSpawnToDelivery;
-		if (beliefs && now !== undefined && movementDurationMs !== undefined) {
+		if (competitorPenalty) {
+			const { beliefs, now, movementDurationMs } = competitorPenalty;
 			cost +=
 				EXPLORE_COMPETITOR_PENALTY_ALPHA *
 				competitorWeight(beliefs, x, y, now, movementDurationMs);
