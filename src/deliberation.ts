@@ -4,6 +4,7 @@ import {
 	computeDeliverUtility,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
+	nearestRoamTarget,
 	pickBestParcelTarget,
 	type CarryState,
 } from "./planner.js";
@@ -139,6 +140,13 @@ export function deliberate(context: DeliberationContext): Intention | null {
 						movementDurationMs: context.movementDurationMs,
 					},
 				)
+			?? nearestRoamTarget(
+				context.map,
+				context.bfs,
+				context.selfX,
+				context.selfY,
+				context.observationDistance,
+			)
 			: null;
 		if (targetResult) {
 			candidates.push({

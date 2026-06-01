@@ -17,7 +17,7 @@ import {
 	type BfsFromSelf,
 	type Direction,
 } from "./pathfinder.js";
-import { idToXY, inBounds, tileId, type StaticMap } from "./static_map.js";
+import { idToXY, inBounds, tileId, TILE, type StaticMap } from "./static_map.js";
 
 // In-view agents always block; out-of-view ones block only while last-seen belief retains trust ≥ 0.5.
 export function isAgentBlocking(
@@ -116,6 +116,50 @@ export function nearestOutOfViewSpawn(
 		}
 	}
 	return bestId === -1 ? null : idToXY(map, bestId);
+}
+
+// Roaming fallback when no spawn target is available.
+// Prefers the nearest reachable non-visible tile so exploration keeps moving instead of idling.
+export function nearestRoamTarget(
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	selfX: number,
+	selfY: number,
+	observationDistance: number,
+): { x: number; y: number } | null {
+	let bestId = -1;
+	let bestDist = Infinity;
+	let bestVisibleId = -1;
+	let bestVisibleDist = Infinity;
+
+	for (const tile of map.tiles.values()) {
+		if (
+			tile.type === TILE.EMPTY ||
+			tile.type === TILE.WALL ||
+			tile.type === TILE.WALL_MOVING
+		)
+			continue;
+
+		const id = tileId(map, tile.x, tile.y);
+		const dist = bfs.dist[id];
+		if (dist === undefined || dist === -1 || dist === 0) continue;
+
+		if (Math.abs(tile.x - selfX) + Math.abs(tile.y - selfY) <= observationDistance) {
+			if (dist < bestVisibleDist) {
+				bestVisibleDist = dist;
+				bestVisibleId = id;
+			}
+			continue;
+		}
+
+		if (dist < bestDist) {
+			bestDist = dist;
+			bestId = id;
+		}
+	}
+
+	const chosenId = bestId !== -1 ? bestId : bestVisibleId;
+	return chosenId === -1 ? null : idToXY(map, chosenId);
 }
 
 // True when standing on a delivery tile (dist=0) while carrying at least one parcel.
