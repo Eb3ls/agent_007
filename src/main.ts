@@ -16,6 +16,7 @@ import {
 import {
 	applyDelivery,
 	applyPickupResult,
+	clearUncarriedParcelsAt,
 	topCompetitorTiles,
 } from "./belief_store.js";
 import { checkIntentionViability, shouldReconsider } from "./reconsider.js";
@@ -122,6 +123,7 @@ async function loop(): Promise<void> {
 		if (parcelAtFeet) {
 			const picked = await client.pickup();
 			applyPickupResult(client.beliefs, picked, myId);
+			clearUncarriedParcelsAt(client.beliefs, selfX, selfY);
 			log.ok("pickup", `picked=${picked.length}`);
 			continue;
 		}

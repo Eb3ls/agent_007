@@ -145,6 +145,19 @@ export function applyPickupResult(
 	}
 }
 
+// Clears any uncarried parcel belief at the given tile.
+export function clearUncarriedParcelsAt(
+	b: BeliefStore,
+	x: number,
+	y: number,
+): void {
+	for (const [id, p] of b.parcels) {
+		if (p.carriedBy) continue;
+		if (p.x !== x || p.y !== y) continue;
+		b.parcels.delete(id);
+	}
+}
+
 // Clears all parcels believed carried by myId — call after putdown on delivery tile
 // to avoid belief lag when the server returns an empty ack (timing/sensing race).
 export function applyDelivery(b: BeliefStore, myId: string): void {
