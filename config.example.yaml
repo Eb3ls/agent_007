@@ -1,0 +1,47 @@
+# Server config fallbacks — used before onConfig arrives
+server:
+  fallback_movement_duration_ms: 100
+  fallback_observation_distance: 5
+
+# Belief system
+belief:
+  parcel_ttl_mult: 20
+  agent_ttl_mult: 10
+  # P_alive = exp(-age_steps / horizon). ~15 steps ≈ 1.5s.
+  # parcel_ttl_mult must be >> expected_steal_horizon_steps (practical min 3×).
+  expected_steal_horizon_steps: 15
+  agent_grace_steps: 3
+  agent_blocking_trust_threshold: 0.5
+  parcel_belief_stale_steps: 4
+
+# Intention layer
+intention:
+  # New candidate must exceed current utility by this fraction to trigger switch.
+  # INVARIANT: switch_margin_fraction < reconsider_opportunity_margin_fraction
+  switch_margin_fraction: 0.10
+  reconsider_opportunity_margin_fraction: 0.25
+  max_move_fail_streak: 3
+  max_age_steps: 50
+
+# Exploration
+explore:
+  spawn_observed_ttl_steps: 100
+  # Explore succeeds when target is in FOV AND Manhattan distance ≤ this value.
+  termination_distance: 2
+  # cost += competitor_penalty_alpha * competitorWeight(spawn)
+  competitor_penalty_alpha: 3
+  # weight(t) = weight(0) * exp(-Δsteps / memory_decay_horizon_steps)
+  memory_decay_horizon_steps: 50
+
+# Race-aware utility: P_steal = 1 - exp(-margin / horizon_steps)
+race:
+  horizon_steps: 2
+
+# Loop timing
+loop:
+  ready_poll_ms: 50
+  no_step_wait_ms: 200
+
+# Logging: silent | info | debug
+log:
+  level: info

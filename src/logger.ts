@@ -1,8 +1,10 @@
 import chalk, { type ChalkInstance } from "chalk";
+import { LOG_LEVEL } from "./config.js";
 
 const tag = (label: string, color: ChalkInstance) => color.bold(`[${label}]`);
-const silent = process.argv.includes("--silent");
 const noop = (_label: string, _msg: string) => {};
+const silent = LOG_LEVEL === "silent";
+const debugEnabled = LOG_LEVEL === "debug";
 
 export const log = {
 	// Startup / structural events — always visible
@@ -29,9 +31,10 @@ export const log = {
 		: (label: string, msg: string) =>
 				console.log(tag(label, chalk.red) + " " + msg),
 
-	// High-frequency ticks: intent commit, plan step — dim to reduce noise
-	debug: silent
-		? noop
-		: (label: string, msg: string) =>
-				console.log(chalk.dim(`[${label}] ${msg}`)),
+	// High-frequency ticks: intent commit, plan step — only shown in debug mode
+	debug:
+		silent || !debugEnabled
+			? noop
+			: (label: string, msg: string) =>
+					console.log(chalk.dim(`[${label}] ${msg}`)),
 };

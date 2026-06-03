@@ -1,55 +1,87 @@
-// Server config fallbacks — used before onConfig arrives
-export const FALLBACK_MOVEMENT_DURATION_MS = 100;
-export const FALLBACK_OBSERVATION_DISTANCE = 5;
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
+import { parse } from "yaml";
 
-// Belief TTL: how many movement_duration units to keep entities after leaving view
-export const PARCEL_TTL_MULT = 20;
-export const AGENT_TTL_MULT = 10;
+const __dir = dirname(fileURLToPath(import.meta.url));
+const configPath = join(__dir, "../config.yaml");
 
-// Probabilistic belief: expected number of steps before a competitor picks up
-// an out-of-view parcel. P_alive = exp(-age_steps / horizon). ~15 steps ≈ 1.5s.
-// PARCEL_TTL_MULT must be >> EXPECTED_STEAL_HORIZON_STEPS to avoid evicting parcels
-// before P_alive has decayed to near-zero (~3× is the practical minimum).
-export const EXPECTED_STEAL_HORIZON_STEPS = 15;
+interface RawConfig {
+	server: {
+		fallback_movement_duration_ms: number;
+		fallback_observation_distance: number;
+	};
+	belief: {
+		parcel_ttl_mult: number;
+		agent_ttl_mult: number;
+		expected_steal_horizon_steps: number;
+		agent_grace_steps: number;
+		agent_blocking_trust_threshold: number;
+		parcel_belief_stale_steps: number;
+	};
+	intention: {
+		switch_margin_fraction: number;
+		reconsider_opportunity_margin_fraction: number;
+		max_move_fail_streak: number;
+		max_age_steps: number;
+	};
+	explore: {
+		spawn_observed_ttl_steps: number;
+		termination_distance: number;
+		competitor_penalty_alpha: number;
+		memory_decay_horizon_steps: number;
+	};
+	race: { horizon_steps: number };
+	loop: { ready_poll_ms: number; no_step_wait_ms: number };
+	log: { level: "silent" | "info" | "debug" };
+}
 
-// Grace window: keep an out-of-view agent's tile hard-blocked for this many steps.
-export const AGENT_GRACE_STEPS = 3;
-// Trust threshold below which an out-of-view agent no longer blocks pathfinding.
-export const AGENT_BLOCKING_TRUST_THRESHOLD = 0.5;
+function loadConfig(): RawConfig {
+	try {
+		return parse(readFileSync(configPath, "utf8")) as RawConfig;
+	} catch {
+		throw new Error(
+			`Failed to load config.yaml at ${configPath} — copy config.example.yaml`,
+		);
+	}
+}
 
-// Intention layer: fraction by which a new candidate must exceed the current
-// intention's utility to trigger a switch (anti-flicker hysteresis).
-// e.g. 0.10 → new candidate must be >10% better than current.
-// INVARIANT: INTENTION_SWITCH_MARGIN_FRACTION < RECONSIDER_OPPORTUNITY_MARGIN_FRACTION
-export const INTENTION_SWITCH_MARGIN_FRACTION = 0.1;
-// Opportunistic reconsider: trigger re-deliberation if a fresh candidate beats
-// the committed intention's utility by this fraction.
-export const RECONSIDER_OPPORTUNITY_MARGIN_FRACTION = 0.25;
-export const MAX_MOVE_FAIL_STREAK = 3;
-export const INTENTION_MAX_AGE_STEPS = 50; // safety timeout ~5s @ 100ms
-export const PARCEL_BELIEF_STALE_STEPS = 4; // steps out-of-view before treating parcel as lost
+const cfg = loadConfig();
 
-// Exploration: how many steps a spawn observed empty stays excluded from explore candidates.
-export const SPAWN_OBSERVED_TTL_STEPS = 100;
-// Explore terminates as succeeded when target is in FOV AND Manhattan distance ≤ this value.
-// Lower = more reactive to pickups (stay close), higher = faster coverage (skip sooner).
-export const EXPLORE_TERMINATION_DISTANCE = 2;
-// Weight applied to competitor heatmap when ranking explore targets.
-// cost += EXPLORE_COMPETITOR_PENALTY_ALPHA * competitorWeight(spawn)
-// Higher → more strongly avoid zones where competitors are frequently seen.
-export const EXPLORE_COMPETITOR_PENALTY_ALPHA = 3;
+export const FALLBACK_MOVEMENT_DURATION_MS =
+	cfg.server.fallback_movement_duration_ms;
+export const FALLBACK_OBSERVATION_DISTANCE =
+	cfg.server.fallback_observation_distance;
 
-// Competitor heatmap: exponential decay horizon in steps.
-// weight(t) = weight(0) * exp(-Δsteps / MEMORY_DECAY_HORIZON_STEPS)
-export const MEMORY_DECAY_HORIZON_STEPS = 50; // ~5s @ 100ms/step, calibratable from logs
+export const PARCEL_TTL_MULT = cfg.belief.parcel_ttl_mult;
+export const AGENT_TTL_MULT = cfg.belief.agent_ttl_mult;
+export const EXPECTED_STEAL_HORIZON_STEPS =
+	cfg.belief.expected_steal_horizon_steps;
+export const AGENT_GRACE_STEPS = cfg.belief.agent_grace_steps;
+export const AGENT_BLOCKING_TRUST_THRESHOLD =
+	cfg.belief.agent_blocking_trust_threshold;
+export const PARCEL_BELIEF_STALE_STEPS = cfg.belief.parcel_belief_stale_steps;
 
-// Race-aware utility: steepness of P_steal = 1 - exp(-margin / k).
-// margin = distSelf - distCompetitor (steps). k=2 → 1-tile advantage ≈ 0.39, 2-tile ≈ 0.63, 4-tile ≈ 0.86.
-export const RACE_HORIZON_STEPS = 2;
+export const INTENTION_SWITCH_MARGIN_FRACTION =
+	cfg.intention.switch_margin_fraction;
+export const RECONSIDER_OPPORTUNITY_MARGIN_FRACTION =
+	cfg.intention.reconsider_opportunity_margin_fraction;
+export const MAX_MOVE_FAIL_STREAK = cfg.intention.max_move_fail_streak;
+export const INTENTION_MAX_AGE_STEPS = cfg.intention.max_age_steps;
 
-// Loop timing constants
-export const READY_POLL_MS = 50; // waitForReady polling interval
-export const NO_STEP_WAIT_MS = 200; // no plan available → retry
+export const SPAWN_OBSERVED_TTL_STEPS = cfg.explore.spawn_observed_ttl_steps;
+export const EXPLORE_TERMINATION_DISTANCE = cfg.explore.termination_distance;
+export const EXPLORE_COMPETITOR_PENALTY_ALPHA =
+	cfg.explore.competitor_penalty_alpha;
+export const MEMORY_DECAY_HORIZON_STEPS =
+	cfg.explore.memory_decay_horizon_steps;
+
+export const RACE_HORIZON_STEPS = cfg.race.horizon_steps;
+
+export const READY_POLL_MS = cfg.loop.ready_poll_ms;
+export const NO_STEP_WAIT_MS = cfg.loop.no_step_wait_ms;
+
+export const LOG_LEVEL = cfg.log.level;
 
 /** Parses Deliveroo decaying_event string ("infinite", "0", "500ms", "5s") into ms. */
 export function parseDecayInterval(rawInterval: string | undefined): number {
