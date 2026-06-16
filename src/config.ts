@@ -79,7 +79,7 @@ const DECAY_INTERVAL_MS: Record<string, number> = {
 	"1h": 3600000,
 };
 
-/** Returns decay interval in ms; 0 if decaying_event is outside the valid set (d=0 guard). */
+/** Returns decay interval in ms; Infinity if decaying_event is outside the valid set (no decay). */
 export function parseDecayInterval(rawInterval: string | undefined): number {
 	if (!rawInterval || !VALID_DECAY_EVENTS.has(rawInterval)) {
 		if (rawInterval !== undefined) {
@@ -87,7 +87,7 @@ export function parseDecayInterval(rawInterval: string | undefined): number {
 				`[config] decaying_event="${rawInterval}" not in {frame,1s,2s,5s,10s,1m,1h} — d=0 (no decay)`,
 			);
 		}
-		return 0;
+		return Infinity;
 	}
 	return DECAY_INTERVAL_MS[rawInterval]!;
 }
