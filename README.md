@@ -2,7 +2,7 @@
 
 Autonomous multi-agent system for the [Deliveroo.js](https://github.com/unitn-asa/deliveroo-js) competitive environment, developed for the **Autonomous Software Agents** course at the University of Trento (2025–26).
 
-Agents operate on a grid map, competing to pick up and deliver parcels under time pressure and partial observability. The system is built around a **BDI (Belief-Desire-Intention)** architecture with planned support for LLM-assisted planning, PDDL-based planning, and multi-agent coordination.
+Agents operate on a grid map, competing to pick up and deliver parcels under time pressure and partial observability. The system is built around a **BDI (Belief-Desire-Intention)** architecture with LLM-assisted mission interpretation, PDDL-based crate planning, and dual-agent coordination.
 
 ## Setup
 
@@ -18,17 +18,22 @@ npm run build
 
 ### Environment variables
 
-| Variable | Description |
-|---|---|
-| `DELIVEROO_HOST` | Game server URL |
-| `DELIVEROO_TOKEN_1` | JWT token — first agent |
-| `DELIVEROO_TOKEN_2` | JWT token — second agent (multi-agent mode) |
-| `LLM_API_URL` | OpenRouter-compatible API endpoint |
-| `LLM_API_TOKEN` | LLM API key |
-| `LLM_MODEL` | Model identifier (e.g. `google/gemma-3-27b-it`) |
-| `LOG_LEVEL` | Log verbosity (`info` / `debug`) |
+Copy `.env.example` to `.env` and fill in:
 
-PDDL solver configuration (optional, see `.env.example`).
+| Variable | Required | Description |
+|---|---|---|
+| `DELIVEROO_HOST` | yes | Game server URL |
+| `DELIVEROO_TOKEN` | yes | JWT token — BDI agent |
+| `DELIVEROO_TOKEN_LLM` | no | JWT token — LLM agent (enables dual-agent mode) |
+| `SERVER_AGENT_NAME` | no | Display name; also enables mission wiring when set |
+| `LLM_API_URL` | no | OpenAI-compatible API endpoint |
+| `LLM_API_TOKEN` | no | LLM API key |
+| `LLM_MODEL` | no | Model identifier (e.g. `google/gemma-3-27b-it`) |
+| `LLM_TIMEOUT_MS` | no | LLM request timeout in ms |
+
+### Tunable constants
+
+Copy `config.example.yaml` to `config.yaml`. All runtime constants (TTL multipliers, intention margins, exploration thresholds, log level) live there — see inline comments for guidance. Secrets stay in `.env`.
 
 ---
 
