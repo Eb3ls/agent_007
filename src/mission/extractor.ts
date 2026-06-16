@@ -2,6 +2,7 @@ import { buildSystemPrompt, buildExtractionPrompt } from "./prompts.js";
 import { resolveLabel } from "./tile_resolver.js";
 import type { StaticMap } from "../static_map.js";
 import type { LlmClient } from "./llm_client.js";
+import { createHash } from "node:crypto";
 import { log } from "../logger.js";
 
 export type XY = { x: number; y: number };
@@ -39,13 +40,18 @@ export type MissionRecord = {
 	raw: string;
 };
 
-function hashText(text: string): string {
-	let h = 0x811c9dc5;
-	for (let i = 0; i < text.length; i++) {
-		h ^= text.charCodeAt(i);
-		h = (h * 0x01000193) >>> 0;
-	}
-	return h.toString(16);
+type ParsedResponse = Partial<MissionRecord> & {
+	coords?: Array<XY | string> | null;
+	selector?: Partial<MissionRecord["selector"]> & {
+		coords?: Array<XY | string> | null;
+	};
+};
+
+function cacheKey(text: string): string {
+	return createHash("sha1")
+		.update(text.trim().replace(/\s+/g, " "))
+		.digest("hex")
+		.slice(0, 16);
 }
 
 export class Extractor {
@@ -57,8 +63,11 @@ export class Extractor {
 	) {}
 
 	async extract(text: string): Promise<MissionRecord | null> {
-		const key = hashText(text);
-		if (this.cache.has(key)) return this.cache.get(key)!;
+		const key = cacheKey(text);
+		if (this.cache.has(key)) {
+			log.debug("extractor", `cache hit: ${text.slice(0, 60)}`);
+			return this.cache.get(key)!;
+		}
 
 		let record: MissionRecord | null = null;
 		try {
@@ -66,26 +75,28 @@ export class Extractor {
 				{ role: "system", content: buildSystemPrompt() },
 				{ role: "user", content: buildExtractionPrompt(text) },
 			]);
-			const parsed = JSON.parse(response) as Partial<MissionRecord> & {
-				coords?: Array<{ x: number; y: number } | string> | null;
-			};
+			const parsed = JSON.parse(response) as ParsedResponse;
 
-			// Resolve any string-labeled coordinates via tile_resolver.
-			const resolvedCoords = parsed.coords
-				? parsed.coords
-						.map((c) =>
-							typeof c === "string"
-								? resolveLabel(c, this.map)
-								: c,
-						)
-						.filter((c): c is XY => c !== null)
-				: undefined;
+			const rawCoords: Array<XY | string> =
+				(parsed.coords?.length
+					? parsed.coords
+					: parsed.selector?.coords) ?? [];
+			const resolvedCoords = rawCoords
+				.map((c) =>
+					typeof c === "string" ? resolveLabel(c, this.map) : c,
+				)
+				.filter((c): c is XY => c !== null);
 
 			record = {
 				level: (parsed.level as MissionRecord["level"]) ?? "L2",
 				opType:
 					(parsed.opType as MissionRecord["opType"]) ?? "MODIFIER",
-				selector: parsed.selector ?? { on: "deliver" },
+				selector: {
+					...(parsed.selector ?? { on: "deliver" }),
+					...(resolvedCoords.length > 0
+						? { coords: resolvedCoords }
+						: {}),
+				} as MissionRecord["selector"],
 				effect: parsed.effect ?? {},
 				condition: parsed.condition ?? null,
 				lifetime:
@@ -98,16 +109,9 @@ export class Extractor {
 				raw: text,
 			};
 
-			if (resolvedCoords && resolvedCoords.length > 0) {
-				record.selector = {
-					...record.selector,
-					coords: resolvedCoords,
-				};
-			}
-
 			log.info(
 				"extractor",
-				`level=${record.level} op=${record.opType} bonus=${record.bonus}`,
+				`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} lifetime=${record.lifetime} bonus=${record.bonus}${record.token ? ` token=${record.token}` : ""}${record.condition ? " condition=yes" : ""}`,
 			);
 		} catch (err) {
 			log.error("extractor", `parse failed: ${String(err)}`);

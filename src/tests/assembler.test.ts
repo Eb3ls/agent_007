@@ -8,7 +8,10 @@ import { Listener } from "../mission/listener.js";
 import { AgentBus } from "../team/agent_bus.js";
 import { describe, expect, it } from "vitest";
 
-function makePauseJson(token: string | null = null, bonus: number | null = null): string {
+function makePauseJson(
+	token: string | null = null,
+	bonus: number | null = null,
+): string {
 	return JSON.stringify({
 		level: "L2",
 		opType: "PAUSE",
@@ -30,7 +33,12 @@ function makeSetup() {
 	const extractor = new Extractor(llm as never, createStaticMap());
 	const listener = new Listener(bus, "God");
 	listener.attachClient(bdiClient as never);
-	const assembler = new Assembler(bus, bdiClient as never, listener, extractor);
+	const assembler = new Assembler(
+		bus,
+		bdiClient as never,
+		listener,
+		extractor,
+	);
 	const bdiDirs: Directive[] = [];
 	const llmDirs: Directive[] = [];
 	bus.on("directive", (agentId: string, d: Directive) => {
@@ -48,26 +56,40 @@ describe("Assembler — PAUSE signal-token resume", () => {
 		bdiClient.triggerMsg("god-id", "God", "stop everything, bonus 700");
 		await assembler.processPending();
 
-		expect(bdiDirs.some((d) => d.kind === "OVERRIDE" && d.op === "PAUSE")).toBe(true);
+		expect(
+			bdiDirs.some((d) => d.kind === "OVERRIDE" && d.op === "PAUSE"),
+		).toBe(true);
 
 		// "green" intercepted as signal — no LLM call needed.
 		bdiClient.triggerMsg("god-id", "God", "green");
 
-		expect(bdiDirs.some((d) => d.kind === "OVERRIDE" && d.op === "RESUME")).toBe(true);
-		expect(llmDirs.some((d) => d.kind === "OVERRIDE" && d.op === "RESUME")).toBe(true);
+		expect(
+			bdiDirs.some((d) => d.kind === "OVERRIDE" && d.op === "RESUME"),
+		).toBe(true);
+		expect(
+			llmDirs.some((d) => d.kind === "OVERRIDE" && d.op === "RESUME"),
+		).toBe(true);
 	});
 
 	it("works with non-EN token ('via')", async () => {
 		const { bdiClient, llm, assembler, bdiDirs, llmDirs } = makeSetup();
 
 		llm.queueResponses(makePauseJson("via"));
-		bdiClient.triggerMsg("god-id", "God", "fermatevi, ripartite al mio via");
+		bdiClient.triggerMsg(
+			"god-id",
+			"God",
+			"fermatevi, ripartite al mio via",
+		);
 		await assembler.processPending();
 
 		bdiClient.triggerMsg("god-id", "God", "via");
 
-		expect(bdiDirs.some((d) => d.kind === "OVERRIDE" && d.op === "RESUME")).toBe(true);
-		expect(llmDirs.some((d) => d.kind === "OVERRIDE" && d.op === "RESUME")).toBe(true);
+		expect(
+			bdiDirs.some((d) => d.kind === "OVERRIDE" && d.op === "RESUME"),
+		).toBe(true);
+		expect(
+			llmDirs.some((d) => d.kind === "OVERRIDE" && d.op === "RESUME"),
+		).toBe(true);
 	});
 
 	it("no token → signal message reaches extractor (not consumed as signal)", async () => {
