@@ -14,12 +14,19 @@ export type BfsFromSelf = {
 	prev: Int32Array; // -1 = no predecessor; otherwise tileId of parent
 };
 
-/** Forward BFS from (sx, sy). Call once per cycle; reuse result for all target queries. */
+/**
+ * Forward BFS from (sx, sy). Call once per cycle; reuse result for all target queries.
+ *
+ * `passableCrateTiles` marks crate-slide tiles currently free of a crate as walkable.
+ * canMoveForward blocks all crate-slide tiles statically, so without this a route
+ * opened by an earlier push would never be found.
+ */
 export function bfsFromSelf(
 	m: StaticMap,
 	sx: number,
 	sy: number,
 	blocked?: ReadonlySet<number>,
+	passableCrateTiles?: ReadonlySet<number>,
 ): BfsFromSelf {
 	const size = m.gridWidth * m.gridHeight;
 	const dist = new Int32Array(size).fill(-1);
@@ -48,7 +55,10 @@ export function bfsFromSelf(
 			const nid = tileId(m, nx, ny);
 			if (dist[nid] !== -1) continue;
 			if (blocked?.has(nid)) continue;
-			if (canMoveForward(m, cx, cy, nx, ny)) {
+			if (
+				canMoveForward(m, cx, cy, nx, ny) ||
+				passableCrateTiles?.has(nid)
+			) {
 				dist[nid] = d + 1;
 				prev[nid] = cur;
 				queue[tail++] = nid;

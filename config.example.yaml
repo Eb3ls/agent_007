@@ -16,12 +16,24 @@ belief:
 
 # Intention layer
 intention:
-  # New candidate must exceed current utility by this fraction to trigger switch.
-  # INVARIANT: switch_margin_fraction < reconsider_opportunity_margin_fraction
-  switch_margin_fraction: 0.10
+  # Minimum utility (pts) to start pursuing a new non-explore intention.
+  start_margin: 0
+  # Abort current intention if its utility falls below this value.
+  abort_margin: 0
+  # New candidate must exceed current utility by this many pts to trigger switch.
+  switch_margin: 0
   reconsider_opportunity_margin_fraction: 0.25
   max_move_fail_streak: 3
   max_age_steps: 50
+  # A/B knobs (stubs — not yet wired into core logic)
+  ski_rental_fraction: 0.5
+  p_steal_clamp: 0.9
+  no_progress_k: 3
+  opponent_defer_steps: 3
+  staleness_discount: 0.5
+  contest_p_lose_grading: 0.5
+  hysteresis_pct: 0.05      # single switching-cost threshold: G3, L3 dispatch/abort (§5.8, §5.9)
+  steal_prob: 0.3            # behavioral uncertainty in steal_risk (§5.9)
 
 # Exploration
 explore:
@@ -32,6 +44,7 @@ explore:
   competitor_penalty_alpha: 3
   # weight(t) = weight(0) * exp(-Δsteps / memory_decay_horizon_steps)
   memory_decay_horizon_steps: 50
+  ev_promote: false          # A/B: promote explore-EV from 0 to §5.4 formula
 
 # Race-aware utility: P_steal = 1 - exp(-margin / horizon_steps)
 race:
@@ -41,6 +54,10 @@ race:
 loop:
   ready_poll_ms: 50
   no_step_wait_ms: 200
+
+# Mission brain
+mission:
+  l1_max_steps: 10
 
 # Logging: silent | info | debug
 log:

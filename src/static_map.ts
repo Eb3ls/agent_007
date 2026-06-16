@@ -12,8 +12,8 @@ export const TILE = {
 	EMPTY: "0",
 	WALKABLE: "1",
 	DELIVERY: "2",
-	WALL: "5",
-	WALL_MOVING: "5!",
+	CRATE_SLIDE: "5",
+	CRATE_SLIDE_MOVING: "5!",
 	ARROW_R: "→",
 	ARROW_L: "←",
 	ARROW_U: "↑",
@@ -65,7 +65,7 @@ export function setMap(m: StaticMap, tiles: IOTile[]): void {
 		if (t.x > maxX) maxX = t.x;
 		if (t.y > maxY) maxY = t.y;
 		m.tiles.set(`${t.x},${t.y}`, t);
-		if (t.type === TILE.WALL_MOVING) m.hasMovingWalls = true;
+		if (t.type === TILE.CRATE_SLIDE_MOVING) m.hasMovingWalls = true;
 	}
 
 	m.minX = minX === Infinity ? 0 : minX;
@@ -123,8 +123,8 @@ export function inBounds(m: StaticMap, x: number, y: number): boolean {
  *   - EXIT from any tile: always allowed (allowsExitInDirection returns true unconditionally).
  *   - ENTRY into a directional tile: prohibited only from the direction OPPOSITE to the arrow.
  *     '→' prohibits entry when dx=-1, '←' when dx=+1, '↓' when dy=+1, '↑' when dy=-1.
- *   - Walls (type "5") are locked tiles; "5!" landing spots are walkable when unoccupied but
- *     we conservatively block both to avoid collisions with moving walls.
+ *   - Crate-slide tiles (type "5" / "5!") are WALKABLE — the agent enters them normally
+ *     or pushes a crate if one occupies the tile (Controller.js:101-128). Never block on them.
  */
 export function canMoveForward(
 	m: StaticMap,
@@ -134,13 +134,7 @@ export function canMoveForward(
 	ty: number,
 ): boolean {
 	const to = m.tiles.get(`${tx},${ty}`);
-	if (
-		!to ||
-		to.type === TILE.EMPTY ||
-		to.type === TILE.WALL ||
-		to.type === TILE.WALL_MOVING
-	)
-		return false;
+	if (!to || to.type === TILE.EMPTY) return false;
 	const from = m.tiles.get(`${fx},${fy}`);
 	if (!from || from.type === TILE.EMPTY) return false;
 

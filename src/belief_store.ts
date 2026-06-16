@@ -11,16 +11,19 @@ export type ParcelBelief = IOParcel & {
 	lastSeenAt: number;
 	confidence: number;
 	inView: boolean;
+	inViewBy: Set<string>; // agent ids that currently see this parcel
 };
 export type AgentBelief = IOAgent & {
 	lastSeenAt: number;
 	confidence: number;
 	inView: boolean;
+	inViewBy: Set<string>;
 };
 export type CrateBelief = IOCrate & {
 	lastSeenAt: number;
 	confidence: number;
 	inView: boolean;
+	inViewBy: Set<string>;
 };
 
 // Accumulated presence weight for competitor agents, keyed by "x,y".
@@ -33,6 +36,8 @@ export type BeliefStore = {
 	crates: Map<string, CrateBelief>;
 	competitorHeatmap: Map<string, CompetitorEntry>; // key = "x,y"
 	observedEmptySpawns: Map<number, number>; // tileId → lastSeenEmptyAt ms
+	// Action-authority pin: parcel ids whose pickup is in-flight (prevents double-pickup).
+	pendingPickup: Set<string>;
 };
 
 export function beliefTrust(
@@ -55,54 +60,90 @@ export function createBeliefStore(): BeliefStore {
 		crates: new Map(),
 		competitorHeatmap: new Map(),
 		observedEmptySpawns: new Map(),
+		pendingPickup: new Set(),
 	};
 }
 
-function updateOutOfView<T extends { confidence: number; inView: boolean }>(
+function updateFOVForMap<T extends { inView: boolean; inViewBy: Set<string> }>(
 	map: Map<string, T>,
 	sensed: { id: string }[],
+	agentId: string,
 ): void {
 	const inViewIds = new Set(sensed.map((e) => e.id));
 	for (const [id, entry] of map) {
-		if (inViewIds.has(id)) continue;
-		entry.inView = false;
+		if (inViewIds.has(id)) {
+			entry.inViewBy.add(agentId);
+			entry.inView = true;
+		} else {
+			entry.inViewBy.delete(agentId);
+			entry.inView = entry.inViewBy.size > 0;
+		}
 	}
 }
 
-// Updates beliefs from a sensing event: marks in-view entities as authoritative,
-// marks previously in-view entities now absent as out-of-view.
-export function updateFromSensing(b: BeliefStore, sensing: IOSensing): void {
+// Updates beliefs from a sensing event for the given agent (default "bdi" for single-agent).
+// Marks in-view entities as authoritative; adjusts inViewBy / inView for multi-agent FOV union.
+export function updateFromSensing(
+	b: BeliefStore,
+	sensing: IOSensing,
+	agentId = "bdi",
+): void {
 	const now = Date.now();
 
 	for (const p of sensing.parcels) {
+		const existing = b.parcels.get(p.id);
 		b.parcels.set(p.id, {
 			...p,
 			lastSeenAt: now,
 			confidence: 1,
 			inView: true,
+			inViewBy: existing ? existing.inViewBy : new Set(),
 		});
+		b.parcels.get(p.id)!.inViewBy.add(agentId);
 	}
-	updateOutOfView(b.parcels, sensing.parcels);
+	updateFOVForMap(b.parcels, sensing.parcels, agentId);
 
 	for (const a of sensing.agents) {
+		const existing = b.agents.get(a.id);
 		b.agents.set(a.id, {
 			...a,
 			lastSeenAt: now,
 			confidence: 1,
 			inView: true,
+			inViewBy: existing ? existing.inViewBy : new Set(),
 		});
+		b.agents.get(a.id)!.inViewBy.add(agentId);
 	}
-	updateOutOfView(b.agents, sensing.agents);
+	updateFOVForMap(b.agents, sensing.agents, agentId);
 
 	for (const c of sensing.crates) {
+		const existing = b.crates.get(c.id);
 		b.crates.set(c.id, {
 			...c,
 			lastSeenAt: now,
 			confidence: 1,
 			inView: true,
+			inViewBy: existing ? existing.inViewBy : new Set(),
 		});
+		b.crates.get(c.id)!.inViewBy.add(agentId);
 	}
-	updateOutOfView(b.crates, sensing.crates);
+	updateFOVForMap(b.crates, sensing.crates, agentId);
+}
+
+// Removes agentId from all beliefs' inViewBy sets (call when agent disconnects or FOV resets).
+export function clearFOV(b: BeliefStore, agentId: string): void {
+	for (const p of b.parcels.values()) {
+		p.inViewBy.delete(agentId);
+		p.inView = p.inViewBy.size > 0;
+	}
+	for (const a of b.agents.values()) {
+		a.inViewBy.delete(agentId);
+		a.inView = a.inViewBy.size > 0;
+	}
+	for (const c of b.crates.values()) {
+		c.inViewBy.delete(agentId);
+		c.inView = c.inViewBy.size > 0;
+	}
 }
 
 // Keeps observedEmptySpawns consistent with current sensing.
@@ -145,6 +186,20 @@ export function applyPickupResult(
 	}
 }
 
+// Clears any uncarried parcel belief at the given tile.
+// Call after every pickup attempt to stop retry spam when pickup returns empty.
+export function clearUncarriedParcelsAt(
+	b: BeliefStore,
+	x: number,
+	y: number,
+): void {
+	for (const [id, p] of b.parcels) {
+		if (p.carriedBy) continue;
+		if (p.x !== x || p.y !== y) continue;
+		b.parcels.delete(id);
+	}
+}
+
 // Clears all parcels believed carried by myId — call after putdown on delivery tile
 // to avoid belief lag when the server returns an empty ack (timing/sensing race).
 export function applyDelivery(b: BeliefStore, myId: string): void {
@@ -173,14 +228,16 @@ export function evictStale(
 }
 
 // Records in-view competitor positions into the heatmap.
-// sensing.agents never includes self — no filter needed.
+// sensing.agents never includes self. Pass friendlyIds to exclude teammates.
 export function recordCompetitorPositions(
 	b: BeliefStore,
 	agents: IOAgent[],
 	now: number,
 	movementDurationMs: number,
+	friendlyIds: ReadonlySet<string> = new Set(),
 ): void {
 	for (const a of agents) {
+		if (friendlyIds.has(a.id)) continue;
 		if (a.x === undefined || a.y === undefined) continue;
 		const key = `${Math.round(a.x)},${Math.round(a.y)}`;
 		const existing = b.competitorHeatmap.get(key);

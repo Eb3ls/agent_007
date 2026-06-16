@@ -4,7 +4,7 @@
 	"description": "",
 	"main": "index.js",
 	"scripts": {
-		"build": "tsc",
+		"build": "tsc && cp -r src/mission/prompts dist/mission/",
 		"dev": "tsc --watch",
 		"start": "node dist/main.js",
 		"typecheck": "tsc --noEmit",
@@ -12,7 +12,8 @@
 		"format:check": "prettier --check \"src/**/*.ts\"",
 		"test": "vitest run",
 		"clean": "rm -rf dist",
-		"check": "tsc --noEmit && prettier --check \"src/**/*.ts\" && vitest run --passWithNoTests"
+		"check": "tsc --noEmit && prettier --check \"src/**/*.ts\" && vitest run --passWithNoTests",
+		"test:extract": "RUN_LLM_TESTS=1 vitest run src/tests/extractor.test.ts"
 	},
 	"keywords": [],
 	"author": "",
@@ -29,6 +30,7 @@
 		"@unitn-asa/deliveroo-js-sdk": "^1.3.5",
 		"chalk": "^5.6.2",
 		"dotenv": "^17.4.2",
+		"handlebars": "^4.7.9",
 		"yaml": "^2.9.0"
 	}
 }
