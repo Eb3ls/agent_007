@@ -1,3 +1,4 @@
+import { buildL1SystemPrompt, buildL1UserPrompt } from "./prompts.js";
 import type { L1Ctx, L1DoneShape, ToolCall } from "./tools.js";
 import type { LlmClient, ChatMessage } from "./llm_client.js";
 import type { MissionRecord } from "./extractor.js";
@@ -7,17 +8,16 @@ import { cfg } from "../config.js";
 
 export type L1Result = L1DoneShape;
 
-const SYSTEM_PROMPT = `You are an agent assistant. Execute tasks step by step using tools.
-Each response must be valid JSON: {"thought":"<reasoning>","action":{"tool":"<name>","args":<args>}}
-Tools:
-- calculate: {tool:"calculate",args:{expr:"<arithmetic>"}} → number
-- map_query: {tool:"map_query",args:{query:"spawn_tiles"|"delivery_tiles"|"bounds"|"tile_at",x?,y?}} → data
-- resolve_tile: {tool:"resolve_tile",args:{label:"<semantic label>"}} → {x,y}|null
-- send_message: {tool:"send_message",args:{to:"<id>",msg:"<text>"}} → "sent"
-- done: terminal. After send_message: {tool:"done",args:null}. Coords resolved: {tool:"done",args:{resolvedCoords:[{x,y}]}}. Cannot complete: {tool:"done",args:null}`;
+// Included in error feedback so the model knows exactly what to fix.
+const FORMAT_HINT =
+	`Reply with exactly one JSON object {"thought":string,"action":{"tool":string,"args":object|null}}. ` +
+	`No markdown, no prose. Valid tools: calculate, map_query, resolve_tile, send_message, done.`;
 
-function buildUserPrompt(record: MissionRecord): string {
-	return `Mission text: "${record.raw}"\nTask: resolve unknown coordinates or answer the question. Use tools step by step.`;
+function errorObservation(msg: string): ChatMessage {
+	return {
+		role: "user",
+		content: JSON.stringify({ observation: { error: msg } }),
+	};
 }
 
 export class L1Executor {
@@ -28,12 +28,11 @@ export class L1Executor {
 
 	async run(record: MissionRecord): Promise<L1Result> {
 		const history: ChatMessage[] = [
-			{ role: "system", content: SYSTEM_PROMPT },
-			{ role: "user", content: buildUserPrompt(record) },
+			{ role: "system", content: buildL1SystemPrompt() },
+			{ role: "user", content: buildL1UserPrompt(record.raw) },
 		];
 
 		let messageSent = false;
-		let lastActionKey: string | null = null;
 
 		for (let step = 0; step < cfg.mission.l1_max_steps; step++) {
 			let raw: string;
@@ -52,19 +51,28 @@ export class L1Executor {
 				parsed = JSON.parse(raw) as typeof parsed;
 			} catch {
 				log.warn("l1_executor", `step ${step}: JSON parse failed`);
-				break;
+				history.push({ role: "assistant", content: raw });
+				history.push(
+					errorObservation(
+						`Invalid response: not JSON. ${FORMAT_HINT}`,
+					),
+				);
+				continue;
 			}
 
-			// Loop detection: same tool+args as previous step → exit.
-			const actionKey = JSON.stringify(parsed.action);
-			if (actionKey === lastActionKey) {
-				log.warn(
-					"l1_executor",
-					`step ${step}: loop detected — exiting`,
+			// Shape guard: catches missing/non-object action or non-string tool.
+			if (
+				typeof parsed.action !== "object" ||
+				parsed.action === null ||
+				typeof (parsed.action as { tool?: unknown }).tool !== "string"
+			) {
+				log.warn("l1_executor", `step ${step}: bad action shape`);
+				history.push({ role: "assistant", content: raw });
+				history.push(
+					errorObservation(`Invalid action shape. ${FORMAT_HINT}`),
 				);
-				break;
+				continue;
 			}
-			lastActionKey = actionKey;
 
 			history.push({ role: "assistant", content: raw });
 

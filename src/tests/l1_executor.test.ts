@@ -72,12 +72,25 @@ describe("L1Executor", () => {
 		expect(result.kind).toBe("answered");
 	});
 
-	it("detects loop (same action twice) and exits with failed", async () => {
+	it("repeated identical actions are bounded by max steps, no crash", async () => {
+		// Loop detection is removed; max steps is the only bound.
+		// Mock exhausts without done → failed.
 		const sameAction =
 			'{"thought":"stuck","action":{"tool":"map_query","args":{"query":"bounds"}}}';
 		const llm = makeMockLlm([sameAction, sameAction, sameAction]);
 		const exec = new L1Executor(llm, makeCtx());
 		const result = await exec.run(makeRecord());
+		expect(result.kind).toBe("failed");
+	});
+
+	it("recovers from malformed JSON on step 0 if next response is valid done", async () => {
+		const llm = makeMockLlm([
+			"not json at all",
+			'{"thought":"giving up","action":{"tool":"done","args":null}}',
+		]);
+		const exec = new L1Executor(llm, makeCtx());
+		const result = await exec.run(makeRecord());
+		// No send_message, done(null) → failed, but loop recovered instead of crashing.
 		expect(result.kind).toBe("failed");
 	});
 

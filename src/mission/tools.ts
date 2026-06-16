@@ -106,8 +106,8 @@ export async function executeTool(
 			return call.args;
 		default:
 			throw {
-				error: `Unknown tool: ${call.tool}`,
-				recoverable: false,
+				error: `Unknown tool "${call.tool}". Valid tools: calculate, map_query, resolve_tile, send_message, done.`,
+				recoverable: true,
 			} satisfies ToolError;
 	}
 }
