@@ -1,4 +1,13 @@
 import {
+	CRATES_COOLDOWN_MS,
+	CRATES_ENABLED,
+	L_SEED_EFFICIENCY,
+	NO_STEP_WAIT_MS,
+	OPPONENT_DEFER_STEPS,
+	READY_POLL_MS,
+	parseDecayInterval,
+} from "../config.js";
+import {
 	buildPlan,
 	computeBlockedTiles,
 	deriveCarryState,
@@ -15,17 +24,15 @@ import {
 	type BeliefStore,
 } from "../belief_store.js";
 import {
-	L_SEED_EFFICIENCY,
-	NO_STEP_WAIT_MS,
-	OPPONENT_DEFER_STEPS,
-	READY_POLL_MS,
-	parseDecayInterval,
-} from "../config.js";
-import {
-	checkReachability,
-	planCrateNavPath,
+	buildPlanWithCrateHandling,
+	createCratePlannerContext,
+	type CratePlannerContext,
 } from "../mission/crate_planner.js";
-import { checkIntentionViability, shouldReconsider } from "./reconsider.js";
+import {
+	checkIntentionViability,
+	shouldReconsider,
+	shouldReconsiderPDDLForParcel,
+} from "./reconsider.js";
 import type { Coordinator } from "../team/coordinator.js";
 import { DirectiveHandler } from "../team/directives.js";
 import type { AgentBus } from "../team/agent_bus.js";
@@ -120,6 +127,10 @@ export class AgentCore {
 		let intentionMissing = false;
 		let loopCount = 0;
 		let deliveryCount = 0;
+
+		const crateCtx: CratePlannerContext | null = CRATES_ENABLED
+			? createCratePlannerContext(CRATES_COOLDOWN_MS)
+			: null;
 
 		while (true) {
 			loopCount++;
@@ -372,9 +383,12 @@ export class AgentCore {
 					}
 				}
 
-				// Gate 2: soundness.
+				// Gate 2: soundness. PDDL crate plans push through crate tiles that
+				// plain BFS rejects, so they are exempt — re-running buildPlan would
+				// flatten the push plan every tick.
 				if (
 					intention &&
+					!intention.usedPDDL &&
 					!isSoundPlan(intention.plan, selfX, selfY, map, blocked)
 				) {
 					intention.plan = buildPlan(
@@ -384,57 +398,36 @@ export class AgentCore {
 						intention.targetXY.y,
 					);
 					if (intention.plan.length === 0) {
-						if (this.beliefs.crates.size > 0 && carry.n === 0) {
-							const agentTileId = tileId(map, selfX, selfY);
-							const crateIds = [
-								...this.beliefs.crates.values(),
-							].map((c) => tileId(map, c.x, c.y));
-							const { bridgeCrateTile } = checkReachability(
-								map,
-								agentTileId,
-								crateIds,
+						// BFS can't reach the target. If crates block the way, try a
+						// crate-pushing plan via the PDDL solver (anonymous occupancy).
+						const navPath =
+							crateCtx && this.beliefs.crates.size > 0
+								? await buildPlanWithCrateHandling(
+										map,
+										bfs,
+										intention.targetXY.x,
+										intention.targetXY.y,
+										this.beliefs,
+										selfX,
+										selfY,
+										crateCtx,
+									)
+								: [];
+						if (navPath.length > 0) {
+							// Push intention so the opponent-defer guard below applies;
+							// usedPDDL exempts it from BFS soundness/viability aborts.
+							const pushIntention = makeIntention(
+								"push",
+								intention.targetXY,
+								now,
 							);
-							if (bridgeCrateTile !== null) {
-								const navPath = await planCrateNavPath(
-									map,
-									this.beliefs,
-									selfX,
-									selfY,
-									intention.targetXY.x,
-									intention.targetXY.y,
-								);
-								if (navPath && navPath.length > 0) {
-									const newIntention = makeIntention(
-										"push",
-										intention.targetXY,
-										now,
-									);
-									newIntention.plan = navPath;
-									intention = newIntention;
-									log.info(
-										"intent",
-										`PDDL crate nav: ${navPath.length} steps`,
-									);
-								} else {
-									log.warn(
-										"intent",
-										"crate blocks delivery and planCrateNavPath returned null — G1 unreachable",
-									);
-									this.coordinator?.releaseTarget(this.id);
-									intention = null;
-								}
-							} else {
-								log.warn(
-									"intent",
-									`sound-fail kind=${intention.kind} reason=unreachable`,
-								);
-								this.coordinator?.releaseTarget(this.id);
-								if (intention.kind === "goto")
-									this.coordinator?.releaseGotoTarget(
-										this.id,
-									);
-								intention = null;
-							}
+							pushIntention.plan = navPath;
+							pushIntention.usedPDDL = true;
+							intention = pushIntention;
+							log.info(
+								"intent",
+								`PDDL crate nav: ${navPath.length} steps`,
+							);
 						} else {
 							log.warn(
 								"intent",
@@ -448,18 +441,29 @@ export class AgentCore {
 					}
 				}
 
-				// Gate 3 / deliberation.
+				// Gate 3 / deliberation. PDDL plans only yield to a better parcel and
+				// only when exploring, so committed crate pushes run to completion.
 				const reconsider =
 					intention !== null &&
-					shouldReconsider(
-						intention,
-						map,
-						bfs,
-						this.beliefs,
-						carry,
-						decayIntervalMs,
-						movementDurationMs,
-					);
+					(intention.usedPDDL
+						? shouldReconsiderPDDLForParcel(
+								intention,
+								map,
+								bfs,
+								this.beliefs,
+								carry,
+								decayIntervalMs,
+								movementDurationMs,
+							)
+						: shouldReconsider(
+								intention,
+								map,
+								bfs,
+								this.beliefs,
+								carry,
+								decayIntervalMs,
+								movementDurationMs,
+							));
 
 				const teamAdvice = this.coordinator?.assignFor(this.id);
 

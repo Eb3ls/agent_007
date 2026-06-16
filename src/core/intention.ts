@@ -11,6 +11,8 @@ export type Intention = {
 	missionId?: string;
 	/** scope for RELEASE event (derived from MODIFIER.target: "both"→global, id→per-agent) */
 	releaseScope?: "global" | "per-agent";
+	/** plan was produced by the PDDL crate solver — exempt from BFS-based viability/soundness aborts */
+	usedPDDL?: boolean;
 };
 
 export function makeIntention(

@@ -59,6 +59,11 @@ loop:
 mission:
   l1_max_steps: 10
 
+# Crate-aware PDDL planning (ENHSP). Falls back to wall-only behaviour if disabled.
+crates:
+  enabled: true          # set false to treat crate tiles as static walls
+  cooldown_ms: 3000      # min ms between PDDL calls for the same target
+
 # Logging: silent | info | debug
 log:
   level: info

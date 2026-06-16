@@ -4,7 +4,6 @@
   (:types
     location - object
     agent - object
-    crate - object
   )
 
   (:predicates
@@ -12,10 +11,12 @@
     (adjacent ?from ?to - location)
     (clear ?loc - location)
     (agent-at ?a - agent ?loc - location)
-    (crate-at ?c - crate ?loc - location)
 
-    ;; Crate properties
-    (pushable ?c - crate)
+    ;; Crates are anonymous: we only track whether a tile currently holds a
+    ;; crate, never which crate. The goal is purely (agent-at ...), so crate
+    ;; identity is irrelevant — dropping it removes the ?crate action parameter
+    ;; and keeps grounding tractable on dense maps.
+    (occupied ?loc - location)
     (on-crate-tile ?loc - location)
 
     ;; Straight-line push geometry: agent at ?from pushes a crate at ?via
@@ -39,24 +40,21 @@
   (:action push-crate
     :parameters (
       ?a - agent
-      ?crate - crate
       ?from ?via ?to - location
     )
     :precondition (and
       (agent-at ?a ?from)
-      (crate-at ?crate ?via)
+      (occupied ?via)
       (push-line ?from ?via ?to)
-      (on-crate-tile ?via)
       (on-crate-tile ?to)
-      (pushable ?crate)
       (clear ?to)
     )
     :effect (and
       (not (agent-at ?a ?from))
       (agent-at ?a ?via)
-      (not (crate-at ?crate ?via))
-      (crate-at ?crate ?to)
+      (not (occupied ?via))
       (clear ?via)
+      (occupied ?to)
       (not (clear ?to))
     )
   )

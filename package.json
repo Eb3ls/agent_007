@@ -4,7 +4,8 @@
 	"description": "",
 	"main": "index.js",
 	"scripts": {
-		"build": "tsc && cp -r src/mission/prompts dist/mission/",
+		"build": "tsc && cp -r src/mission/prompts dist/mission/ && cp src/mission/domain.pddl dist/mission/domain.pddl",
+		"setup:planner": "node scripts/setup-planner.mjs",
 		"dev": "tsc --watch",
 		"start": "node dist/main.js",
 		"typecheck": "tsc --noEmit",

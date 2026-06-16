@@ -63,24 +63,23 @@ export function computeBlockedTiles(
 	return blocked;
 }
 
-// Crate-slide tiles that currently hold no crate are walkable floor.
-// canMoveForward blocks them by static type, so BFS would miss a path
-// opened by an earlier push without this set.
-// Optimistic for unobserved tiles; self-corrects once they enter FOV.
+// Crate-slide tiles ("5"/"5!") that currently hold no crate, per belief.
+//
+// These are walkable floor right now — a crate was pushed off (or never sat
+// there) — but canMoveForward blocks crate tiles by static type. Pass this set
+// to bfsFromSelf so plain BFS can route through a path that opened up. Backed by
+// crateOccupancy, which is seeded from the spawn rule, so unobserved "5!" tiles
+// are treated as blocked (not optimistically walkable) until seen empty.
 export function passableCrateTileSet(
 	map: StaticMap,
 	beliefs: BeliefStore,
 ): Set<number> {
-	const occupied = new Set<number>();
-	for (const c of beliefs.crates.values()) {
-		if (inBounds(map, c.x, c.y)) occupied.add(tileId(map, c.x, c.y));
-	}
 	const passable = new Set<number>();
 	for (const t of map.tiles.values()) {
 		if (t.type !== TILE.CRATE_SLIDE && t.type !== TILE.CRATE_SLIDE_MOVING)
 			continue;
 		const id = tileId(map, t.x, t.y);
-		if (!occupied.has(id)) passable.add(id);
+		if (!beliefs.crateOccupancy.has(id)) passable.add(id);
 	}
 	return passable;
 }

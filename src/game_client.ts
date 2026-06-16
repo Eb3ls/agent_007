@@ -3,6 +3,8 @@ import {
 	evictStale,
 	markAgentDisconnected,
 	recordCompetitorPositions,
+	seedCrateOccupancy,
+	updateCrateOccupancy,
 	updateFromSensing,
 	updateObservedEmptySpawns,
 	type BeliefStore,
@@ -181,6 +183,7 @@ export class GameClient {
 
 		this.api.onMap((width, height, tiles) => {
 			setMap(this.staticMap, tiles);
+			seedCrateOccupancy(this.beliefs, this.staticMap);
 			this.logEvent("map", {
 				tilesCount: tiles.length,
 				hasMovingWalls: this.staticMap.hasMovingWalls,
@@ -205,6 +208,7 @@ export class GameClient {
 		this.api.onSensing((sensing) => {
 			setSensing(this.perception, sensing);
 			updateFromSensing(this.beliefs, sensing, this.agentId);
+			updateCrateOccupancy(this.beliefs, this.staticMap, sensing);
 			updateObservedEmptySpawns(
 				this.beliefs,
 				this.staticMap,

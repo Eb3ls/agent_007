@@ -95,7 +95,7 @@ export function reconstructPath(
 	return path.reverse();
 }
 
-function directionOf(
+export function directionOf(
 	fx: number,
 	fy: number,
 	tx: number,

@@ -4,7 +4,7 @@ import type {
 	IOParcel,
 	IOSensing,
 } from "@unitn-asa/deliveroo-js-sdk";
-import { tileId, type StaticMap } from "./static_map.js";
+import { TILE, tileId, type StaticMap } from "./static_map.js";
 import { MEMORY_DECAY_HORIZON_STEPS } from "./config.js";
 
 export type ParcelBelief = IOParcel & {
@@ -38,6 +38,10 @@ export type BeliefStore = {
 	observedEmptySpawns: Map<number, number>; // tileId → lastSeenEmptyAt ms
 	// Action-authority pin: parcel ids whose pickup is in-flight (prevents double-pickup).
 	pendingPickup: Set<string>;
+	// Crate-slide tiles ("5"/"5!") believed to currently hold a crate (tileIds).
+	// Seeded from the spawn rule (every "5!" starts occupied) and corrected by
+	// observation, so unseen crates aren't optimistically treated as clear.
+	crateOccupancy: Set<number>;
 };
 
 export function beliefTrust(
@@ -61,7 +65,43 @@ export function createBeliefStore(): BeliefStore {
 		competitorHeatmap: new Map(),
 		observedEmptySpawns: new Map(),
 		pendingPickup: new Set(),
+		crateOccupancy: new Set(),
 	};
+}
+
+/**
+ * Seed crate occupancy from the map's spawn rule: every "5!" tile starts holding a
+ * crate; "5" tiles start empty. Call once when the map is set, before sensing.
+ */
+export function seedCrateOccupancy(b: BeliefStore, map: StaticMap): void {
+	b.crateOccupancy.clear();
+	for (const t of map.tiles.values()) {
+		if (t.type === TILE.CRATE_SLIDE_MOVING)
+			b.crateOccupancy.add(tileId(map, t.x, t.y));
+	}
+}
+
+/**
+ * Correct crate occupancy from the current FOV: a crate tile we can see is occupied
+ * iff a crate is sensed on it. Out-of-view tiles keep their last known value (the
+ * "5!" seed until first observed). Mirrors updateObservedEmptySpawns.
+ */
+export function updateCrateOccupancy(
+	b: BeliefStore,
+	map: StaticMap,
+	sensing: IOSensing,
+): void {
+	for (const pos of sensing.positions) {
+		const t = map.tiles.get(`${pos.x},${pos.y}`);
+		if (
+			t &&
+			(t.type === TILE.CRATE_SLIDE || t.type === TILE.CRATE_SLIDE_MOVING)
+		)
+			b.crateOccupancy.delete(tileId(map, pos.x, pos.y));
+	}
+	for (const c of sensing.crates) {
+		b.crateOccupancy.add(tileId(map, c.x, c.y));
+	}
 }
 
 function updateFOVForMap<T extends { inView: boolean; inViewBy: Set<string> }>(

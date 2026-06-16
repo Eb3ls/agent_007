@@ -41,6 +41,7 @@ interface RawConfig {
 	mission: { l1_max_steps: number };
 	race: { horizon_steps: number };
 	loop: { ready_poll_ms: number; no_step_wait_ms: number };
+	crates: { enabled: boolean; cooldown_ms: number };
 	log: { level: "silent" | "info" | "debug" };
 }
 
@@ -95,6 +96,9 @@ export const RACE_HORIZON_STEPS = cfg.race.horizon_steps;
 
 export const READY_POLL_MS = cfg.loop.ready_poll_ms;
 export const NO_STEP_WAIT_MS = cfg.loop.no_step_wait_ms;
+
+export const CRATES_ENABLED = cfg.crates.enabled;
+export const CRATES_COOLDOWN_MS = cfg.crates.cooldown_ms;
 
 export const LOG_LEVEL = cfg.log.level;
 

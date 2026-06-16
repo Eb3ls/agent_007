@@ -170,6 +170,32 @@ export function shouldReconsider(
 	);
 }
 
+// Reconsider gate for committed PDDL plans: only an explore plan may be
+// preempted, and only by a more valuable parcel pickup — never by another
+// explore target — so crate plans run to completion. For an explore intention
+// shouldReconsider already reduces to exactly this parcel comparison, so we
+// just gate on kind and delegate.
+export function shouldReconsiderPDDLForParcel(
+	intention: Intention,
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	beliefs: BeliefStore,
+	carry: CarryState,
+	decayIntervalMs: number,
+	movementDurationMs: number,
+): boolean {
+	if (intention.kind !== "explore") return false;
+	return shouldReconsider(
+		intention,
+		map,
+		bfs,
+		beliefs,
+		carry,
+		decayIntervalMs,
+		movementDurationMs,
+	);
+}
+
 // Gate function — returns why an intention is no longer viable, or viable=true.
 // Safe to call multiple times per tick (no side-effects).
 export function checkIntentionViability(
@@ -194,6 +220,16 @@ export function checkIntentionViability(
 			return { viable: false, reason: "target_lost" };
 		}
 		return { viable: false, reason: "succeeded" };
+	}
+
+	// PDDL plans navigate crate obstacles that BFS cannot model. Every BFS-based
+	// viability check below (unreachable, aged, etc.) would wrongly abort such a
+	// plan after a single step. Trust the solver-verified plan: only terminate on
+	// reaching the target (handled above) or repeated real move failures.
+	if (intention.usedPDDL) {
+		if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK)
+			return { viable: false, reason: "move_blocked" };
+		return { viable: true };
 	}
 
 	// 2) Parcel gone or belief stale while en route
