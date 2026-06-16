@@ -21,7 +21,14 @@ const hasLlm =
 const maybeDescribe = hasLlm ? describe : describe.skip;
 
 function makeExtractor(): Extractor {
-	return new Extractor(createLlmClient(), createStaticMap());
+	return new Extractor(
+		createLlmClient({
+			apiUrl: process.env.LLM_API_URL!,
+			apiToken: process.env.LLM_API_TOKEN ?? "",
+			model: process.env.LLM_MODEL!,
+		}),
+		createStaticMap(),
+	);
 }
 
 maybeDescribe("Extractor — live LLM", () => {

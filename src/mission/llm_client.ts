@@ -65,20 +65,8 @@ export class LlmClient {
 	}
 }
 
-export function createLlmClient(): LlmClient {
-	const apiUrl = process.env.LLM_API_URL;
-	const apiToken = process.env.LLM_API_TOKEN;
-	const model = process.env.LLM_MODEL;
-	if (!apiUrl || !apiToken || !model)
-		throw new Error(
-			"Missing LLM_API_URL, LLM_API_TOKEN, or LLM_MODEL env vars",
-		);
-	const rawTimeout = process.env.LLM_TIMEOUT_MS;
-	return new LlmClient({
-		apiUrl,
-		apiToken,
-		model,
-		maxRetries: 2,
-		...(rawTimeout !== undefined && { timeoutMs: Number(rawTimeout) }),
-	});
+export function createLlmClient(
+	cfg: Omit<LlmClientConfig, "maxRetries">,
+): LlmClient {
+	return new LlmClient({ ...cfg, maxRetries: 2 });
 }

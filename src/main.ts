@@ -10,37 +10,23 @@ import { AgentCore } from "./core/agent_core.js";
 import { AgentBus } from "./team/agent_bus.js";
 import { GameClient } from "./game_client.js";
 import { log } from "./logger.js";
-import dotenv from "dotenv";
-
-dotenv.config();
-
-const host = process.env.DELIVEROO_HOST;
-const tokenBdi = process.env.DELIVEROO_TOKEN;
-const tokenLlm = process.env.DELIVEROO_TOKEN_LLM;
-const serverAgentName = process.env.SERVER_AGENT_NAME;
-
-if (!host || !tokenBdi) {
-	log.error("main", "Missing DELIVEROO_HOST or DELIVEROO_TOKEN");
-	process.exit(1);
-}
+import { env } from "./env.js";
 
 const beliefs = createBeliefStore();
 const bus = new AgentBus();
 const coordinator = new Coordinator();
 
-const clientBdi = new GameClient("bdi", host, tokenBdi, beliefs);
+const clientBdi = new GameClient("bdi", env.host, env.tokenBdi, beliefs);
 clientBdi.connect();
 
-if (tokenLlm) {
-	const clientLlm = new GameClient("llm", host, tokenLlm, beliefs);
+if (env.tokenLlm) {
+	const clientLlm = new GameClient("llm", env.host, env.tokenLlm, beliefs);
 	clientLlm.connect();
 
 	const [bdi, llm] = await Promise.all([
 		clientBdi.waitForConnect(),
 		clientLlm.waitForConnect(),
 	]);
-	if (bdi.id === llm.id)
-		throw new Error(`Both agents share id=${bdi.id} — check tokens`);
 	if (bdi.teamId !== llm.teamId)
 		throw new Error(
 			`Team mismatch: bdi.teamId=${bdi.teamId} llm.teamId=${llm.teamId}`,
@@ -52,14 +38,14 @@ if (tokenLlm) {
 	clientBdi.addFriendlyAgent(llm.id);
 	clientLlm.addFriendlyAgent(bdi.id);
 
-	// Mission wiring (only when SERVER_AGENT_NAME is configured).
-	if (serverAgentName) {
-		const llmClient = createLlmClient();
+	if (env.serverAgentName) {
+		// env.llm is non-null whenever env.tokenLlm is set
+		const llmClient = createLlmClient(env.llm!);
 		const extractor = new Extractor(llmClient, clientBdi.staticMap);
 		const l1Executor = new L1Executor(llmClient, {
 			map: clientBdi.staticMap,
 			bdiClient: clientBdi,
-			senderId: serverAgentName,
+			senderId: env.serverAgentName,
 		});
 		const l3Executor = new L3Executor(
 			bus,
@@ -68,7 +54,7 @@ if (tokenLlm) {
 			clientBdi.staticMap,
 			clientBdi,
 		);
-		const listener = new Listener(bus, serverAgentName);
+		const listener = new Listener(bus, env.serverAgentName);
 		listener.attachClient(clientBdi);
 		listener.attachClient(clientLlm);
 		const assembler = new Assembler(
@@ -80,7 +66,6 @@ if (tokenLlm) {
 			l3Executor,
 		);
 
-		// Drive assembler per tick via a lightweight loop.
 		void (async () => {
 			while (true) {
 				await assembler.processPending();
@@ -88,7 +73,10 @@ if (tokenLlm) {
 			}
 		})();
 
-		log.info("main", `mission wiring active allowlist=${serverAgentName}`);
+		log.info(
+			"main",
+			`mission wiring active allowlist=${env.serverAgentName}`,
+		);
 	} else {
 		log.info("main", "SERVER_AGENT_NAME not set — mission wiring disabled");
 	}
