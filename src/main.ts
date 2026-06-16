@@ -44,7 +44,7 @@ if (env.tokenLlm) {
 		const extractor = new Extractor(llmClient, clientBdi.staticMap);
 		const l1Executor = new L1Executor(llmClient, {
 			map: clientBdi.staticMap,
-			bdiClient: clientBdi,
+			chatClient: clientLlm,
 			senderId: env.serverAgentName,
 		});
 		const l3Executor = new L3Executor(
@@ -55,11 +55,10 @@ if (env.tokenLlm) {
 			clientBdi,
 		);
 		const listener = new Listener(bus, env.serverAgentName);
-		listener.attachClient(clientBdi);
 		listener.attachClient(clientLlm);
 		const assembler = new Assembler(
 			bus,
-			clientBdi,
+			clientLlm,
 			listener,
 			extractor,
 			l1Executor,
