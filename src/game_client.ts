@@ -76,19 +76,74 @@ export class GameClient {
 		this.api.disconnect();
 	}
 
+	private confirmedSelf(): { x: number; y: number } | null {
+		const self = this.perception.self;
+		if (
+			self?.x === undefined ||
+			self?.y === undefined ||
+			!Number.isInteger(self.x) ||
+			!Number.isInteger(self.y)
+		)
+			return null;
+		return { x: self.x, y: self.y };
+	}
+
+	private async recoverableAction<T>(
+		action: string,
+		execute: () => Promise<T>,
+		fallback: () => T,
+	): Promise<T> {
+		try {
+			return await execute();
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : String(error);
+			const isTimeout =
+				error instanceof Error && /timed out/i.test(error.message);
+			this.logEvent(
+				`${action}-error`,
+				isTimeout
+					? `${action} timed out: ${message}`
+					: `${action} failed: ${message}`,
+			);
+			return fallback();
+		}
+	}
+
 	public async move(
 		direction: Direction,
 	): Promise<{ x: number; y: number } | false> {
-		return this.api.emitMove(direction);
+		const before = this.confirmedSelf();
+		return this.recoverableAction(
+			"move",
+			() => this.api.emitMove(direction),
+			() => {
+				const after = this.confirmedSelf();
+				if (
+					after &&
+					(!before || after.x !== before.x || after.y !== before.y)
+				)
+					return after;
+				return false;
+			},
+		);
 	}
 
 	public async pickup(): Promise<{ id: string }[]> {
-		return this.api.emitPickup();
+		return this.recoverableAction(
+			"pickup",
+			() => this.api.emitPickup(),
+			() => [],
+		);
 	}
 
 	/** Puts down parcels. If ids provided, puts down only those parcel ids; otherwise all. */
 	public async putdown(ids?: string[]): Promise<{ id: string }[]> {
-		return this.api.emitPutdown(ids ?? []);
+		return this.recoverableAction(
+			"putdown",
+			() => this.api.emitPutdown(ids ?? []),
+			() => [],
+		);
 	}
 
 	public async say(toId: string, msg: string): Promise<void> {

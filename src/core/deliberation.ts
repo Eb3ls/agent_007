@@ -11,15 +11,16 @@ import {
 	type ValuatorMetrics,
 } from "./valuator.js";
 import {
+	buildPlan,
+	computeDecayPerStep,
+	nearestOutOfViewSpawn,
+	nearestRoamTarget,
+} from "./planner.js";
+import {
 	INTENTION_START_MARGIN,
 	SPAWN_OBSERVED_TTL_STEPS,
 	EXPLORE_EV_PROMOTE,
 } from "../config.js";
-import {
-	buildPlan,
-	computeDecayPerStep,
-	nearestOutOfViewSpawn,
-} from "./planner.js";
 import { type StaticMap, tileId, idToXY } from "../static_map.js";
 import { computeCurrentIntentionUtility } from "./reconsider.js";
 import { type Intention, makeIntention } from "./intention.js";
@@ -266,6 +267,21 @@ export function deliberate(context: DeliberationContext): Intention | null {
 					);
 				})(),
 			});
+		} else {
+			const roam = nearestRoamTarget(
+				context.map,
+				context.bfs,
+				context.selfX,
+				context.selfY,
+				context.observationDistance,
+			);
+			if (roam) {
+				candidates.push({
+					intention: makeIntention("explore", roam, context.now),
+					source: "explore",
+					utility: 0,
+				});
+			}
 		}
 	}
 
