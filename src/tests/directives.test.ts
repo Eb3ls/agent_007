@@ -5,10 +5,10 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 	it("OVERRIDE PAUSE/RESUME toggles paused", () => {
 		const h = new DirectiveHandler();
 		h.enqueue({ kind: "OVERRIDE", op: "PAUSE" });
-		h.apply(0);
+		h.apply();
 		expect(h.state.paused).toBe(true);
 		h.enqueue({ kind: "OVERRIDE", op: "RESUME" });
-		h.apply(0);
+		h.apply();
 		expect(h.state.paused).toBe(false);
 	});
 
@@ -20,7 +20,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 			target: [{ x: 3, y: 4 }],
 			thenAct: "pickUp",
 		});
-		h.apply(0);
+		h.apply();
 		expect(h.state.stage).not.toBeNull();
 		expect(Array.isArray(h.state.stage!.target)).toBe(true);
 		expect(h.state.stage!.thenAct).toBe("pickUp");
@@ -38,7 +38,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 			missionId: "m1",
 			target: "both",
 		});
-		h.apply(0);
+		h.apply();
 		expect(h.state.modifiers).toHaveLength(1);
 		expect(h.state.modifiers[0]!.missionId).toBe("m1");
 		expect(h.state.modifiers[0]!.effect.mult).toBe(2);
@@ -60,7 +60,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 			missionId: "m1",
 			target: "both",
 		});
-		h.apply(0);
+		h.apply();
 		expect(h.state.hardForbiddenTileCoords).toHaveLength(2);
 		expect(h.state.hardForbiddenTileCoords[0]).toEqual({ x: 2, y: 0 });
 	});
@@ -75,7 +75,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 			missionId: "m1",
 			target: "both",
 		});
-		h.apply(0);
+		h.apply();
 		expect(h.state.forbiddenPickupParcelIds.has("p1")).toBe(true);
 	});
 
@@ -97,7 +97,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 			missionId: "m2",
 			target: "both",
 		});
-		h.apply(0);
+		h.apply();
 		expect(h.state.modifiers).toHaveLength(2);
 		h.releaseByMissionId("m1");
 		expect(h.state.modifiers).toHaveLength(1);
@@ -107,7 +107,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 	it("releaseByMissionId clears pause if same missionId", () => {
 		const h = new DirectiveHandler();
 		h.enqueue({ kind: "OVERRIDE", op: "PAUSE", missionId: "m1" });
-		h.apply(0);
+		h.apply();
 		expect(h.state.paused).toBe(true);
 		h.releaseByMissionId("m1");
 		expect(h.state.paused).toBe(false);
@@ -116,7 +116,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 	it("releaseByMissionId leaves pause from different missionId", () => {
 		const h = new DirectiveHandler();
 		h.enqueue({ kind: "OVERRIDE", op: "PAUSE", missionId: "m1" });
-		h.apply(0);
+		h.apply();
 		h.releaseByMissionId("m2");
 		expect(h.state.paused).toBe(true);
 	});

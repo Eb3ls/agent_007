@@ -7,7 +7,7 @@ export type AgentSnapshot = {
 	};
 };
 
-export type TeamAdvice = {
+export type TeamExclusions = {
 	excludedParcelIds: ReadonlySet<string>;
 	exploreExcludedSpawnIds: ReadonlySet<number>;
 	excludedGotoTargets: ReadonlySet<string>; // serialized "x,y"
@@ -15,7 +15,7 @@ export type TeamAdvice = {
 
 export class Coordinator {
 	private readonly snapshots = new Map<string, AgentSnapshot>();
-	private readonly targets = new Map<string, string | null>();
+	private readonly parcelTargets = new Map<string, string | null>();
 	private readonly gotoTargets = new Map<string, string | null>(); // agentId → "x,y"|null
 	private readonly deliveredScores = new Map<string, number>();
 	private readonly startTime = Date.now();
@@ -35,12 +35,12 @@ export class Coordinator {
 		return this.snapshots.get(agentId)?.carry ?? null;
 	}
 
-	registerTarget(agentId: string, targetId: string | null): void {
-		this.targets.set(agentId, targetId);
+	registerParcelTarget(agentId: string, targetId: string | null): void {
+		this.parcelTargets.set(agentId, targetId);
 	}
 
-	releaseTarget(agentId: string): void {
-		this.targets.set(agentId, null);
+	releaseParcelTarget(agentId: string): void {
+		this.parcelTargets.set(agentId, null);
 	}
 
 	registerGotoTarget(
@@ -65,15 +65,17 @@ export class Coordinator {
 		);
 	}
 
+	// L: points/ms per-player. Seed branch (per-player proxy) and computed branch share scope.
 	getL(): number {
 		let total = 0;
 		for (const pts of this.deliveredScores.values()) total += pts;
 		if (total === 0) return this._seedL;
 		const elapsed = Math.max(1, Date.now() - this.startTime);
-		return total / elapsed;
+		const agentCount = Math.max(1, this.snapshots.size);
+		return total / elapsed / agentCount;
 	}
 
-	assignFor(agentId: string): TeamAdvice {
+	exclusionsFor(agentId: string): TeamExclusions {
 		const excludedParcelIds = new Set<string>();
 		const exploreExcludedSpawnIds = new Set<number>();
 		const excludedGotoTargets = new Set<string>();
@@ -86,7 +88,7 @@ export class Coordinator {
 			}
 		}
 
-		for (const [id, target] of this.targets) {
+		for (const [id, target] of this.parcelTargets) {
 			if (id === agentId || target === null) continue;
 			excludedParcelIds.add(target);
 		}

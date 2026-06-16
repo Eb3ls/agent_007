@@ -8,20 +8,20 @@ describe("Coordinator", () => {
 		coord = new Coordinator();
 	});
 
-	it("assignFor excludes other agents' parcel targets", () => {
-		coord.registerTarget("bdi", "parcel-abc");
-		coord.registerTarget("llm", null);
+	it("exclusionsFor excludes other agents' parcel targets", () => {
+		coord.registerParcelTarget("bdi", "parcel-abc");
+		coord.registerParcelTarget("llm", null);
 
-		const advice = coord.assignFor("llm");
-		expect(advice.excludedParcelIds.has("parcel-abc")).toBe(true);
-		expect(advice.exploreExcludedSpawnIds.size).toBe(0);
+		const excl = coord.exclusionsFor("llm");
+		expect(excl.excludedParcelIds.has("parcel-abc")).toBe(true);
+		expect(excl.exploreExcludedSpawnIds.size).toBe(0);
 	});
 
-	it("assignFor does not exclude the calling agent's own target", () => {
-		coord.registerTarget("bdi", "parcel-xyz");
+	it("exclusionsFor does not exclude the calling agent's own target", () => {
+		coord.registerParcelTarget("bdi", "parcel-xyz");
 
-		const advice = coord.assignFor("bdi");
-		expect(advice.excludedParcelIds.size).toBe(0);
+		const excl = coord.exclusionsFor("bdi");
+		expect(excl.excludedParcelIds.size).toBe(0);
 	});
 
 	it("posOf returns null before publish", () => {
@@ -37,21 +37,21 @@ describe("Coordinator", () => {
 		expect(coord.posOf("bdi")).toEqual({ x: 3, y: 5 });
 	});
 
-	it("releaseTarget clears exclusion", () => {
-		coord.registerTarget("bdi", "parcel-abc");
-		coord.releaseTarget("bdi");
-		const advice = coord.assignFor("llm");
-		expect(advice.excludedParcelIds.size).toBe(0);
+	it("releaseParcelTarget clears exclusion", () => {
+		coord.registerParcelTarget("bdi", "parcel-abc");
+		coord.releaseParcelTarget("bdi");
+		const excl = coord.exclusionsFor("llm");
+		expect(excl.excludedParcelIds.size).toBe(0);
 	});
 
-	it("assignFor excludes other agents' explore spawn targets via intentionSummary", () => {
+	it("exclusionsFor excludes other agents' explore spawn targets via intentionSummary", () => {
 		coord.publish("bdi", {
 			pos: { x: 0, y: 0 },
 			carry: { count: 0, reward: 0, ids: [] },
 			intentionSummary: { kind: "explore", spawnerIds: [42] },
 		});
-		const advice = coord.assignFor("llm");
-		expect(advice.exploreExcludedSpawnIds.has(42)).toBe(true);
-		expect(advice.excludedParcelIds.size).toBe(0);
+		const excl = coord.exclusionsFor("llm");
+		expect(excl.exploreExcludedSpawnIds.has(42)).toBe(true);
+		expect(excl.excludedParcelIds.size).toBe(0);
 	});
 });

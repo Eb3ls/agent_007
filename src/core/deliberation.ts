@@ -20,7 +20,7 @@ import { type StaticMap, tileId, idToXY } from "../static_map.js";
 import { computeCurrentIntentionUtility } from "./reconsider.js";
 import { type Intention, makeIntention } from "./intention.js";
 import type { ActiveDirectives } from "../team/directives.js";
-import type { TeamAdvice } from "../team/coordinator.js";
+import type { TeamExclusions } from "../team/coordinator.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { BfsFromSelf } from "../pathfinder.js";
 import { log } from "../logger.js";
@@ -39,7 +39,7 @@ export type DeliberationContext = {
 	decayIntervalMs: number;
 	carry: import("./planner.js").CarryState;
 	intention: Intention | null;
-	teamAdvice?: TeamAdvice;
+	teamExclusions?: TeamExclusions;
 	/** Active mission directives — consumed by valuator scorers. */
 	directives?: Readonly<ActiveDirectives>;
 	/** Live currency rates (M-EMA, L-throughput). Fallback: M=movementDurationMs, L=0. */
@@ -102,7 +102,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		decayIntervalMs: context.decayIntervalMs,
 	};
 	const directives = context.directives;
-	const excludedParcels = context.teamAdvice?.excludedParcelIds;
+	const excludedParcels = context.teamExclusions?.excludedParcelIds;
 
 	const candidates: IntentionCandidate[] = [];
 
@@ -210,7 +210,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 			if (!nearestXY) continue;
 
 			const key = `${nearestXY.x},${nearestXY.y}`;
-			if (context.teamAdvice?.excludedGotoTargets?.has(key)) continue;
+			if (context.teamExclusions?.excludedGotoTargets?.has(key)) continue;
 
 			const bonus = m.effect.add ?? 0;
 			const gotoScore = scoreGoto(
@@ -254,7 +254,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 				context.beliefs,
 				context.now,
 				context.movementDurationMs,
-				context.teamAdvice?.exploreExcludedSpawnIds,
+				context.teamExclusions?.exploreExcludedSpawnIds,
 			),
 			{
 				beliefs: context.beliefs,

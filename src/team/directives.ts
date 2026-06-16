@@ -75,7 +75,7 @@ export class DirectiveHandler {
 		this.queue.push(d);
 	}
 
-	apply(_now: number): void {
+	apply(): void {
 		for (const d of this.queue.splice(0)) {
 			if (d.kind === "OVERRIDE") {
 				if (d.op === "PAUSE") {

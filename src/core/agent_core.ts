@@ -26,6 +26,7 @@ import {
 	shouldReconsiderPDDLForParcel,
 } from "./reconsider.js";
 import { DirectiveHandler, type ActiveDirectives } from "../team/directives.js";
+import { tileId, idToXY, spawnsWithinRadius } from "../static_map.js";
 import { activeScoreCap, type ValuatorMetrics } from "./valuator.js";
 import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import { cfg as appCfg, parseDecayInterval } from "../config.js";
@@ -35,7 +36,6 @@ import type { GameClient } from "../game_client.js";
 import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
 import { makeIntention } from "./intention.js";
-import { tileId, idToXY } from "../static_map.js";
 import { log } from "../logger.js";
 
 const M_EMA_ALPHA = 0.1;
@@ -329,7 +329,7 @@ export class AgentCore {
 						scope: intention.releaseScope ?? "global",
 					});
 				}
-				this.coordinator?.releaseTarget(this.id);
+				this.coordinator?.releaseParcelTarget(this.id);
 				if (intention.kind === "goto")
 					this.coordinator?.releaseGotoTarget(this.id);
 				intention = null;
@@ -381,7 +381,7 @@ export class AgentCore {
 						"intent",
 						`sound-fail kind=${intention.kind} reason=unreachable`,
 					);
-					this.coordinator?.releaseTarget(this.id);
+					this.coordinator?.releaseParcelTarget(this.id);
 					if (intention.kind === "goto")
 						this.coordinator?.releaseGotoTarget(this.id);
 					intention = null;
@@ -413,7 +413,7 @@ export class AgentCore {
 						cfg.movementDurationMs,
 					));
 
-		const teamAdvice = this.coordinator?.assignFor(this.id);
+		const teamExclusions = this.coordinator?.exclusionsFor(this.id);
 
 		if (!intention || reconsider) {
 			const prev = intention;
@@ -438,10 +438,10 @@ export class AgentCore {
 				directives: state,
 				metrics,
 				rewardAvg: cfg.rewardAvg,
-				...(teamAdvice && { teamAdvice }),
+				...(teamExclusions && { teamExclusions }),
 			});
 
-			this.coordinator?.registerTarget(
+			this.coordinator?.registerParcelTarget(
 				this.id,
 				intention?.targetId ?? null,
 			);
@@ -484,7 +484,11 @@ export class AgentCore {
 				intention?.kind === "explore" &&
 				map.spawnTileIds.some((id) => ctx.bfs.dist[id] === -1);
 
-			if (!intention || carryingUndeliverable || exploringWithBlockedSpawns) {
+			if (
+				!intention ||
+				carryingUndeliverable ||
+				exploringWithBlockedSpawns
+			) {
 				const candidates = carryingUndeliverable
 					? [...map.deliveryTileIds]
 					: [...map.spawnTileIds];
@@ -590,7 +594,7 @@ export class AgentCore {
 				for (const d of this.bus.drainDirectives(this.id))
 					this.directives.enqueue(d);
 			}
-			this.directives.apply(Date.now());
+			this.directives.apply();
 			const state = this.directives.state;
 
 			if (state.paused && state.pauseMissionId === null)
@@ -611,7 +615,11 @@ export class AgentCore {
 			const intentionKind = intention?.kind ?? "idle";
 			const spawnerIds =
 				intentionKind === "explore" && intention
-					? [tileId(map, intention.targetXY.x, intention.targetXY.y)]
+					? spawnsWithinRadius(
+							map,
+							intention.targetXY,
+							cfg.observationDistance,
+						)
 					: undefined;
 			this.coordinator?.publish(this.id, {
 				pos: { x: selfX, y: selfY },

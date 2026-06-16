@@ -106,6 +106,21 @@ export function idToXY(m: StaticMap, id: number): { x: number; y: number } {
 	};
 }
 
+/** Returns tile ids of all spawn tiles within Manhattan radius of center. */
+export function spawnsWithinRadius(
+	m: StaticMap,
+	center: { x: number; y: number },
+	radius: number,
+): number[] {
+	const ids: number[] = [];
+	for (const id of m.spawnTileIds) {
+		const { x, y } = idToXY(m, id);
+		if (Math.abs(x - center.x) + Math.abs(y - center.y) <= radius)
+			ids.push(id);
+	}
+	return ids;
+}
+
 /** Returns true if (x, y) is within the map bounding box. */
 export function inBounds(m: StaticMap, x: number, y: number): boolean {
 	return (
