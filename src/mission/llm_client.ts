@@ -33,9 +33,7 @@ export class LlmClient {
 					body: JSON.stringify({
 						model: this.cfg.model,
 						messages,
-						response_format: { type: "json_object" },
 						temperature: 0,
-						reasoning: { enabled: false },
 					}),
 				}).finally(() => {
 					if (tid !== undefined) clearTimeout(tid);
