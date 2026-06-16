@@ -1,14 +1,4 @@
 import {
-	EXPECTED_STEAL_HORIZON_STEPS,
-	EXPLORE_TERMINATION_DISTANCE,
-	INTENTION_ABORT_MARGIN,
-	INTENTION_MAX_AGE_STEPS,
-	MAX_MOVE_FAIL_STREAK,
-	PARCEL_BELIEF_STALE_STEPS,
-	RECONSIDER_OPPORTUNITY_MARGIN_FRACTION,
-	SPAWN_OBSERVED_TTL_STEPS,
-} from "../config.js";
-import {
 	computeDecayPerStep,
 	computeDeliverUtility,
 	decayCost,
@@ -20,13 +10,14 @@ import { tileId, type StaticMap } from "../static_map.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { BfsFromSelf } from "../pathfinder.js";
 import type { Intention } from "./intention.js";
+import { cfg } from "../config.js";
 
 export type TerminalReason =
 	| "succeeded" // target reached with expected outcome
 	| "target_lost" // parcel gone, stolen, or belief stale
 	| "unreachable" // no path to target in current BFS
-	| "move_blocked" // moveFailStreak >= MAX_MOVE_FAIL_STREAK
-	| "aged"; // intention exceeded INTENTION_MAX_AGE_STEPS
+	| "move_blocked" // moveFailStreak >= cfg.intention.max_move_fail_streak
+	| "aged"; // intention exceeded cfg.intention.max_age_steps
 
 export type ViabilityCheck =
 	| { viable: true }
@@ -62,7 +53,8 @@ function checkTargetParcel(
 		return false;
 	if (
 		!parcel.inView &&
-		now - parcel.lastSeenAt > movementDurationMs * PARCEL_BELIEF_STALE_STEPS
+		now - parcel.lastSeenAt >
+			movementDurationMs * cfg.belief.parcel_belief_stale_steps
 	)
 		return false;
 	return true;
@@ -112,7 +104,7 @@ export function computeCurrentIntentionUtility(
 		p,
 		decayIntervalMs,
 		movementDurationMs,
-		EXPECTED_STEAL_HORIZON_STEPS,
+		cfg.belief.expected_steal_horizon_steps,
 		Date.now(),
 	);
 	if (reward <= 0) return 0;
@@ -162,11 +154,15 @@ export function shouldReconsider(
 		movementDurationMs,
 	);
 	// abort_margin: force reconsider if current utility has dropped too low.
-	if (INTENTION_ABORT_MARGIN > 0 && currentUtility < INTENTION_ABORT_MARGIN)
+	if (
+		cfg.intention.abort_margin > 0 &&
+		currentUtility < cfg.intention.abort_margin
+	)
 		return true;
 	return (
 		freshTarget.utility >
-		currentUtility * (1 + RECONSIDER_OPPORTUNITY_MARGIN_FRACTION)
+		currentUtility *
+			(1 + cfg.intention.reconsider_opportunity_margin_fraction)
 	);
 }
 
@@ -227,7 +223,7 @@ export function checkIntentionViability(
 	// plan after a single step. Trust the solver-verified plan: only terminate on
 	// reaching the target (handled above) or repeated real move failures.
 	if (intention.usedPDDL) {
-		if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK)
+		if (intention.moveFailStreak >= cfg.intention.max_move_fail_streak)
 			return { viable: false, reason: "move_blocked" };
 		return { viable: true };
 	}
@@ -249,8 +245,9 @@ export function checkIntentionViability(
 			Math.abs(selfY - intention.targetXY.y);
 		if (
 			seenAt !== undefined &&
-			now - seenAt < SPAWN_OBSERVED_TTL_STEPS * movementDurationMs &&
-			distToTarget <= EXPLORE_TERMINATION_DISTANCE
+			now - seenAt <
+				cfg.explore.spawn_observed_ttl_steps * movementDurationMs &&
+			distToTarget <= cfg.explore.termination_distance
 		)
 			return { viable: false, reason: "succeeded" };
 	}
@@ -260,12 +257,12 @@ export function checkIntentionViability(
 		return { viable: false, reason: "unreachable" };
 
 	// 5) Too many consecutive move failures
-	if (intention.moveFailStreak >= MAX_MOVE_FAIL_STREAK)
+	if (intention.moveFailStreak >= cfg.intention.max_move_fail_streak)
 		return { viable: false, reason: "move_blocked" };
 
 	// 6) Intention timed out
 	const ageSteps = (now - intention.committedAt) / movementDurationMs;
-	if (ageSteps >= INTENTION_MAX_AGE_STEPS)
+	if (ageSteps >= cfg.intention.max_age_steps)
 		return { viable: false, reason: "aged" };
 
 	return { viable: true };

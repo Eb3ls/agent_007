@@ -1,9 +1,9 @@
 import type { L1Ctx, L1DoneShape, ToolCall } from "./tools.js";
 import type { LlmClient, ChatMessage } from "./llm_client.js";
 import type { MissionRecord } from "./extractor.js";
-import { L1_MAX_STEPS } from "../config.js";
 import { executeTool } from "./tools.js";
 import { log } from "../logger.js";
+import { cfg } from "../config.js";
 
 export type L1Result = L1DoneShape;
 
@@ -35,7 +35,7 @@ export class L1Executor {
 		let messageSent = false;
 		let lastActionKey: string | null = null;
 
-		for (let step = 0; step < L1_MAX_STEPS; step++) {
+		for (let step = 0; step < cfg.mission.l1_max_steps; step++) {
 			let raw: string;
 			try {
 				raw = await this.llm.complete(history);

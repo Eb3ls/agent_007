@@ -25,9 +25,9 @@ import type {
 	DjsClientSocket,
 	IOGameConfig,
 } from "@unitn-asa/deliveroo-js-sdk";
-import { AGENT_TTL_MULT, PARCEL_TTL_MULT } from "./config.js";
 import { DjsConnect } from "@unitn-asa/deliveroo-js-sdk";
 import type { Direction } from "./pathfinder.js";
+import { cfg as appCfg } from "./config.js";
 
 export type MsgCallback = (
 	id: string,
@@ -219,8 +219,8 @@ export class GameClient {
 				const movMs = this.config.GAME.player.movement_duration;
 				evictStale(
 					this.beliefs,
-					movMs * PARCEL_TTL_MULT,
-					movMs * AGENT_TTL_MULT,
+					movMs * appCfg.belief.parcel_ttl_mult,
+					movMs * appCfg.belief.agent_ttl_mult,
 				);
 				recordCompetitorPositions(
 					this.beliefs,

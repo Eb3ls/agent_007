@@ -1,7 +1,7 @@
 import { tileId, type StaticMap } from "../static_map.js";
-import { INTENTION_SWITCH_MARGIN } from "../config.js";
 import type { BfsFromSelf } from "../pathfinder.js";
 import type { Intention } from "./intention.js";
+import { cfg } from "../config.js";
 
 export type IntentionCandidateSource =
 	| "current"
@@ -45,7 +45,7 @@ function evaluateCandidate(
 
 // Returns the highest-scoring viable candidate, or null if none pass.
 // Hysteresis: a new candidate must exceed the current intention's score by
-// INTENTION_SWITCH_MARGIN_FRACTION to prevent flicker between near-equal options.
+// cfg.intention.switch_margin_FRACTION to prevent flicker between near-equal options.
 export function selectBestIntention(
 	context: IntentionRuleContext,
 	candidates: IntentionCandidate[],
@@ -72,7 +72,7 @@ export function selectBestIntention(
 	// If the current intention is viable, require the new best to exceed it by
 	// the hysteresis margin (absolute pts) before switching.
 	if (currentScore > -Infinity && best.source !== "current") {
-		if (bestScore <= currentScore + INTENTION_SWITCH_MARGIN) {
+		if (bestScore <= currentScore + cfg.intention.switch_margin) {
 			return candidates.find((c) => c.source === "current")!;
 		}
 	}

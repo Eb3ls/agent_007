@@ -1,11 +1,11 @@
 import chalk, { type ChalkInstance } from "chalk";
-import { LOG_LEVEL } from "./config.js";
 import { appendFileSync } from "fs";
+import { cfg } from "./config.js";
 
 const tag = (label: string, color: ChalkInstance) => color.bold(`[${label}]`);
 const noop = (_label: string, _msg: string) => {};
-const silent = LOG_LEVEL === "silent";
-const debugEnabled = LOG_LEVEL === "debug";
+const silent = cfg.log.level === "silent";
+const debugEnabled = cfg.log.level === "debug";
 
 export const log = {
 	// Startup / structural events — always visible

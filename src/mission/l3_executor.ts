@@ -1,8 +1,8 @@
-import { HYSTERESIS_PCT, STEAL_PROB, parseDecayInterval } from "../config.js";
 import type { AgentBus, ConfirmPayload } from "../team/agent_bus.js";
 import { inBounds, tileId, type StaticMap } from "../static_map.js";
 import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import type { Coordinator } from "../team/coordinator.js";
+import { cfg, parseDecayInterval } from "../config.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { GameClient } from "../game_client.js";
 import type { MissionRecord } from "./extractor.js";
@@ -145,7 +145,9 @@ function computeStealRisk(
 			break;
 		}
 	}
-	return decayTerm + (hasThreat ? STEAL_PROB * parkedReward : 0);
+	return (
+		decayTerm + (hasThreat ? cfg.intention.steal_prob * parkedReward : 0)
+	);
 }
 
 export type HandoffParams = {
@@ -340,7 +342,7 @@ export class L3Executor {
 			});
 		}
 
-		const threshold = HYSTERESIS_PCT * Math.abs(missionBonus);
+		const threshold = cfg.intention.hysteresis_pct * Math.abs(missionBonus);
 		if (ev <= threshold) {
 			log.info(
 				"l3_executor",

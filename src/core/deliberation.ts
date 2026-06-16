@@ -16,11 +16,6 @@ import {
 	nearestOutOfViewSpawn,
 	nearestRoamTarget,
 } from "./planner.js";
-import {
-	INTENTION_START_MARGIN,
-	SPAWN_OBSERVED_TTL_STEPS,
-	EXPLORE_EV_PROMOTE,
-} from "../config.js";
 import { type StaticMap, tileId, idToXY } from "../static_map.js";
 import { computeCurrentIntentionUtility } from "./reconsider.js";
 import { type Intention, makeIntention } from "./intention.js";
@@ -29,6 +24,7 @@ import type { TeamAdvice } from "../team/coordinator.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { BfsFromSelf } from "../pathfinder.js";
 import { log } from "../logger.js";
+import { cfg } from "../config.js";
 
 export type DeliberationContext = {
 	myId: string;
@@ -58,7 +54,8 @@ function freshObservedEmptySpawns(
 	movementDurationMs: number,
 	exploreExcluded?: ReadonlySet<number>,
 ): Set<number> {
-	const spawnTtlMs = SPAWN_OBSERVED_TTL_STEPS * movementDurationMs;
+	const spawnTtlMs =
+		cfg.explore.spawn_observed_ttl_steps * movementDurationMs;
 	const fresh = new Set<number>();
 	for (const [id, seenAt] of beliefs.observedEmptySpawns) {
 		if (now - seenAt < spawnTtlMs) fresh.add(id);
@@ -76,7 +73,7 @@ function computeExploreEV(
 	movementDurationMs: number,
 	rewardAvg: number,
 ): number {
-	if (!EXPLORE_EV_PROMOTE) return 0;
+	if (!cfg.explore.ev_promote) return 0;
 	// §5.4: spawn_prob · reward_avg · (1 − decay_rate · ms_per_step · steps)
 	const id = map.spawnTileIds.find((sid) => {
 		const xy = idToXY(map, sid);
@@ -316,8 +313,8 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	if (
 		selected.source !== "current" &&
 		selected.intention.kind !== "explore" &&
-		INTENTION_START_MARGIN > 0 &&
-		selected.utility < INTENTION_START_MARGIN
+		cfg.intention.start_margin > 0 &&
+		selected.utility < cfg.intention.start_margin
 	)
 		return null;
 

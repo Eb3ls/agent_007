@@ -13,9 +13,9 @@ import type {
 } from "../team/directives.js";
 import type { BeliefStore, ParcelBelief } from "../belief_store.js";
 import { idToXY, tileId, type StaticMap } from "../static_map.js";
-import { EXPECTED_STEAL_HORIZON_STEPS } from "../config.js";
 import type { BfsFromSelf } from "../pathfinder.js";
 import { bfsFromSelf } from "../pathfinder.js";
+import { cfg } from "../config.js";
 
 export type { CarryState, PickResult };
 export { nearestOutOfViewSpawn as scoreExplore };
@@ -110,7 +110,7 @@ export function scorePickup(
 	carry: CarryState,
 	metrics: ValuatorMetrics,
 	directives?: Readonly<ActiveDirectives>,
-	stealHorizonSteps: number = EXPECTED_STEAL_HORIZON_STEPS,
+	stealHorizonSteps: number = cfg.belief.expected_steal_horizon_steps,
 	extraExcludedIds?: ReadonlySet<string>,
 ): PickResult | null {
 	const now = Date.now();
@@ -348,7 +348,7 @@ function buildGreedyChain(
 			nearestParcel,
 			metrics.decayIntervalMs,
 			metrics.M,
-			EXPECTED_STEAL_HORIZON_STEPS,
+			cfg.belief.expected_steal_horizon_steps,
 			now,
 		);
 		lastPos = { x: nearestParcel.x, y: nearestParcel.y };

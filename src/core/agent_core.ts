@@ -1,13 +1,4 @@
 import {
-	CRATES_COOLDOWN_MS,
-	CRATES_ENABLED,
-	L_SEED_EFFICIENCY,
-	NO_STEP_WAIT_MS,
-	OPPONENT_DEFER_STEPS,
-	READY_POLL_MS,
-	parseDecayInterval,
-} from "../config.js";
-import {
 	buildPlan,
 	computeBlockedTiles,
 	deriveCarryState,
@@ -37,6 +28,7 @@ import {
 import { DirectiveHandler, type ActiveDirectives } from "../team/directives.js";
 import { activeScoreCap, type ValuatorMetrics } from "./valuator.js";
 import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
+import { cfg as appCfg, parseDecayInterval } from "../config.js";
 import type { Coordinator } from "../team/coordinator.js";
 import type { AgentBus } from "../team/agent_bus.js";
 import type { GameClient } from "../game_client.js";
@@ -113,7 +105,7 @@ export class AgentCore {
 			) {
 				return { id: self.id, x: self.x, y: self.y };
 			}
-			await sleep(READY_POLL_MS);
+			await sleep(appCfg.loop.ready_poll_ms);
 		}
 	}
 
@@ -508,7 +500,7 @@ export class AgentCore {
 		this.M = cfg.movementDurationMs;
 		if (this.coordinator && cfg.rewardAvg > 0 && generationIntervalMs > 0) {
 			this.coordinator.setSeedL(
-				(cfg.rewardAvg * L_SEED_EFFICIENCY) /
+				(cfg.rewardAvg * appCfg.intention.l_seed_efficiency) /
 					(generationIntervalMs * maxPlayers),
 			);
 		}
@@ -518,8 +510,8 @@ export class AgentCore {
 		let loopCount = 0;
 		let deliveryCount = 0;
 
-		const crateCtx: CratePlannerContext | null = CRATES_ENABLED
-			? createCratePlannerContext(CRATES_COOLDOWN_MS)
+		const crateCtx: CratePlannerContext | null = appCfg.crates.enabled
+			? createCratePlannerContext(appCfg.crates.cooldown_ms)
 			: null;
 
 		while (true) {
@@ -543,7 +535,7 @@ export class AgentCore {
 
 			// Pause: idle this tick.
 			if (state.paused) {
-				await sleep(NO_STEP_WAIT_MS);
+				await sleep(appCfg.loop.no_step_wait_ms);
 				continue;
 			}
 
@@ -627,7 +619,7 @@ export class AgentCore {
 					);
 					intentionMissing = true;
 				}
-				await sleep(NO_STEP_WAIT_MS);
+				await sleep(appCfg.loop.no_step_wait_ms);
 				continue;
 			}
 			intentionMissing = false;
@@ -682,14 +674,14 @@ export class AgentCore {
 							return (
 								d !== undefined &&
 								d >= 0 &&
-								d <= OPPONENT_DEFER_STEPS
+								d <= appCfg.intention.opponent_defer_steps
 							);
 						},
 					);
 					if (oppClose) {
 						log.debug(
 							"push",
-							`deferring push step — opp within ${OPPONENT_DEFER_STEPS} tiles of crate`,
+							`deferring push step — opp within ${appCfg.intention.opponent_defer_steps} tiles of crate`,
 						);
 						await sleep(cfg.movementDurationMs);
 						continue;

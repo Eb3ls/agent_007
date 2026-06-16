@@ -1,11 +1,4 @@
 import {
-	AGENT_BLOCKING_TRUST_THRESHOLD,
-	AGENT_GRACE_STEPS,
-	EXPECTED_STEAL_HORIZON_STEPS,
-	EXPLORE_COMPETITOR_PENALTY_ALPHA,
-	RACE_HORIZON_STEPS,
-} from "../config.js";
-import {
 	beliefTrust,
 	competitorWeight,
 	type AgentBelief,
@@ -24,6 +17,7 @@ import {
 	tileId,
 	type StaticMap,
 } from "../static_map.js";
+import { cfg } from "../config.js";
 
 // In-view agents always block; out-of-view ones block only while last-seen belief retains trust ≥ 0.5.
 export function isAgentBlocking(
@@ -40,14 +34,14 @@ export function isAgentBlocking(
 		movementDurationMs * graceSteps,
 		agent.inView,
 	);
-	return trust >= AGENT_BLOCKING_TRUST_THRESHOLD;
+	return trust >= cfg.belief.agent_blocking_trust_threshold;
 }
 
 export function computeBlockedTiles(
 	map: StaticMap,
 	beliefs: BeliefStore,
 	movementDurationMs: number,
-	graceSteps: number = AGENT_GRACE_STEPS,
+	graceSteps: number = cfg.belief.agent_grace_steps,
 ): Set<number> {
 	const blocked = new Set<number>();
 	const now = Date.now();
@@ -134,7 +128,7 @@ export function nearestOutOfViewSpawn(
 		if (competitorPenalty) {
 			const { beliefs, now, movementDurationMs } = competitorPenalty;
 			cost +=
-				EXPLORE_COMPETITOR_PENALTY_ALPHA *
+				cfg.explore.competitor_penalty_alpha *
 				competitorWeight(beliefs, x, y, now, movementDurationMs);
 		}
 		if (cost < bestCost) {
@@ -265,7 +259,7 @@ export function computeContestFactor(
 			agent.confidence,
 			agent.lastSeenAt,
 			now,
-			movementDurationMs * AGENT_GRACE_STEPS,
+			movementDurationMs * cfg.belief.agent_grace_steps,
 			agent.inView,
 		);
 		if (trust < 0.05) continue;
@@ -274,7 +268,7 @@ export function computeContestFactor(
 			Math.abs(Math.round(agent.y) - parcelY);
 		const margin = distSelf - distComp; // positive = competitor closer
 		if (margin <= 0) continue;
-		const pSteal = trust * (1 - Math.exp(-margin / RACE_HORIZON_STEPS));
+		const pSteal = trust * (1 - Math.exp(-margin / cfg.race.horizon_steps));
 		if (pSteal > maxSteal) maxSteal = pSteal;
 	}
 	return maxSteal;
@@ -291,7 +285,7 @@ export function pickBestParcelTarget(
 	decayIntervalMs: number,
 	movementDurationMs: number,
 	carry: CarryState,
-	stealHorizonSteps: number = EXPECTED_STEAL_HORIZON_STEPS,
+	stealHorizonSteps: number = cfg.belief.expected_steal_horizon_steps,
 	excludedParcelIds?: ReadonlySet<string>,
 ): PickResult | null {
 	const now = Date.now();

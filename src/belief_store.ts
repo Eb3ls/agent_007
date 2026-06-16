@@ -5,7 +5,7 @@ import type {
 	IOSensing,
 } from "@unitn-asa/deliveroo-js-sdk";
 import { TILE, tileId, type StaticMap } from "./static_map.js";
-import { MEMORY_DECAY_HORIZON_STEPS } from "./config.js";
+import { cfg } from "./config.js";
 
 export type ParcelBelief = IOParcel & {
 	lastSeenAt: number;
@@ -285,7 +285,9 @@ export function recordCompetitorPositions(
 			const ageSteps = (now - existing.lastUpdate) / movementDurationMs;
 			existing.weight =
 				existing.weight *
-					Math.exp(-ageSteps / MEMORY_DECAY_HORIZON_STEPS) +
+					Math.exp(
+						-ageSteps / cfg.explore.memory_decay_horizon_steps,
+					) +
 				1;
 			existing.lastUpdate = now;
 		} else {
@@ -305,7 +307,10 @@ export function competitorWeight(
 	const entry = b.competitorHeatmap.get(`${x},${y}`);
 	if (!entry) return 0;
 	const ageSteps = (now - entry.lastUpdate) / movementDurationMs;
-	return entry.weight * Math.exp(-ageSteps / MEMORY_DECAY_HORIZON_STEPS);
+	return (
+		entry.weight *
+		Math.exp(-ageSteps / cfg.explore.memory_decay_horizon_steps)
+	);
 }
 
 // Returns top-N tiles sorted by decayed weight descending.
@@ -319,7 +324,8 @@ export function topCompetitorTiles(
 	for (const [key, entry] of b.competitorHeatmap) {
 		const ageSteps = (now - entry.lastUpdate) / movementDurationMs;
 		const weight =
-			entry.weight * Math.exp(-ageSteps / MEMORY_DECAY_HORIZON_STEPS);
+			entry.weight *
+			Math.exp(-ageSteps / cfg.explore.memory_decay_horizon_steps);
 		if (weight < 0.1) continue; // skip effectively-zero entries
 		const commaIdx = key.indexOf(",");
 		const x = Number(key.slice(0, commaIdx));
