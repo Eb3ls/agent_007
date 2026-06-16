@@ -240,7 +240,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 
 	// Explore fallback: no pickup found, or crates block delivery and we carry nothing.
 	const cratesBlockDelivery =
-		context.beliefs.crates.size > 0 &&
+		context.beliefs.crateOccupancy.size > 0 &&
 		context.carry.n === 0 &&
 		!deliverResult;
 	if (!pickupResult || cratesBlockDelivery) {

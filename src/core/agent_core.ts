@@ -35,7 +35,7 @@ import type { GameClient } from "../game_client.js";
 import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
 import { makeIntention } from "./intention.js";
-import { tileId } from "../static_map.js";
+import { tileId, idToXY } from "../static_map.js";
 import { log } from "../logger.js";
 
 const M_EMA_ALPHA = 0.1;
@@ -125,8 +125,13 @@ export class AgentCore {
 			const id = tileId(map, xy.x, xy.y);
 			if (id !== -1) blocked.add(id);
 		}
+		// Occupied crate tiles must be blocked so BFS routes around them and
+		// isSoundPlan detects stale steps — otherwise PDDL is never triggered.
+		for (const crateId of this.beliefs.crateOccupancy) {
+			blocked.add(crateId);
+		}
 		const passableCrates =
-			this.beliefs.crates.size > 0
+			this.beliefs.crateOccupancy.size > 0
 				? passableCrateTileSet(map, this.beliefs)
 				: undefined;
 		const bfs = bfsFromSelf(map, selfX, selfY, blocked, passableCrates);
@@ -346,7 +351,7 @@ export class AgentCore {
 			);
 			if (intention.plan.length === 0) {
 				const navPath =
-					crateCtx && this.beliefs.crates.size > 0
+					crateCtx && this.beliefs.crateOccupancy.size > 0
 						? await buildPlanWithCrateHandling(
 								map,
 								ctx.bfs,
@@ -460,6 +465,69 @@ export class AgentCore {
 						"intent",
 						`${reconsider && prev ? "reconsider→replan" : "new"} kind=${intention.kind} carrying=${ctx.carry.n > 0} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
 					);
+			}
+		}
+
+		// Crate fallback via PDDL. Fires when deliberation produced no intention,
+		// OR the agent carries parcels but no delivery tile is BFS-reachable (all
+		// blocked by occupied crates), OR the deliberated plan is explore while
+		// some spawn tiles are crate-blocked. In-flight PDDL plans run to completion.
+		if (
+			crateCtx &&
+			this.beliefs.crateOccupancy.size > 0 &&
+			intention?.usedPDDL !== true
+		) {
+			const carryingUndeliverable =
+				ctx.carry.n > 0 &&
+				!Number.isFinite(ctx.carry.nearestDeliveryDist);
+			const exploringWithBlockedSpawns =
+				intention?.kind === "explore" &&
+				map.spawnTileIds.some((id) => ctx.bfs.dist[id] === -1);
+
+			if (!intention || carryingUndeliverable || exploringWithBlockedSpawns) {
+				const candidates = carryingUndeliverable
+					? [...map.deliveryTileIds]
+					: [...map.spawnTileIds];
+				let bestTarget: { x: number; y: number } | null = null;
+				let bestDist = Infinity;
+				for (const id of candidates) {
+					if (ctx.bfs.dist[id] === -1) {
+						const { x, y } = idToXY(map, id);
+						const dist = Math.abs(x - selfX) + Math.abs(y - selfY);
+						if (dist < bestDist) {
+							bestDist = dist;
+							bestTarget = { x, y };
+						}
+					}
+				}
+				if (bestTarget) {
+					const cratePlan = await buildPlanWithCrateHandling(
+						map,
+						ctx.bfs,
+						bestTarget.x,
+						bestTarget.y,
+						this.beliefs,
+						selfX,
+						selfY,
+						crateCtx,
+					);
+					if (cratePlan.length > 0) {
+						// A delivery-bound crate push must run to completion: kind
+						// "push" so shouldReconsiderPDDLForParcel (which only preempts
+						// "explore") won't swap it for a nearby pickup every tick,
+						// leaving the agent wandering while it carries undeliverable
+						// parcels. The spawn-exploration case stays "explore" so a
+						// parcel that comes into view can still preempt it.
+						const kind = carryingUndeliverable ? "push" : "explore";
+						intention = makeIntention(kind, bestTarget, ctx.now);
+						intention.plan = cratePlan;
+						intention.usedPDDL = true;
+						log.warn(
+							"intent",
+							`PDDL crate fallback ${carryingUndeliverable ? "deliver" : "explore"} → (${bestTarget.x},${bestTarget.y})`,
+						);
+					}
+				}
 			}
 		}
 

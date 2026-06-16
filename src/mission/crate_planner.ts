@@ -30,8 +30,8 @@ export async function buildPlanWithCrateHandling(
 	selfY: number,
 	context: CratePlannerContext,
 ): Promise<Direction[]> {
-	// PDDL only helps when crates can be pushed; nothing to do otherwise.
-	if (beliefs.crates.size === 0) return [];
+	// PDDL only helps when occupied crate tiles exist; nothing to do otherwise.
+	if (beliefs.crateOccupancy.size === 0) return [];
 
 	// Try plain BFS first; fall back to PDDL only when crates block the path.
 	const bfsPlan = reconstructPath(map, bfs, targetX, targetY);
