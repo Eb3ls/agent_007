@@ -71,9 +71,10 @@ export class AgentBus extends EventEmitter {
 		this.emit("SIGNAL", t);
 	}
 
-	// Agent: subscribe to signal broadcasts
-	onSignal(cb: (token: string) => void): void {
+	// Agent: subscribe to signal broadcasts; returns a disposer to unsubscribe
+	onSignal(cb: (token: string) => void): () => void {
 		this.on("SIGNAL", cb);
+		return () => this.off("SIGNAL", cb);
 	}
 
 	// Coordinator → Agent (broadcast): release agents from a mission

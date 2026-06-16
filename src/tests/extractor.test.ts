@@ -15,7 +15,7 @@ import "dotenv/config";
 vi.setConfig({ testTimeout: 30_000 });
 
 const hasLlm =
-	!!process.env.RUN_LLM_TESTS &&
+	process.env.RUN_LLM_TESTS === "1" &&
 	!!process.env.LLM_API_URL &&
 	!!process.env.LLM_MODEL;
 const maybeDescribe = hasLlm ? describe : describe.skip;

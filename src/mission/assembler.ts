@@ -43,52 +43,8 @@ export class Assembler {
 			return;
 		}
 
-		// Q&A: answer immediately via say.
-		if (record.opType === "qa" || record.answer) {
-			if (record.answer) {
-				await this.chatClient.say(senderId, record.answer);
-				log.info(
-					"assembler",
-					`qa reply: ${record.answer.slice(0, 60)}`,
-				);
-			}
-			if (record.opType === "qa") return;
-		}
-
-		// STATE_QUERY: L1 non-physical — no answer, no coords → l1_executor
-		if (
-			record.level === "L1" &&
-			!record.answer &&
-			(!record.selector.coords || record.selector.coords.length === 0) &&
-			this.l1Executor
-		) {
-			void this.l1Executor.run(record).then((result) => {
-				if (result.kind === "modifier" && result.coords.length > 0) {
-					const mid = `m${++this.missionSeq}`;
-					const dir = this.buildModifier(
-						{
-							...record,
-							selector: {
-								...record.selector,
-								coords: result.coords,
-							},
-						},
-						mid,
-						record.target === "both" ? "both" : record.target,
-					);
-					if (dir) {
-						this.bus.emitDirective("bdi", dir);
-						this.bus.emitDirective("llm", dir);
-						log.info(
-							"assembler",
-							`l1 resolved coords → MODIFIER missionId=${mid}`,
-						);
-					}
-				}
-			});
-			log.info("assembler", "routed to l1_executor (STATE_QUERY)");
-			return;
-		}
+		if (await this.handleQa(record, senderId)) return;
+		if (this.handleStateQuery(record)) return;
 
 		const missionId = `m${++this.missionSeq}`;
 		const scope = record.target === "both" ? "global" : "per-agent";
@@ -96,167 +52,185 @@ export class Assembler {
 			record.target === "both" ? "both" : record.target;
 
 		switch (record.opType) {
-			case "PAUSE": {
-				this.bus.emitDirective("bdi", {
-					kind: "OVERRIDE",
-					op: "PAUSE",
-					missionId,
-				});
-				this.bus.emitDirective("llm", {
-					kind: "OVERRIDE",
-					op: "PAUSE",
-					missionId,
-				});
-				if (record.token) {
-					const token = record.token.toLowerCase();
-					this.listener.armToken(token);
-					this.bus.armSignal(token);
-					this.bus.onSignal((t) => {
-						if (t !== token) return;
-						this.bus.emitDirective("bdi", {
-							kind: "OVERRIDE",
-							op: "RESUME",
-							missionId,
-						});
-						this.bus.emitDirective("llm", {
-							kind: "OVERRIDE",
-							op: "RESUME",
-							missionId,
-						});
-						this.bus.emitRelease({ missionId, scope });
-						log.info(
-							"assembler",
-							`SIGNAL(${token}) → RESUME + RELEASE missionId=${missionId}`,
-						);
-					});
-				}
-				log.info("assembler", `PAUSE missionId=${missionId}`);
+			case "PAUSE":
+				this.handlePause(record, missionId, scope);
 				break;
-			}
-
 			case "RESUME":
-				this.bus.emitDirective("bdi", {
-					kind: "OVERRIDE",
-					op: "RESUME",
-					missionId,
-				});
-				this.bus.emitDirective("llm", {
-					kind: "OVERRIDE",
-					op: "RESUME",
-					missionId,
-				});
-				log.info("assembler", `RESUME missionId=${missionId}`);
+				this.handleResume(missionId);
 				break;
-
-			case "STAGE": {
-				const targets: XY[] = record.selector.coords ?? [];
-				if (targets.length > 0) {
-					this.bus.emitDirective("bdi", {
-						kind: "OVERRIDE",
-						op: "STAGE",
-						target: targets,
-						missionId,
-					});
-					this.bus.emitDirective("llm", {
-						kind: "OVERRIDE",
-						op: "STAGE",
-						target: targets,
-						missionId,
-					});
-				} else {
-					log.warn(
-						"assembler",
-						`STAGE has no resolved coords — pausing in place missionId=${missionId}`,
-					);
-				}
-				// Always pause: navigation target may be unresolvable but agent must stop.
-				this.bus.emitDirective("bdi", {
-					kind: "OVERRIDE",
-					op: "PAUSE",
-					missionId,
-				});
-				this.bus.emitDirective("llm", {
-					kind: "OVERRIDE",
-					op: "PAUSE",
-					missionId,
-				});
-				if (record.token) {
-					const token = record.token.toLowerCase();
-					this.listener.armToken(token);
-					this.bus.armSignal(token);
-					this.bus.onSignal((t) => {
-						if (t !== token) return;
-						this.bus.emitDirective("bdi", {
-							kind: "OVERRIDE",
-							op: "RESUME",
-							missionId,
-						});
-						this.bus.emitDirective("llm", {
-							kind: "OVERRIDE",
-							op: "RESUME",
-							missionId,
-						});
-						this.bus.emitRelease({ missionId, scope });
-						log.info(
-							"assembler",
-							`SIGNAL(${token}) → RESUME + RELEASE missionId=${missionId}`,
-						);
-					});
-				}
-				log.info(
-					"assembler",
-					`red-light STAGE+PAUSE+arm(${record.token ?? "none"}) missionId=${missionId}`,
-				);
+			case "STAGE":
+				this.handleStage(record, missionId, scope);
 				break;
-			}
-
 			case "handoff":
-			case "rendezvous": {
-				if (!this.l3Executor) {
-					log.warn(
-						"assembler",
-						`${record.opType} received but l3Executor not wired`,
-					);
-					break;
-				}
-				const dispatched = this.l3Executor.dispatch(record, missionId);
-				if (!dispatched) {
-					log.warn(
-						"assembler",
-						`${record.opType} deferred — mutex busy`,
-					);
-				}
-				log.info(
-					"assembler",
-					`${record.opType} missionId=${missionId} dispatched=${dispatched}`,
-				);
+			case "rendezvous":
+				this.handleChoreography(record, missionId);
 				break;
-			}
-
 			case "MODIFIER":
-			default: {
-				const directive = this.buildModifier(
-					record,
-					missionId,
-					agentTarget,
-				);
-				if (!directive) {
-					log.warn(
-						"assembler",
-						`could not build directive for op=${record.opType}`,
-					);
-					break;
-				}
-				// Send to both agents (coordinator handles per-agent scope via RELEASE).
-				this.bus.emitDirective("bdi", directive);
-				this.bus.emitDirective("llm", directive);
+			default:
+				this.handleModifier(record, missionId, agentTarget);
+				break;
+		}
+	}
+
+	// --- per-opType handlers ---
+
+	private async handleQa(
+		record: MissionRecord,
+		senderId: string,
+	): Promise<boolean> {
+		if (record.opType !== "qa" && !record.answer) return false;
+		if (record.answer) {
+			await this.chatClient.say(senderId, record.answer);
+			log.info("assembler", `qa reply: ${record.answer.slice(0, 60)}`);
+		}
+		return record.opType === "qa";
+	}
+
+	// L1 STATE_QUERY: no physical coords yet — resolve via l1_executor then emit MODIFIER
+	private handleStateQuery(record: MissionRecord): boolean {
+		if (
+			record.level !== "L1" ||
+			record.answer ||
+			(record.selector.coords && record.selector.coords.length > 0) ||
+			!this.l1Executor
+		)
+			return false;
+
+		void this.l1Executor.run(record).then((result) => {
+			if (result.kind !== "modifier" || result.coords.length === 0)
+				return;
+			const mid = `m${++this.missionSeq}`;
+			const dir = this.buildModifier(
+				{
+					...record,
+					selector: { ...record.selector, coords: result.coords },
+				},
+				mid,
+				record.target === "both" ? "both" : record.target,
+			);
+			if (dir) {
+				this.emitBoth(dir);
 				log.info(
 					"assembler",
-					`MODIFIER on=${record.selector.on} missionId=${missionId} lifetime=${record.lifetime} scope=${scope}`,
+					`l1 resolved coords → MODIFIER missionId=${mid}`,
 				);
-				break;
 			}
+		});
+		log.info("assembler", "routed to l1_executor (STATE_QUERY)");
+		return true;
+	}
+
+	private handlePause(
+		record: MissionRecord,
+		missionId: string,
+		scope: "global" | "per-agent",
+	): void {
+		this.emitBoth({ kind: "OVERRIDE", op: "PAUSE", missionId });
+		if (record.token) this.armResume(record.token, missionId, scope);
+		log.info(
+			"assembler",
+			`PAUSE missionId=${missionId}${record.token ? ` arm(${record.token})` : ""}`,
+		);
+	}
+
+	private handleResume(missionId: string): void {
+		this.emitBoth({ kind: "OVERRIDE", op: "RESUME", missionId });
+		log.info("assembler", `RESUME missionId=${missionId}`);
+	}
+
+	private handleStage(
+		record: MissionRecord,
+		missionId: string,
+		scope: "global" | "per-agent",
+	): void {
+		const targets: XY[] = record.selector.coords ?? [];
+		if (targets.length > 0) {
+			this.emitBoth({
+				kind: "OVERRIDE",
+				op: "STAGE",
+				target: targets,
+				missionId,
+			});
+		} else {
+			log.warn(
+				"assembler",
+				`STAGE has no resolved coords — pausing in place missionId=${missionId}`,
+			);
 		}
+		// Always pause: navigation target may be unresolvable but agent must stop.
+		this.emitBoth({ kind: "OVERRIDE", op: "PAUSE", missionId });
+		if (record.token) this.armResume(record.token, missionId, scope);
+		log.info(
+			"assembler",
+			`red-light STAGE+PAUSE+arm(${record.token ?? "none"}) missionId=${missionId}`,
+		);
+	}
+
+	private handleChoreography(record: MissionRecord, missionId: string): void {
+		if (!this.l3Executor) {
+			log.warn(
+				"assembler",
+				`${record.opType} received but l3Executor not wired`,
+			);
+			return;
+		}
+		const dispatched = this.l3Executor.dispatch(record, missionId);
+		if (!dispatched) {
+			log.warn("assembler", `${record.opType} deferred — mutex busy`);
+		}
+		log.info(
+			"assembler",
+			`${record.opType} missionId=${missionId} dispatched=${dispatched}`,
+		);
+	}
+
+	private handleModifier(
+		record: MissionRecord,
+		missionId: string,
+		agentTarget: string | "both",
+	): void {
+		const directive = this.buildModifier(record, missionId, agentTarget);
+		if (!directive) {
+			log.warn(
+				"assembler",
+				`could not build directive for op=${record.opType}`,
+			);
+			return;
+		}
+		this.emitBoth(directive);
+		log.info(
+			"assembler",
+			`MODIFIER on=${record.selector.on} missionId=${missionId} lifetime=${record.lifetime} scope=${record.target === "both" ? "global" : "per-agent"}`,
+		);
+	}
+
+	// --- shared helpers ---
+
+	private emitBoth(d: Directive): void {
+		this.bus.emitDirective("bdi", d);
+		this.bus.emitDirective("llm", d);
+	}
+
+	// Arm a token so an incoming signal word triggers RESUME + RELEASE.
+	// Self-unsubscribes after firing to prevent handler accumulation.
+	private armResume(
+		token: string,
+		missionId: string,
+		scope: "global" | "per-agent",
+	): void {
+		const t = token.toLowerCase();
+		this.listener.armToken(t);
+		this.bus.armSignal(t);
+		const off = this.bus.onSignal((signalled) => {
+			if (signalled !== t) return;
+			off();
+			this.emitBoth({ kind: "OVERRIDE", op: "RESUME", missionId });
+			this.bus.emitRelease({ missionId, scope });
+			log.info(
+				"assembler",
+				`SIGNAL(${t}) → RESUME + RELEASE missionId=${missionId}`,
+			);
+		});
 	}
 
 	private buildModifier(

@@ -65,7 +65,7 @@ export class Extractor {
 	async extract(text: string): Promise<MissionRecord | null> {
 		const key = cacheKey(text);
 		if (this.cache.has(key)) {
-			log.debug("extractor", `cache hit: ${text.slice(0, 60)}`);
+			log.debug("extractor", `cache hit: ${text}`);
 			return this.cache.get(key)!;
 		}
 
@@ -77,42 +77,49 @@ export class Extractor {
 			]);
 			const parsed = JSON.parse(response) as ParsedResponse;
 
-			const rawCoords: Array<XY | string> =
-				(parsed.coords?.length
-					? parsed.coords
-					: parsed.selector?.coords) ?? [];
-			const resolvedCoords = rawCoords
-				.map((c) =>
-					typeof c === "string" ? resolveLabel(c, this.map) : c,
-				)
-				.filter((c): c is XY => c !== null);
+			const opType = parsed.opType as MissionRecord["opType"] | undefined;
+			const level = parsed.level as MissionRecord["level"] | undefined;
+			if (!opType || !level) {
+				log.warn(
+					"extractor",
+					`missing required fields opType=${opType} level=${level} for: ${text.slice(0, 60)}`,
+				);
+			} else {
+				const rawCoords: Array<XY | string> =
+					(parsed.coords?.length
+						? parsed.coords
+						: parsed.selector?.coords) ?? [];
+				const resolvedCoords = rawCoords
+					.map((c) =>
+						typeof c === "string" ? resolveLabel(c, this.map) : c,
+					)
+					.filter((c): c is XY => c !== null);
 
-			record = {
-				level: (parsed.level as MissionRecord["level"]) ?? "L2",
-				opType:
-					(parsed.opType as MissionRecord["opType"]) ?? "MODIFIER",
-				selector: {
-					...(parsed.selector ?? { on: "deliver" }),
-					...(resolvedCoords.length > 0
-						? { coords: resolvedCoords }
-						: {}),
-				} as MissionRecord["selector"],
-				effect: parsed.effect ?? {},
-				condition: parsed.condition ?? null,
-				lifetime:
-					(parsed.lifetime as MissionRecord["lifetime"]) ??
-					"persistent",
-				target: parsed.target ?? "both",
-				bonus: parsed.bonus ?? null,
-				answer: parsed.answer ?? null,
-				token: parsed.token ?? null,
-				raw: text,
-			};
-
-			log.info(
-				"extractor",
-				`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} lifetime=${record.lifetime} bonus=${record.bonus}${record.token ? ` token=${record.token}` : ""}${record.condition ? " condition=yes" : ""}`,
-			);
+				record = {
+					level,
+					opType,
+					selector: {
+						...(parsed.selector ?? { on: "deliver" }),
+						...(resolvedCoords.length > 0
+							? { coords: resolvedCoords }
+							: {}),
+					} as MissionRecord["selector"],
+					effect: parsed.effect ?? {},
+					condition: parsed.condition ?? null,
+					lifetime:
+						(parsed.lifetime as MissionRecord["lifetime"]) ??
+						"one-shot",
+					target: parsed.target ?? "both",
+					bonus: parsed.bonus ?? null,
+					answer: parsed.answer ?? null,
+					token: parsed.token ?? null,
+					raw: text,
+				};
+				log.info(
+					"extractor",
+					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} lifetime=${record.lifetime} bonus=${record.bonus}${record.token ? ` token=${record.token}` : ""}${record.condition ? " condition=yes" : ""}`,
+				);
+			}
 		} catch (err) {
 			log.error("extractor", `parse failed: ${String(err)}`);
 			record = null;
