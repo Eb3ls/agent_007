@@ -48,6 +48,8 @@ export type DeliberationContext = {
 	directives?: Readonly<ActiveDirectives>;
 	/** Live currency rates (M-EMA, L-throughput). Fallback: M=movementDurationMs, L=0. */
 	metrics?: ValuatorMetrics;
+	/** Server-reported average parcel reward for explore EV estimate. Fallback: 10. */
+	rewardAvg?: number;
 };
 
 function freshObservedEmptySpawns(
@@ -63,6 +65,37 @@ function freshObservedEmptySpawns(
 	}
 	if (exploreExcluded) for (const id of exploreExcluded) fresh.add(id);
 	return fresh;
+}
+
+function computeExploreEV(
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	target: { x: number; y: number },
+	beliefs: BeliefStore,
+	decayIntervalMs: number,
+	movementDurationMs: number,
+	rewardAvg: number,
+): number {
+	if (!EXPLORE_EV_PROMOTE) return 0;
+	// §5.4: spawn_prob · reward_avg · (1 − decay_rate · ms_per_step · steps)
+	const id = map.spawnTileIds.find((sid) => {
+		const xy = idToXY(map, sid);
+		return xy.x === target.x && xy.y === target.y;
+	});
+	const steps = id !== undefined ? (bfs.dist[id] ?? 0) : 0;
+	const decayPerStep = computeDecayPerStep(
+		decayIntervalMs,
+		movementDurationMs,
+	);
+	const spawnerEmptyN = Math.max(
+		1,
+		map.spawnTileIds.length - beliefs.observedEmptySpawns.size,
+	);
+	const spawnProb = Math.min(1, steps / Math.max(1, spawnerEmptyN));
+	return Math.max(
+		0,
+		spawnProb * rewardAvg * Math.max(0, 1 - decayPerStep * steps),
+	);
 }
 
 export function deliberate(context: DeliberationContext): Intention | null {
@@ -236,36 +269,15 @@ export function deliberate(context: DeliberationContext): Intention | null {
 			candidates.push({
 				intention: makeIntention("explore", explore, context.now),
 				source: "explore",
-				utility: (() => {
-					if (!EXPLORE_EV_PROMOTE) return 0;
-					// §5.4: spawn_prob · reward_avg · (1 − decay_rate · ms_per_step · steps)
-					const id = context.map.spawnTileIds.find((sid) => {
-						const xy = idToXY(context.map, sid);
-						return xy.x === explore.x && xy.y === explore.y;
-					});
-					const steps =
-						id !== undefined ? (context.bfs.dist[id] ?? 0) : 0;
-					const decayPerStep = computeDecayPerStep(
-						context.decayIntervalMs,
-						context.movementDurationMs,
-					);
-					const spawnerEmptyN = Math.max(
-						1,
-						context.map.spawnTileIds.length -
-							context.beliefs.observedEmptySpawns.size,
-					);
-					const spawnProb = Math.min(
-						1,
-						steps / Math.max(1, spawnerEmptyN),
-					);
-					const rewardAvg = 10; // fallback; server-provided reward_avg not available here
-					return Math.max(
-						0,
-						spawnProb *
-							rewardAvg *
-							Math.max(0, 1 - decayPerStep * steps),
-					);
-				})(),
+				utility: computeExploreEV(
+					context.map,
+					context.bfs,
+					explore,
+					context.beliefs,
+					context.decayIntervalMs,
+					context.movementDurationMs,
+					context.rewardAvg ?? 10,
+				),
 			});
 		} else {
 			const roam = nearestRoamTarget(

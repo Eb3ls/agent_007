@@ -81,6 +81,23 @@ function sigmaEffects(
 	return R_c * mult + add;
 }
 
+// Returns the most restrictive (lowest) rewardOver cap across all active deliver-parcel modifiers,
+// or null when no cap is active.
+export function activeScoreCap(
+	modifiers: readonly ActiveModifier[],
+): number | null {
+	let cap: number | null = null;
+	for (const m of modifiers) {
+		if (m.selector.on !== "deliver-parcel") continue;
+		const rewardOver = (
+			m.selector as { on: "deliver-parcel"; rewardOver?: number }
+		).rewardOver;
+		if (rewardOver !== undefined && (cap === null || rewardOver < cap))
+			cap = rewardOver;
+	}
+	return cap;
+}
+
 /**
  * Absolute full-trip pickup score per §5.3.
  * Score_pickup(P) = R_c + R_p_eff − (n+1)·d·M·S
@@ -101,30 +118,14 @@ export function scorePickup(
 	const modifiers = directives?.modifiers ?? [];
 	const forbidden = directives?.forbiddenPickupParcelIds ?? new Set<string>();
 
-	// Score-cap: any modifier with on:"deliver-parcel" and a rewardOver threshold.
-	const capMods = modifiers.filter(
-		(m) =>
-			m.selector.on === "deliver-parcel" &&
-			(m.selector as { on: "deliver-parcel"; rewardOver?: number })
-				.rewardOver !== undefined,
-	) as Array<
-		ActiveModifier & {
-			selector: { on: "deliver-parcel"; rewardOver: number };
-		}
-	>;
+	const cap = activeScoreCap(modifiers);
 
-	// Nearest delivery tile for break-even distance.
-	let bestDelivId = -1;
-	let bestDelivDist = Infinity;
-	for (const id of map.deliveryTileIds) {
-		const dist = bfs.dist[id];
-		if (dist === undefined || dist === -1) continue;
-		if (dist < bestDelivDist) {
-			bestDelivDist = dist;
-			bestDelivId = id;
-		}
-	}
-	const s0 = bestDelivId === -1 ? Infinity : bestDelivDist;
+	const nearestDeliv = nearestDeliveryTile(map, bfs);
+	const s0 =
+		nearestDeliv !== null
+			? (bfs.dist[tileId(map, nearestDeliv.x, nearestDeliv.y)] ??
+				Infinity)
+			: Infinity;
 
 	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
 	const n = carry.n;
@@ -138,7 +139,7 @@ export function scorePickup(
 		if (extraExcludedIds?.has(p.id)) continue;
 
 		// Score-cap: skip parcels whose reward exceeds active cap
-		if (capMods.some((m) => p.reward > m.selector.rewardOver)) continue;
+		if (cap !== null && p.reward > cap) continue;
 
 		const pId = tileId(map, p.x, p.y);
 		const distToP = bfs.dist[pId];
