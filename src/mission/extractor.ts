@@ -35,6 +35,7 @@ export type MissionRecord = {
 	target: string;
 	bonus: number | null;
 	answer: string | null;
+	token: string | null;
 	raw: string;
 };
 
@@ -93,6 +94,7 @@ export class Extractor {
 				target: parsed.target ?? "both",
 				bonus: parsed.bonus ?? null,
 				answer: parsed.answer ?? null,
+				token: parsed.token ?? null,
 				raw: text,
 			};
 

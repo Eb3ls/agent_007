@@ -16,6 +16,7 @@ function makeRecord(overrides: Partial<MissionRecord> = {}): MissionRecord {
 		target: "both",
 		bonus: null,
 		answer: null,
+		token: null,
 		raw: "Where is the leftmost spawn tile?",
 		...overrides,
 	};

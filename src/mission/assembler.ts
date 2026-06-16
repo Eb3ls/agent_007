@@ -96,7 +96,7 @@ export class Assembler {
 			record.target === "both" ? "both" : record.target;
 
 		switch (record.opType) {
-			case "PAUSE":
+			case "PAUSE": {
 				this.bus.emitDirective("bdi", {
 					kind: "OVERRIDE",
 					op: "PAUSE",
@@ -107,8 +107,32 @@ export class Assembler {
 					op: "PAUSE",
 					missionId,
 				});
+				if (record.token) {
+					const token = record.token.toLowerCase();
+					this.listener.armToken(token);
+					this.bus.armSignal(token);
+					this.bus.onSignal((t) => {
+						if (t !== token) return;
+						this.bus.emitDirective("bdi", {
+							kind: "OVERRIDE",
+							op: "RESUME",
+							missionId,
+						});
+						this.bus.emitDirective("llm", {
+							kind: "OVERRIDE",
+							op: "RESUME",
+							missionId,
+						});
+						this.bus.emitRelease({ missionId, scope });
+						log.info(
+							"assembler",
+							`SIGNAL(${token}) → RESUME + RELEASE missionId=${missionId}`,
+						);
+					});
+				}
 				log.info("assembler", `PAUSE missionId=${missionId}`);
 				break;
+			}
 
 			case "RESUME":
 				this.bus.emitDirective("bdi", {
@@ -126,62 +150,62 @@ export class Assembler {
 
 			case "STAGE": {
 				const targets: XY[] = record.selector.coords ?? [];
-				if (targets.length === 0) {
-					log.warn(
-						"assembler",
-						"STAGE has no resolved coords — ignoring",
-					);
-					break;
-				}
-				// Red-light = STAGE + PAUSE + arm SIGNAL token.
-				this.bus.emitDirective("bdi", {
-					kind: "OVERRIDE",
-					op: "STAGE",
-					target: targets,
-					missionId,
-				});
-				this.bus.emitDirective("llm", {
-					kind: "OVERRIDE",
-					op: "STAGE",
-					target: targets,
-					missionId,
-				});
-				this.bus.emitDirective("bdi", {
-					kind: "OVERRIDE",
-					op: "PAUSE",
-					missionId,
-				});
-				this.bus.emitDirective("llm", {
-					kind: "OVERRIDE",
-					op: "PAUSE",
-					missionId,
-				});
-				// Arm a green-light token.
-				const token = "green";
-				this.listener.armToken(token);
-				this.bus.armSignal(token);
-				// On SIGNAL → emit RESUME to both.
-				this.bus.onSignal((t) => {
-					if (t !== token) return;
+				if (targets.length > 0) {
 					this.bus.emitDirective("bdi", {
 						kind: "OVERRIDE",
-						op: "RESUME",
+						op: "STAGE",
+						target: targets,
 						missionId,
 					});
 					this.bus.emitDirective("llm", {
 						kind: "OVERRIDE",
-						op: "RESUME",
+						op: "STAGE",
+						target: targets,
 						missionId,
 					});
-					this.bus.emitRelease({ missionId, scope });
-					log.info(
+				} else {
+					log.warn(
 						"assembler",
-						`green-light SIGNAL → RESUME + RELEASE missionId=${missionId}`,
+						`STAGE has no resolved coords — pausing in place missionId=${missionId}`,
 					);
+				}
+				// Always pause: navigation target may be unresolvable but agent must stop.
+				this.bus.emitDirective("bdi", {
+					kind: "OVERRIDE",
+					op: "PAUSE",
+					missionId,
 				});
+				this.bus.emitDirective("llm", {
+					kind: "OVERRIDE",
+					op: "PAUSE",
+					missionId,
+				});
+				if (record.token) {
+					const token = record.token.toLowerCase();
+					this.listener.armToken(token);
+					this.bus.armSignal(token);
+					this.bus.onSignal((t) => {
+						if (t !== token) return;
+						this.bus.emitDirective("bdi", {
+							kind: "OVERRIDE",
+							op: "RESUME",
+							missionId,
+						});
+						this.bus.emitDirective("llm", {
+							kind: "OVERRIDE",
+							op: "RESUME",
+							missionId,
+						});
+						this.bus.emitRelease({ missionId, scope });
+						log.info(
+							"assembler",
+							`SIGNAL(${token}) → RESUME + RELEASE missionId=${missionId}`,
+						);
+					});
+				}
 				log.info(
 					"assembler",
-					`red-light STAGE+PAUSE+arm(${token}) missionId=${missionId}`,
+					`red-light STAGE+PAUSE+arm(${record.token ?? "none"}) missionId=${missionId}`,
 				);
 				break;
 			}

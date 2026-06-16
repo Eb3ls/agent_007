@@ -20,7 +20,8 @@ OUTPUT SCHEMA:
   "target":    "both" | "agent-bdi" | "agent-llm",
   "coords":    [{x,y} | "label",...] | null,
   "bonus":     number | null,
-  "answer":    string | null
+  "answer":    string | null,
+  "token":     string | null
 }
 
 FIELD RULES:
@@ -31,7 +32,7 @@ FIELD RULES:
     STAGE     = move robots to position then hold
     handoff   = robot A picks up, robot B delivers (L3)
     rendezvous= both robots meet at a location (L3)
-    qa        = message asks a question; put answer in "answer" field
+    qa        = message asks a question OR a calculation ("what is X?", "calculate X"); put the answer in "answer" field
 - selector.on:
     goto          → priced move to tile(s); put coords in selector.coords
     deliver       → priced delivery (with optional zone/count condition)
@@ -40,14 +41,15 @@ FIELD RULES:
     pickup        → priced pickup of specific parcel
 - effect:
     add   = flat point bonus (negative = penalty)
-    mult  = score multiplier (0 = nullify, 0.3 = reduce, 2 = double, etc.)
+    mult  = score multiplier (0 = nullify, 0.5 = half, 2 = double, 3 = triple, 5 = "five times", etc.); convert words to numbers
     both fields are optional; omit if not applicable
 - condition: only for deliver selector; use exactly ONE key; omit whole field if no condition
 - lifetime: "one-shot" if "una tantum" / "only first time" / "per agent once"; "persistent" otherwise
 - target: "both" unless message targets one robot explicitly
 - coords (TOP LEVEL): use for map-relative labels like "northwest", "leftmost-delivery"; else put {x,y} directly in selector.coords or selector.tiles
-- bonus: the raw numeric value in the message (can be negative); null if absent
+- bonus: the numeric value in the message (can be negative); convert words to numbers ("ten"=10, "hundred"=100); null if absent
 - answer: answer to any question the message asks; null if no question
+- token: the exact resume word/phrase the referee will say to restart movement (e.g. "green", "via"); null if not stated
 - If a field cannot be determined: use null — never guess
 
 COORD RULES:
@@ -62,22 +64,37 @@ COORD RULES:
 EXAMPLES:
 
 Input: Move to (4,7) to receive a bonus. Bonus is 10pts. Coordinates are [{"x":4,"y":7}]
-Output: {"level":"L1","opType":"MODIFIER","selector":{"on":"goto","coords":[{"x":4,"y":7}]},"effect":{"add":10},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":10,"answer":null}
+Output: {"level":"L1","opType":"MODIFIER","selector":{"on":"goto","coords":[{"x":4,"y":7}]},"effect":{"add":10},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":10,"answer":null,"token":null}
+
+Input: Head to (2,5) and you'll get twenty points.
+Output: {"level":"L1","opType":"MODIFIER","selector":{"on":"goto","coords":[{"x":2,"y":5}]},"effect":{"add":20},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":20,"answer":null,"token":null}
+
+Input: Deliveries at (3,8) pay five times normal from now on.
+Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":3,"y":8}},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: Do not go through tiles (13,15) (14,15) (15,15) or you will be penalized. Bonus is -1000pts.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"cross","tiles":[{"x":13,"y":15},{"x":14,"y":15},{"x":15,"y":15}]},"effect":{"add":-1000},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":-1000,"answer":null}
+Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"cross","tiles":[{"x":13,"y":15},{"x":14,"y":15},{"x":15,"y":15}]},"effect":{"add":-1000},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":-1000,"answer":null,"token":null}
 
 Input: Deliver exactly three packages at a time. Bonus is 100pts.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver"},"effect":{"add":100},"condition":{"carryCountEquals":3},"lifetime":"persistent","target":"both","coords":null,"bonus":100,"answer":null}
+Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver"},"effect":{"add":100},"condition":{"carryCountEquals":3},"lifetime":"persistent","target":"both","coords":null,"bonus":100,"answer":null,"token":null}
 
 Input: Deliveries at (5,5) pay triple points from now on.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":5,"y":5}},"effect":{"mult":3},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null}
-
-Input: Stop moving and hold your position until I tell you to go.
-Output: {"level":"L2","opType":"PAUSE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null}
+Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":5,"y":5}},"effect":{"mult":3},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: Do not deliver any parcel whose current score is above 10. Wait for it to decay first.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver-parcel","rewardOver":10},"effect":{"mult":0},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null}
+Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver-parcel","rewardOver":10},"effect":{"mult":0},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: What is the capital of Italy? Answer me for 50 points.
-Output: {"level":"L1","opType":"qa","selector":{"on":"deliver"},"effect":{"add":50},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":50,"answer":"Rome"}
+Output: {"level":"L1","opType":"qa","selector":{"on":"deliver"},"effect":{"add":50},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":50,"answer":"Rome","token":null}
+
+Input: Calculate (5*(5+3)/2)+2. First one to answer gets a 1000pts bonus, una tantum.
+Output: {"level":"L1","opType":"qa","selector":{"on":"deliver"},"effect":{"add":1000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":1000,"answer":"22","token":null}
+
+Input: Stop moving and hold your position until I tell you to go.
+Output: {"level":"L2","opType":"PAUSE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+
+Input: Move both robots onto an odd-numbered row, stop, and wait. When you receive the word "green" from me, go. Bonus is 700pts.
+Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{"add":700},"condition":null,"lifetime":"one-shot","target":"both","coords":["odd-numbered row"],"bonus":700,"answer":null,"token":"green"}
+
+Input: Semaforo: andate sulla riga pari più vicina e fermatevi. Ripartite al mio "via".
+Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":["even row"],"bonus":null,"answer":null,"token":"via"}
