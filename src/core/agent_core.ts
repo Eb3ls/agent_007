@@ -6,6 +6,7 @@ import {
 	parcelHere,
 	passableCrateTileSet,
 	shouldDrop,
+	sumRewards,
 	type CarryState,
 } from "./planner.js";
 import {
@@ -16,6 +17,14 @@ import {
 	type BeliefStore,
 } from "../belief_store.js";
 import {
+	activeScoreCap,
+	batchCandidates,
+	carryValue,
+	maxBatchScore,
+	scoreDeliver,
+	type ValuatorMetrics,
+} from "./valuator.js";
+import {
 	buildPlanWithCrateHandling,
 	createCratePlannerContext,
 	type CratePlannerContext,
@@ -25,12 +34,6 @@ import {
 	shouldReconsider,
 	shouldReconsiderPDDLForParcel,
 } from "./reconsider.js";
-import {
-	activeScoreCap,
-	batchCandidates,
-	scoreDeliver,
-	type ValuatorMetrics,
-} from "./valuator.js";
 import { DirectiveHandler, type ActiveDirectives } from "../team/directives.js";
 import { tileId, idToXY, spawnsWithinRadius } from "../static_map.js";
 import {
@@ -158,7 +161,15 @@ export class AgentCore {
 		return { blocked, passableCrates, bfs, carry, selfId, now };
 	}
 
-	private async runReflexes(
+	private metrics(cfg: TickConfig): ValuatorMetrics {
+		return {
+			M: this.M,
+			L: this.coordinator?.getL() ?? 0,
+			decayIntervalMs: cfg.decayIntervalMs,
+		};
+	}
+
+	private async tryGuardedDeliver(
 		ctx: TickContext,
 		selfX: number,
 		selfY: number,
@@ -168,137 +179,154 @@ export class AgentCore {
 		deliveryCount: number,
 	): Promise<ReflexResult> {
 		const map = this.client.staticMap;
+		if (!shouldDrop(map, ctx.selfId, ctx.carry.n > 0) || state.stage)
+			return { skip: false, intention, deliveryCount };
 
-		// Step 4a: guarded delivery — deliver only if on the best delivery tile and
-		// the value arithmetic agrees (not mid-batch, not a STAGE handoff/putDown).
-		if (shouldDrop(map, ctx.selfId, ctx.carry.n > 0) && !state.stage) {
-			const metrics: ValuatorMetrics = {
-				M: this.M,
-				L: this.coordinator?.getL() ?? 0,
-				decayIntervalMs: cfg.decayIntervalMs,
-			};
-			const deliverResult = scoreDeliver(
-				map,
-				ctx.bfs,
-				ctx.carry,
-				metrics,
-				state,
-			);
-			const onBestTile =
-				deliverResult !== null &&
-				deliverResult.tile.x === selfX &&
-				deliverResult.tile.y === selfY;
-			if (onBestTile) {
-				const batches = batchCandidates(
-					map,
-					ctx.bfs,
-					this.beliefs,
-					ctx.carry,
-					metrics,
-					state,
-				);
-				const batchMax =
-					batches.length > 0
-						? Math.max(...batches.map((b) => b.score))
-						: -Infinity;
-				if (batchMax <= deliverResult!.score) {
-					const deliveredPts = ctx.carry.rewards.reduce(
-						(a, b) => a + b,
-						0,
-					);
-					const dropped = await this.client.putdown();
-					applyDelivery(this.beliefs, cfg.myId);
-					this.bus?.emitCarryChange(this.id);
-					this.coordinator?.recordDelivery(this.id, deliveredPts);
-					deliveryCount += dropped.length;
-					log.ok(
-						"deliver",
-						`putdown=${dropped.length} cleared=${ctx.carry.n} total_delivered=${deliveryCount}`,
-					);
-					if (intention?.kind === "deliver" && intention.missionId) {
-						this.bus?.emitRelease({
-							missionId: intention.missionId,
-							scope: intention.releaseScope ?? "global",
-						});
-						intention = null;
-					}
-					return { skip: true, intention, deliveryCount };
-				}
-			}
-		}
+		const m = this.metrics(cfg);
+		const deliverResult = scoreDeliver(map, ctx.bfs, ctx.carry, m, state);
+		const onBestTile =
+			deliverResult !== null &&
+			deliverResult.tile.x === selfX &&
+			deliverResult.tile.y === selfY;
+		if (!onBestTile) return { skip: false, intention, deliveryCount };
 
-		// Step 4b: score-cap selective putdown — drop parcels over the active cap anywhere.
-		const cap = activeScoreCap(state.modifiers);
-		if (cap !== null) {
-			const overCapIds = ctx.carry.ids.filter((id) => {
-				const p = this.beliefs.parcels.get(id);
-				return p && p.reward > cap;
+		const batches = batchCandidates(
+			map,
+			ctx.bfs,
+			this.beliefs,
+			ctx.carry,
+			m,
+			state,
+		);
+		if (maxBatchScore(batches) > deliverResult.score)
+			return { skip: false, intention, deliveryCount };
+
+		const deliveredPts = sumRewards(ctx.carry);
+		const dropped = await this.client.putdown();
+		applyDelivery(this.beliefs, cfg.myId);
+		this.bus?.emitCarryChange(this.id);
+		this.coordinator?.recordDelivery(this.id, deliveredPts);
+		deliveryCount += dropped.length;
+		log.ok(
+			"deliver",
+			`putdown=${dropped.length} cleared=${ctx.carry.n} total_delivered=${deliveryCount}`,
+		);
+		if (intention?.kind === "deliver" && intention.missionId) {
+			this.bus?.emitRelease({
+				missionId: intention.missionId,
+				scope: intention.releaseScope ?? "global",
 			});
-			if (overCapIds.length > 0) {
-				await this.client.putdown(overCapIds);
-				for (const id of overCapIds) {
-					const p = this.beliefs.parcels.get(id);
-					if (p) {
-						const { carriedBy: _dropped, ...rest } = p;
-						this.beliefs.parcels.set(id, rest as typeof p);
-					}
-				}
-				this.bus?.emitCarryChange(this.id);
-				log.warn(
-					"score-cap",
-					`dropped ${overCapIds.length} over-cap parcels (cap=${cap})`,
-				);
-				return { skip: true, intention, deliveryCount };
+			intention = null;
+		}
+		return { skip: true, intention, deliveryCount };
+	}
+
+	private async tryDropOverCap(
+		ctx: TickContext,
+		state: ActiveDirectives,
+		intention: Intention | null,
+		deliveryCount: number,
+	): Promise<ReflexResult> {
+		const cap = activeScoreCap(state.modifiers);
+		if (cap === null) return { skip: false, intention, deliveryCount };
+
+		const overCapIds = ctx.carry.ids.filter((id) => {
+			const p = this.beliefs.parcels.get(id);
+			return p && p.reward > cap;
+		});
+		if (overCapIds.length === 0)
+			return { skip: false, intention, deliveryCount };
+
+		await this.client.putdown(overCapIds);
+		for (const id of overCapIds) {
+			const p = this.beliefs.parcels.get(id);
+			if (p) {
+				const { carriedBy: _dropped, ...rest } = p;
+				this.beliefs.parcels.set(id, rest as typeof p);
 			}
 		}
+		this.bus?.emitCarryChange(this.id);
+		log.warn(
+			"score-cap",
+			`dropped ${overCapIds.length} over-cap parcels (cap=${cap})`,
+		);
+		return { skip: true, intention, deliveryCount };
+	}
 
-		// Step 4c: guarded free-grab — pick up parcel at feet only if mission-safe.
-		// G1: not in a STAGE sequence. G2: not explicitly forbidden. G3: not over
-		// active score-cap (else 4b re-drops it → churn). G4: not decayed to zero.
-		// G5: value test — grabbing must not lower the best achievable carry value.
+	private async tryGuardedGrab(
+		ctx: TickContext,
+		selfX: number,
+		selfY: number,
+		state: ActiveDirectives,
+		intention: Intention | null,
+		cfg: TickConfig,
+		deliveryCount: number,
+	): Promise<ReflexResult> {
+		const map = this.client.staticMap;
+		const cap = activeScoreCap(state.modifiers);
 		const parcelAtFeet = parcelHere(this.beliefs.parcels, selfX, selfY);
-		if (
-			parcelAtFeet &&
-			!state.stage &&
-			!state.forbiddenPickupParcelIds.has(parcelAtFeet.id) &&
-			(cap === null || parcelAtFeet.reward <= cap) &&
-			parcelAtFeet.reward > 0
-		) {
-			const metrics4c: ValuatorMetrics = {
-				M: this.M,
-				L: this.coordinator?.getL() ?? 0,
-				decayIntervalMs: cfg.decayIntervalMs,
-			};
-			const V = (c: CarryState): number => {
-				const d = scoreDeliver(map, ctx.bfs, c, metrics4c, state);
-				const bs = batchCandidates(
-					map,
-					ctx.bfs,
-					this.beliefs,
-					c,
-					metrics4c,
-					state,
-				);
-				const bMax =
-					bs.length > 0 ? Math.max(...bs.map((b) => b.score)) : 0;
-				return Math.max(d?.score ?? 0, bMax);
-			};
-			const carryAfterGrab: CarryState = {
-				...ctx.carry,
-				n: ctx.carry.n + 1,
-				rewards: [...ctx.carry.rewards, parcelAtFeet.reward],
-			};
-			if (V(carryAfterGrab) >= V(ctx.carry)) {
-				const picked = await this.client.pickup();
-				applyPickupResult(this.beliefs, picked, cfg.myId);
-				clearUncarriedParcelsAt(this.beliefs, selfX, selfY);
-				this.bus?.emitCarryChange(this.id);
-				log.ok("pickup", `picked=${picked.length}`);
-				return { skip: true, intention, deliveryCount };
-			}
-		}
 
-		return { skip: false, intention, deliveryCount };
+		if (
+			!parcelAtFeet ||
+			state.stage ||
+			state.forbiddenPickupParcelIds.has(parcelAtFeet.id) ||
+			(cap !== null && parcelAtFeet.reward > cap) ||
+			parcelAtFeet.reward <= 0
+		)
+			return { skip: false, intention, deliveryCount };
+
+		const m = this.metrics(cfg);
+		const carryAfterGrab: CarryState = {
+			...ctx.carry,
+			n: ctx.carry.n + 1,
+			rewards: [...ctx.carry.rewards, parcelAtFeet.reward],
+		};
+		if (
+			carryValue(map, ctx.bfs, this.beliefs, carryAfterGrab, m, state) <
+			carryValue(map, ctx.bfs, this.beliefs, ctx.carry, m, state)
+		)
+			return { skip: false, intention, deliveryCount };
+
+		const picked = await this.client.pickup();
+		applyPickupResult(this.beliefs, picked, cfg.myId);
+		clearUncarriedParcelsAt(this.beliefs, selfX, selfY);
+		this.bus?.emitCarryChange(this.id);
+		log.ok("pickup", `picked=${picked.length}`);
+		return { skip: true, intention, deliveryCount };
+	}
+
+	private async runReflexes(
+		ctx: TickContext,
+		selfX: number,
+		selfY: number,
+		state: ActiveDirectives,
+		intention: Intention | null,
+		cfg: TickConfig,
+		deliveryCount: number,
+	): Promise<ReflexResult> {
+		let r = await this.tryGuardedDeliver(
+			ctx,
+			selfX,
+			selfY,
+			state,
+			intention,
+			cfg,
+			deliveryCount,
+		);
+		if (r.skip) return r;
+
+		r = await this.tryDropOverCap(ctx, state, r.intention, r.deliveryCount);
+		if (r.skip) return r;
+
+		return this.tryGuardedGrab(
+			ctx,
+			selfX,
+			selfY,
+			state,
+			r.intention,
+			cfg,
+			r.deliveryCount,
+		);
 	}
 
 	private async runStagePhase(
@@ -622,10 +650,13 @@ export class AgentCore {
 		return intention;
 	}
 
-	async run(): Promise<void> {
-		const { id: myId, x: startX, y: startY } = await this.waitForReady();
-		let selfX = startX,
-			selfY = startY;
+	private async init(): Promise<{
+		cfg: TickConfig;
+		crateCtx: CratePlannerContext | null;
+		selfX: number;
+		selfY: number;
+	}> {
+		const { id: myId, x: selfX, y: selfY } = await this.waitForReady();
 
 		const map = this.client.staticMap;
 		if (!mapLogged) {
@@ -664,14 +695,156 @@ export class AgentCore {
 			);
 		}
 
+		const crateCtx: CratePlannerContext | null = appCfg.crates.enabled
+			? createCratePlannerContext(appCfg.crates.cooldown_ms)
+			: null;
+
+		return { cfg, crateCtx, selfX, selfY };
+	}
+
+	private publishIntention(
+		intention: Intention | null,
+		ctx: TickContext,
+		selfX: number,
+		selfY: number,
+		cfg: TickConfig,
+	): void {
+		const map = this.client.staticMap;
+		const intentionKind = intention?.kind ?? "idle";
+		const spawnerIds =
+			intentionKind === "explore" && intention
+				? spawnsWithinRadius(
+						map,
+						intention.targetXY,
+						cfg.observationDistance,
+					)
+				: undefined;
+		this.coordinator?.publish(this.id, {
+			pos: { x: selfX, y: selfY },
+			carry: {
+				count: ctx.carry.n,
+				reward: sumRewards(ctx.carry),
+				ids: ctx.carry.ids,
+			},
+			intentionSummary: {
+				kind: intentionKind,
+				...(intention?.targetId !== undefined && {
+					targetId: intention.targetId,
+				}),
+				...(intention?.targetXY !== undefined && {
+					targetXY: intention.targetXY,
+				}),
+				...(spawnerIds && { spawnerIds }),
+				...(intention?.missionId !== undefined && {
+					missionId: intention.missionId,
+				}),
+			},
+		});
+	}
+
+	private async runMovePhase(
+		intention: Intention,
+		ctx: TickContext,
+		selfX: number,
+		selfY: number,
+		cfg: TickConfig,
+	): Promise<{ selfX: number; selfY: number; intention: Intention | null }> {
+		const map = this.client.staticMap;
+
+		// Empty plan rebuild.
+		if (intention.plan.length === 0) {
+			const plan = buildPlan(
+				map,
+				ctx.bfs,
+				intention.targetXY.x,
+				intention.targetXY.y,
+			);
+			if (plan.length === 0) {
+				log.warn(
+					"intent",
+					`no plan for kind=${intention.kind} — dropping`,
+				);
+				return { selfX, selfY, intention: null };
+			}
+			intention.plan = plan;
+		}
+
+		// Push defer: yield if an opponent is close to the crate being pushed.
+		if (intention.kind === "push" && intention.plan.length > 0) {
+			const nextDir = intention.plan[0]!;
+			const nx =
+				selfX + (nextDir === "right" ? 1 : nextDir === "left" ? -1 : 0);
+			const ny =
+				selfY + (nextDir === "up" ? 1 : nextDir === "down" ? -1 : 0);
+			const nextType = map.tiles.get(`${nx},${ny}`)?.type ?? "";
+			if (nextType.startsWith("5")) {
+				const bfsFromCrate = bfsFromSelf(
+					map,
+					nx,
+					ny,
+					ctx.blocked,
+					ctx.passableCrates,
+				);
+				const oppClose = [...this.beliefs.agents.values()].some((a) => {
+					if (a.x === undefined || a.y === undefined) return false;
+					const oppId = tileId(map, Math.round(a.x), Math.round(a.y));
+					const d = bfsFromCrate.dist[oppId];
+					return (
+						d !== undefined &&
+						d >= 0 &&
+						d <= appCfg.intention.opponent_defer_steps
+					);
+				});
+				if (oppClose) {
+					log.debug(
+						"push",
+						`deferring push step — opp within ${appCfg.intention.opponent_defer_steps} tiles of crate`,
+					);
+					await sleep(cfg.movementDurationMs);
+					return { selfX, selfY, intention };
+				}
+			}
+		}
+
+		// Execute move.
+		const step = intention.plan.shift()!;
+		log.debug(
+			"plan",
+			`step=${step} remaining=${intention.plan.length} kind=${intention.kind}`,
+		);
+		const moveStart = Date.now();
+		const result = await this.client.move(step);
+		if (result) {
+			const latency = Date.now() - moveStart;
+			this.M = M_EMA_ALPHA * latency + (1 - M_EMA_ALPHA) * this.M;
+			selfX = result.x;
+			selfY = result.y;
+			intention.moveFailStreak = 0;
+			log.debug(
+				"move",
+				`${step} → (${selfX},${selfY}) M=${Math.round(this.M)}ms`,
+			);
+		} else {
+			intention.moveFailStreak++;
+			intention.plan = [];
+			log.error(
+				"move",
+				`${step} → FAILED fails=${intention.moveFailStreak}`,
+			);
+			await sleep(cfg.movementDurationMs);
+		}
+		return { selfX, selfY, intention };
+	}
+
+	async run(): Promise<void> {
+		const { cfg, crateCtx, selfX: initX, selfY: initY } = await this.init();
+		let selfX = initX,
+			selfY = initY;
+
 		let intention: Intention | null = null;
 		let intentionMissing = false;
 		let loopCount = 0;
 		let deliveryCount = 0;
-
-		const crateCtx: CratePlannerContext | null = appCfg.crates.enabled
-			? createCratePlannerContext(appCfg.crates.cooldown_ms)
-			: null;
 
 		while (true) {
 			loopCount++;
@@ -692,7 +865,7 @@ export class AgentCore {
 				continue;
 			}
 
-			// Reflexes: deliver / score-cap / pickup.
+			// Reflexes: guarded deliver / score-cap drop / guarded grab.
 			const reflex = await this.runReflexes(
 				ctx,
 				selfX,
@@ -706,7 +879,7 @@ export class AgentCore {
 			intention = reflex.intention;
 			if (reflex.skip) continue;
 
-			// Stage override or deliberation gates.
+			// Stage override or deliberation.
 			if (state.stage) {
 				const stage = await this.runStagePhase(
 					ctx,
@@ -730,37 +903,8 @@ export class AgentCore {
 				);
 			}
 
-			// Publish finalized intention for team coordination (next tick's exclusionsFor).
-			const intentionKind = intention?.kind ?? "idle";
-			const spawnerIds =
-				intentionKind === "explore" && intention
-					? spawnsWithinRadius(
-							map,
-							intention.targetXY,
-							cfg.observationDistance,
-						)
-					: undefined;
-			this.coordinator?.publish(this.id, {
-				pos: { x: selfX, y: selfY },
-				carry: {
-					count: ctx.carry.n,
-					reward: ctx.carry.rewards.reduce((a, b) => a + b, 0),
-					ids: ctx.carry.ids,
-				},
-				intentionSummary: {
-					kind: intentionKind,
-					...(intention?.targetId !== undefined && {
-						targetId: intention.targetId,
-					}),
-					...(intention?.targetXY !== undefined && {
-						targetXY: intention.targetXY,
-					}),
-					...(spawnerIds && { spawnerIds }),
-					...(intention?.missionId !== undefined && {
-						missionId: intention.missionId,
-					}),
-				},
-			});
+			// Publish finalized intention for team coordination.
+			this.publishIntention(intention, ctx, selfX, selfY, cfg);
 
 			// Periodic competitor log.
 			if (loopCount % 50 === 0) {
@@ -790,98 +934,14 @@ export class AgentCore {
 			}
 			intentionMissing = false;
 
-			// Empty plan rebuild.
-			if (intention.plan.length === 0) {
-				const plan = buildPlan(
-					map,
-					ctx.bfs,
-					intention.targetXY.x,
-					intention.targetXY.y,
-				);
-				if (plan.length === 0) {
-					log.warn(
-						"intent",
-						`no plan for kind=${intention.kind} — dropping`,
-					);
-					intention = null;
-					continue;
-				}
-				intention.plan = plan;
-			}
-
-			// Push defer: yield if an opponent is close to the crate being pushed.
-			if (intention.kind === "push" && intention.plan.length > 0) {
-				const nextDir = intention.plan[0]!;
-				const nx =
-					selfX +
-					(nextDir === "right" ? 1 : nextDir === "left" ? -1 : 0);
-				const ny =
-					selfY +
-					(nextDir === "up" ? 1 : nextDir === "down" ? -1 : 0);
-				const nextType = map.tiles.get(`${nx},${ny}`)?.type ?? "";
-				if (nextType.startsWith("5")) {
-					const bfsFromCrate = bfsFromSelf(
-						map,
-						nx,
-						ny,
-						ctx.blocked,
-						ctx.passableCrates,
-					);
-					const oppClose = [...this.beliefs.agents.values()].some(
-						(a) => {
-							if (a.x === undefined || a.y === undefined)
-								return false;
-							const oppId = tileId(
-								map,
-								Math.round(a.x),
-								Math.round(a.y),
-							);
-							const d = bfsFromCrate.dist[oppId];
-							return (
-								d !== undefined &&
-								d >= 0 &&
-								d <= appCfg.intention.opponent_defer_steps
-							);
-						},
-					);
-					if (oppClose) {
-						log.debug(
-							"push",
-							`deferring push step — opp within ${appCfg.intention.opponent_defer_steps} tiles of crate`,
-						);
-						await sleep(cfg.movementDurationMs);
-						continue;
-					}
-				}
-			}
-
-			// Execute move.
-			const step = intention.plan.shift()!;
-			log.debug(
-				"plan",
-				`step=${step} remaining=${intention.plan.length} kind=${intention.kind}`,
-			);
-			const moveStart = Date.now();
-			const result = await this.client.move(step);
-			if (result) {
-				const latency = Date.now() - moveStart;
-				this.M = M_EMA_ALPHA * latency + (1 - M_EMA_ALPHA) * this.M;
-				selfX = result.x;
-				selfY = result.y;
-				intention.moveFailStreak = 0;
-				log.debug(
-					"move",
-					`${step} → (${selfX},${selfY}) M=${Math.round(this.M)}ms`,
-				);
-			} else {
-				intention.moveFailStreak++;
-				intention.plan = [];
-				log.error(
-					"move",
-					`${step} → FAILED fails=${intention.moveFailStreak}`,
-				);
-				await sleep(cfg.movementDurationMs);
-			}
+			// Move: empty-plan rebuild + push-defer + execute.
+			({ selfX, selfY, intention } = await this.runMovePhase(
+				intention,
+				ctx,
+				selfX,
+				selfY,
+				cfg,
+			));
 		}
 	}
 }

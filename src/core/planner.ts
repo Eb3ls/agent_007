@@ -364,6 +364,10 @@ export type CarryState = {
 	ids: string[];
 };
 
+export function sumRewards(carry: CarryState): number {
+	return carry.rewards.reduce((a, b) => a + b, 0);
+}
+
 // Derives carry state from beliefs.parcels (authoritative for carriedBy).
 export function deriveCarryState(
 	parcels: Map<string, ParcelBelief>,

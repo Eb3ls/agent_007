@@ -3,6 +3,7 @@ import {
 	expectedReward,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
+	sumRewards,
 	type CarryState,
 	type PickResult,
 } from "./planner.js";
@@ -46,7 +47,7 @@ function dPerStep(metrics: ValuatorMetrics): number {
 
 function conditionMet(cond: Condition | undefined, carry: CarryState): boolean {
 	if (!cond) return true;
-	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
+	const R_c = sumRewards(carry);
 	if ("carryCountEquals" in cond) return carry.n === cond.carryCountEquals;
 	if ("carryCountAtLeast" in cond) return carry.n >= cond.carryCountAtLeast;
 	if ("carryCountOver" in cond) return carry.n > cond.carryCountOver;
@@ -127,7 +128,7 @@ export function scorePickup(
 				Infinity)
 			: Infinity;
 
-	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
+	const R_c = sumRewards(carry);
 	const n = carry.n;
 
 	let best: ParcelBelief | null = null;
@@ -208,7 +209,7 @@ export function scoreDeliver(
 	if (carry.n === 0) return null;
 
 	const dp = dPerStep(metrics);
-	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
+	const R_c = sumRewards(carry);
 	const modifiers = directives?.modifiers ?? [];
 
 	let best: DeliverResult | null = null;
@@ -282,7 +283,7 @@ export function batchCandidates(
 	if (targets.length === 0) return [];
 
 	const dp = dPerStep(metrics);
-	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
+	const R_c = sumRewards(carry);
 	const forbidden = directives.forbiddenPickupParcelIds;
 	const results: BatchResult[] = [];
 
@@ -388,4 +389,33 @@ function buildGreedyChain(
 	totalSteps += delivDist;
 
 	return { reward: totalReward, totalSteps, firstParcel };
+}
+
+export function maxBatchScore(batches: BatchResult[]): number {
+	return batches.length > 0
+		? Math.max(...batches.map((b) => b.score))
+		: -Infinity;
+}
+
+export function carryValue(
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	beliefs: BeliefStore,
+	carry: CarryState,
+	metrics: ValuatorMetrics,
+	directives: Readonly<ActiveDirectives>,
+): number {
+	const d = scoreDeliver(map, bfs, carry, metrics, directives);
+	const batches = batchCandidates(
+		map,
+		bfs,
+		beliefs,
+		carry,
+		metrics,
+		directives,
+	);
+	return Math.max(
+		d?.score ?? 0,
+		batches.length > 0 ? maxBatchScore(batches) : 0,
+	);
 }
