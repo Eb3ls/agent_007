@@ -34,7 +34,7 @@ function makeMockLlm(responses: string[]): LlmClient {
 function makeCtx(): L1Ctx {
 	return {
 		map: createStaticMap(),
-		bdiClient: {
+		chatClient: {
 			say: async () => {},
 		} as unknown as import("../game_client.js").GameClient,
 		senderId: "server-agent",

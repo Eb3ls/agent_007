@@ -13,7 +13,7 @@ export class Assembler {
 
 	constructor(
 		private readonly bus: AgentBus,
-		private readonly bdiClient: GameClient,
+		private readonly chatClient: GameClient,
 		private readonly listener: Listener,
 		private readonly extractor: Extractor,
 		private readonly l1Executor?: L1Executor,
@@ -46,7 +46,7 @@ export class Assembler {
 		// Q&A: answer immediately via say.
 		if (record.opType === "qa" || record.answer) {
 			if (record.answer) {
-				await this.bdiClient.say(senderId, record.answer);
+				await this.chatClient.say(senderId, record.answer);
 				log.info(
 					"assembler",
 					`qa reply: ${record.answer.slice(0, 60)}`,

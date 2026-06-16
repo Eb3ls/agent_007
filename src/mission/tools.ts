@@ -22,7 +22,7 @@ export type L1DoneShape =
 
 export type L1Ctx = {
 	map: StaticMap;
-	bdiClient: GameClient;
+	chatClient: GameClient;
 	senderId: string;
 };
 
@@ -80,7 +80,7 @@ function execResolveTile(args: unknown, ctx: L1Ctx): XY | null {
 
 async function execSendMessage(args: unknown, ctx: L1Ctx): Promise<string> {
 	const a = args as { to?: string; msg: string };
-	await ctx.bdiClient.say(a.to ?? ctx.senderId, a.msg);
+	await ctx.chatClient.say(a.to ?? ctx.senderId, a.msg);
 	return "sent";
 }
 

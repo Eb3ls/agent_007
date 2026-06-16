@@ -10,7 +10,6 @@ export type QueuedMessage = {
 
 export class Listener {
 	private readonly queue: QueuedMessage[] = [];
-	private readonly seen = new Set<string>(); // dedup by hash(text+senderId)
 	private readonly armedTokens = new Set<string>();
 	private readonly allowlist: string; // SERVER_AGENT_NAME
 
@@ -21,7 +20,7 @@ export class Listener {
 		this.allowlist = allowedSenderName.toLowerCase();
 	}
 
-	/** Subscribe to msg/shout events on both clients. */
+	/** Register msg/shout handler on the given client. */
 	attachClient(client: GameClient): void {
 		client.onMsg((id, name, msg, reply) => {
 			this.handleIncoming(id, name, msg, reply);
@@ -43,10 +42,6 @@ export class Listener {
 		reply: ((response: string) => void) | null,
 	): void {
 		if (senderName.toLowerCase() !== this.allowlist) return;
-
-		const dedupeKey = `${senderId}:${text}`;
-		if (this.seen.has(dedupeKey)) return;
-		this.seen.add(dedupeKey);
 
 		const textLower = text.toLowerCase();
 		for (const token of this.armedTokens) {
