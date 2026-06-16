@@ -3,7 +3,10 @@ export type AgentSnapshot = {
 	carry: { count: number; reward: number; ids: string[] };
 	intentionSummary: {
 		kind: "goto" | "explore" | "pickup" | "deliver" | "push" | "idle";
+		targetId?: string;
+		targetXY?: { x: number; y: number };
 		spawnerIds?: number[];
+		missionId?: string;
 	};
 };
 
@@ -15,8 +18,6 @@ export type TeamExclusions = {
 
 export class Coordinator {
 	private readonly snapshots = new Map<string, AgentSnapshot>();
-	private readonly parcelTargets = new Map<string, string | null>();
-	private readonly gotoTargets = new Map<string, string | null>(); // agentId → "x,y"|null
 	private readonly deliveredScores = new Map<string, number>();
 	private readonly startTime = Date.now();
 	private _seedL = 0;
@@ -33,25 +34,6 @@ export class Coordinator {
 		agentId: string,
 	): { count: number; reward: number; ids: string[] } | null {
 		return this.snapshots.get(agentId)?.carry ?? null;
-	}
-
-	registerParcelTarget(agentId: string, targetId: string | null): void {
-		this.parcelTargets.set(agentId, targetId);
-	}
-
-	releaseParcelTarget(agentId: string): void {
-		this.parcelTargets.set(agentId, null);
-	}
-
-	registerGotoTarget(
-		agentId: string,
-		xy: { x: number; y: number } | null,
-	): void {
-		this.gotoTargets.set(agentId, xy ? `${xy.x},${xy.y}` : null);
-	}
-
-	releaseGotoTarget(agentId: string): void {
-		this.gotoTargets.set(agentId, null);
 	}
 
 	setSeedL(rate: number): void {
@@ -82,20 +64,17 @@ export class Coordinator {
 
 		for (const [id, snap] of this.snapshots) {
 			if (id === agentId) continue;
-			if (snap.intentionSummary.spawnerIds) {
-				for (const sid of snap.intentionSummary.spawnerIds)
+			const s = snap.intentionSummary;
+			if (s.spawnerIds) {
+				for (const sid of s.spawnerIds)
 					exploreExcludedSpawnIds.add(sid);
 			}
-		}
-
-		for (const [id, target] of this.parcelTargets) {
-			if (id === agentId || target === null) continue;
-			excludedParcelIds.add(target);
-		}
-
-		for (const [id, key] of this.gotoTargets) {
-			if (id === agentId || key === null) continue;
-			excludedGotoTargets.add(key);
+			if (s.kind === "pickup" && s.targetId) {
+				excludedParcelIds.add(s.targetId);
+			}
+			if (s.kind === "goto" && s.targetXY) {
+				excludedGotoTargets.add(`${s.targetXY.x},${s.targetXY.y}`);
+			}
 		}
 
 		return {

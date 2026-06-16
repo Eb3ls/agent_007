@@ -65,6 +65,7 @@ if (env.tokenLlm) {
 			l3Executor,
 		);
 
+		// periodically process messages from the listener queue
 		void (async () => {
 			while (true) {
 				await assembler.processPending();

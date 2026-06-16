@@ -25,9 +25,14 @@ import {
 	shouldReconsider,
 	shouldReconsiderPDDLForParcel,
 } from "./reconsider.js";
+import {
+	activeScoreCap,
+	batchCandidates,
+	scoreDeliver,
+	type ValuatorMetrics,
+} from "./valuator.js";
 import { DirectiveHandler, type ActiveDirectives } from "../team/directives.js";
 import { tileId, idToXY, spawnsWithinRadius } from "../static_map.js";
-import { activeScoreCap, type ValuatorMetrics } from "./valuator.js";
 import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import { cfg as appCfg, parseDecayInterval } from "../config.js";
 import type { Coordinator } from "../team/coordinator.js";
@@ -39,6 +44,7 @@ import { makeIntention } from "./intention.js";
 import { log } from "../logger.js";
 
 const M_EMA_ALPHA = 0.1;
+let mapLogged = false;
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -159,26 +165,62 @@ export class AgentCore {
 	): Promise<ReflexResult> {
 		const map = this.client.staticMap;
 
-		// Step 4a: deliver if on delivery tile.
-		if (shouldDrop(map, ctx.selfId, ctx.carry.n > 0)) {
-			const deliveredPts = ctx.carry.rewards.reduce((a, b) => a + b, 0);
-			const dropped = await this.client.putdown();
-			applyDelivery(this.beliefs, cfg.myId);
-			this.bus?.emitCarryChange(this.id);
-			this.coordinator?.recordDelivery(this.id, deliveredPts);
-			deliveryCount += dropped.length;
-			log.ok(
-				"deliver",
-				`putdown=${dropped.length} cleared=${ctx.carry.n} total_delivered=${deliveryCount}`,
+		// Step 4a: guarded delivery — deliver only if on the best delivery tile and
+		// the value arithmetic agrees (not mid-batch, not a STAGE handoff/putDown).
+		if (shouldDrop(map, ctx.selfId, ctx.carry.n > 0) && !state.stage) {
+			const metrics: ValuatorMetrics = {
+				M: this.M,
+				L: this.coordinator?.getL() ?? 0,
+				decayIntervalMs: cfg.decayIntervalMs,
+			};
+			const deliverResult = scoreDeliver(
+				map,
+				ctx.bfs,
+				ctx.carry,
+				metrics,
+				state,
 			);
-			if (intention?.kind === "deliver" && intention.missionId) {
-				this.bus?.emitRelease({
-					missionId: intention.missionId,
-					scope: intention.releaseScope ?? "global",
-				});
-				intention = null;
+			const onBestTile =
+				deliverResult !== null &&
+				deliverResult.tile.x === selfX &&
+				deliverResult.tile.y === selfY;
+			if (onBestTile) {
+				const batches = batchCandidates(
+					map,
+					ctx.bfs,
+					this.beliefs,
+					ctx.carry,
+					metrics,
+					state,
+				);
+				const batchMax =
+					batches.length > 0
+						? Math.max(...batches.map((b) => b.score))
+						: -Infinity;
+				if (batchMax <= deliverResult!.score) {
+					const deliveredPts = ctx.carry.rewards.reduce(
+						(a, b) => a + b,
+						0,
+					);
+					const dropped = await this.client.putdown();
+					applyDelivery(this.beliefs, cfg.myId);
+					this.bus?.emitCarryChange(this.id);
+					this.coordinator?.recordDelivery(this.id, deliveredPts);
+					deliveryCount += dropped.length;
+					log.ok(
+						"deliver",
+						`putdown=${dropped.length} cleared=${ctx.carry.n} total_delivered=${deliveryCount}`,
+					);
+					if (intention?.kind === "deliver" && intention.missionId) {
+						this.bus?.emitRelease({
+							missionId: intention.missionId,
+							scope: intention.releaseScope ?? "global",
+						});
+						intention = null;
+					}
+					return { skip: true, intention, deliveryCount };
+				}
 			}
-			return { skip: true, intention, deliveryCount };
 		}
 
 		// Step 4b: score-cap selective putdown — drop parcels over the active cap anywhere.
@@ -206,18 +248,50 @@ export class AgentCore {
 			}
 		}
 
-		// Step 4c: pickup at feet if not forbidden.
+		// Step 4c: guarded free-grab — pick up parcel at feet only if mission-safe.
+		// G1: not in a STAGE sequence. G2: not explicitly forbidden. G3: not over
+		// active score-cap (else 4b re-drops it → churn). G4: not decayed to zero.
+		// G5: value test — grabbing must not lower the best achievable carry value.
 		const parcelAtFeet = parcelHere(this.beliefs.parcels, selfX, selfY);
 		if (
 			parcelAtFeet &&
-			!state.forbiddenPickupParcelIds.has(parcelAtFeet.id)
+			!state.stage &&
+			!state.forbiddenPickupParcelIds.has(parcelAtFeet.id) &&
+			(cap === null || parcelAtFeet.reward <= cap) &&
+			parcelAtFeet.reward > 0
 		) {
-			const picked = await this.client.pickup();
-			applyPickupResult(this.beliefs, picked, cfg.myId);
-			clearUncarriedParcelsAt(this.beliefs, selfX, selfY);
-			this.bus?.emitCarryChange(this.id);
-			log.ok("pickup", `picked=${picked.length}`);
-			return { skip: true, intention, deliveryCount };
+			const metrics4c: ValuatorMetrics = {
+				M: this.M,
+				L: this.coordinator?.getL() ?? 0,
+				decayIntervalMs: cfg.decayIntervalMs,
+			};
+			const V = (c: CarryState): number => {
+				const d = scoreDeliver(map, ctx.bfs, c, metrics4c, state);
+				const bs = batchCandidates(
+					map,
+					ctx.bfs,
+					this.beliefs,
+					c,
+					metrics4c,
+					state,
+				);
+				const bMax =
+					bs.length > 0 ? Math.max(...bs.map((b) => b.score)) : 0;
+				return Math.max(d?.score ?? 0, bMax);
+			};
+			const carryAfterGrab: CarryState = {
+				...ctx.carry,
+				n: ctx.carry.n + 1,
+				rewards: [...ctx.carry.rewards, parcelAtFeet.reward],
+			};
+			if (V(carryAfterGrab) >= V(ctx.carry)) {
+				const picked = await this.client.pickup();
+				applyPickupResult(this.beliefs, picked, cfg.myId);
+				clearUncarriedParcelsAt(this.beliefs, selfX, selfY);
+				this.bus?.emitCarryChange(this.id);
+				log.ok("pickup", `picked=${picked.length}`);
+				return { skip: true, intention, deliveryCount };
+			}
 		}
 
 		return { skip: false, intention, deliveryCount };
@@ -329,9 +403,6 @@ export class AgentCore {
 						scope: intention.releaseScope ?? "global",
 					});
 				}
-				this.coordinator?.releaseParcelTarget(this.id);
-				if (intention.kind === "goto")
-					this.coordinator?.releaseGotoTarget(this.id);
 				intention = null;
 			}
 		}
@@ -381,9 +452,6 @@ export class AgentCore {
 						"intent",
 						`sound-fail kind=${intention.kind} reason=unreachable`,
 					);
-					this.coordinator?.releaseParcelTarget(this.id);
-					if (intention.kind === "goto")
-						this.coordinator?.releaseGotoTarget(this.id);
 					intention = null;
 				}
 			}
@@ -440,19 +508,6 @@ export class AgentCore {
 				rewardAvg: cfg.rewardAvg,
 				...(teamExclusions && { teamExclusions }),
 			});
-
-			this.coordinator?.registerParcelTarget(
-				this.id,
-				intention?.targetId ?? null,
-			);
-			if (intention?.kind === "goto") {
-				this.coordinator?.registerGotoTarget(
-					this.id,
-					intention.targetXY,
-				);
-			} else {
-				this.coordinator?.releaseGotoTarget(this.id);
-			}
 
 			if (intention) {
 				const changed =
@@ -544,10 +599,13 @@ export class AgentCore {
 			selfY = startY;
 
 		const map = this.client.staticMap;
-		log.info(
-			"map",
-			`tiles=${map.tiles.size} delivery_zones=${map.deliveryTileIds.length}`,
-		);
+		if (!mapLogged) {
+			mapLogged = true;
+			log.info(
+				"map",
+				`tiles=${map.tiles.size} delivery_zones=${map.deliveryTileIds.length}`,
+			);
+		}
 		log.info(this.id, `starting loop at (${selfX},${selfY})`);
 
 		if (!this.client.config)
@@ -597,12 +655,6 @@ export class AgentCore {
 			this.directives.apply();
 			const state = this.directives.state;
 
-			if (state.paused && state.pauseMissionId === null)
-				log.warn(
-					"pause",
-					"orphan pause — no missionId (RESUME required)",
-				);
-
 			const ctx = this.buildTickContext(selfX, selfY, state, cfg);
 
 			// Pause: idle this tick.
@@ -610,29 +662,6 @@ export class AgentCore {
 				await sleep(appCfg.loop.no_step_wait_ms);
 				continue;
 			}
-
-			// Publish position + current target for team coordination.
-			const intentionKind = intention?.kind ?? "idle";
-			const spawnerIds =
-				intentionKind === "explore" && intention
-					? spawnsWithinRadius(
-							map,
-							intention.targetXY,
-							cfg.observationDistance,
-						)
-					: undefined;
-			this.coordinator?.publish(this.id, {
-				pos: { x: selfX, y: selfY },
-				carry: {
-					count: ctx.carry.n,
-					reward: ctx.carry.rewards.reduce((a, b) => a + b, 0),
-					ids: ctx.carry.ids,
-				},
-				intentionSummary: {
-					kind: intentionKind,
-					...(spawnerIds && { spawnerIds }),
-				},
-			});
 
 			// Reflexes: deliver / score-cap / pickup.
 			const reflex = await this.runReflexes(
@@ -671,6 +700,38 @@ export class AgentCore {
 					crateCtx,
 				);
 			}
+
+			// Publish finalized intention for team coordination (next tick's exclusionsFor).
+			const intentionKind = intention?.kind ?? "idle";
+			const spawnerIds =
+				intentionKind === "explore" && intention
+					? spawnsWithinRadius(
+							map,
+							intention.targetXY,
+							cfg.observationDistance,
+						)
+					: undefined;
+			this.coordinator?.publish(this.id, {
+				pos: { x: selfX, y: selfY },
+				carry: {
+					count: ctx.carry.n,
+					reward: ctx.carry.rewards.reduce((a, b) => a + b, 0),
+					ids: ctx.carry.ids,
+				},
+				intentionSummary: {
+					kind: intentionKind,
+					...(intention?.targetId !== undefined && {
+						targetId: intention.targetId,
+					}),
+					...(intention?.targetXY !== undefined && {
+						targetXY: intention.targetXY,
+					}),
+					...(spawnerIds && { spawnerIds }),
+					...(intention?.missionId !== undefined && {
+						missionId: intention.missionId,
+					}),
+				},
+			});
 
 			// Periodic competitor log.
 			if (loopCount % 50 === 0) {
