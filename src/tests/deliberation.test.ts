@@ -271,6 +271,65 @@ describe("deliberate — golden selection (characterization)", () => {
 		expect(r.intention?.kind).toBe("pickup");
 		expect(r.intention?.targetXY).toEqual({ x: 4, y: 0 });
 	});
+
+	it("8a.9 lone parcel under mult=0@count==1, no other pickup → NOT deliver (hold + explore)", () => {
+		// carry n=1, modifier zeroes reward when delivering exactly 1. deliver score = 0.
+		// No reachable parcels, so explore (score -distance) is the only other option.
+		// Without the score>0 gate, deliver(0) > explore(-dist) and the agent dumps the
+		// parcel for 0 reward. The gate must suppress the deliver candidate.
+		const directives: ActiveDirectives = {
+			...emptyDirectives(),
+			modifiers: [
+				{
+					selector: { on: "deliver" },
+					effect: { mult: 0 },
+					condition: { carryCountEquals: 1 },
+					lifetime: "persistent",
+					missionId: "z1",
+					target: "both",
+				},
+			],
+		};
+		const r = deliberate(
+			makeContext({
+				map: corridor(),
+				selfX: 5,
+				carry: carryOf([30]),
+				directives,
+				observationDistance: 1,
+			}),
+		);
+		expect(r.intention?.kind).not.toBe("deliver");
+		expect(r.intention?.kind).toBe("explore");
+	});
+
+	it("8a.10 carry n=2 under mult=0@count==1 → condition unmet, full reward → deliver", () => {
+		// Contrast with 8a.9: the mult=0 only fires at carryCountEquals:1. With n=2 the
+		// condition is unmet, deliver score is positive, so delivery proceeds normally.
+		const directives: ActiveDirectives = {
+			...emptyDirectives(),
+			modifiers: [
+				{
+					selector: { on: "deliver" },
+					effect: { mult: 0 },
+					condition: { carryCountEquals: 1 },
+					lifetime: "persistent",
+					missionId: "z1",
+					target: "both",
+				},
+			],
+		};
+		const r = deliberate(
+			makeContext({
+				map: corridor(),
+				selfX: 5,
+				carry: carryOf([30, 30]),
+				directives,
+				observationDistance: 1,
+			}),
+		);
+		expect(r.intention?.kind).toBe("deliver");
+	});
 });
 
 describe("deliberate — stability (post-collapse)", () => {

@@ -97,7 +97,10 @@ export class L1Executor {
 				}
 				const coords = doneArgs.resolvedCoords;
 				if (coords && coords.length > 0) {
-					log.ok("l1_executor", `done: resolved ${coords.length} coords`);
+					log.ok(
+						"l1_executor",
+						`done: resolved ${coords.length} coords`,
+					);
 					return { kind: "modifier", coords };
 				}
 				log.warn("l1_executor", "done: no coords");
@@ -126,7 +129,10 @@ export class L1Executor {
 			log.info("l1_executor", "max steps exhausted: answered");
 			return { kind: "answered" };
 		}
-		log.error("l1_executor", `max steps exhausted (${cfg.mission.l1_max_steps}) — failing`);
+		log.error(
+			"l1_executor",
+			`max steps exhausted (${cfg.mission.l1_max_steps}) — failing`,
+		);
 		return { kind: "failed" };
 	}
 }

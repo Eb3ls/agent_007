@@ -165,6 +165,8 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 		directives,
 		context.crossCtx,
 	);
+	// scoreDeliver already gates non-positive scores to null, so a truthy result is
+	// always a worthwhile delivery (no > 0 check needed here).
 	if (deliverResult) {
 		candidates.push({
 			intention: makeIntention(

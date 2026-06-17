@@ -7,6 +7,7 @@ node_modules/
 # Environment variables
 .env*
 !.env.example
+config.yaml
 .editorconfig
 
 # Claude Code (personal config)

@@ -49,6 +49,8 @@ export class Assembler {
 			return;
 		}
 
+		log.debug("assembler", `missionRecord: ${JSON.stringify(record)}`);
+
 		if (await this.handleQa(record, senderId)) return;
 		if (this.handleStateQuery(record)) return;
 
@@ -241,9 +243,10 @@ export class Assembler {
 		this.emitBoth(directive);
 		if (directive.kind === "MODIFIER") {
 			const sel = directive.selector;
-			const selectorDesc = sel.on === "goto" || sel.on === "cross"
-				? `on=${sel.on} count=${sel.on === "goto" ? sel.coords.length : sel.tiles.length}`
-				: `on=${sel.on}`;
+			const selectorDesc =
+				sel.on === "goto" || sel.on === "cross"
+					? `on=${sel.on} count=${sel.on === "goto" ? sel.coords.length : sel.tiles.length}`
+					: `on=${sel.on}`;
 			log.info(
 				"assembler",
 				`MODIFIER ${selectorDesc} missionId=${missionId} lifetime=${record.lifetime} scope=${scopeOf(record.target)}`,
@@ -290,7 +293,13 @@ export class Assembler {
 	): Directive | null {
 		let sel = record.selector;
 		const effect = { ...record.effect };
-		if (!effect.add && !effect.mult && record.bonus !== null) {
+		// Check for undefined explicitly: a legitimate effect.mult=0 (e.g. "0 of the
+		// standard reward") is falsy but must NOT be treated as an absent multiplier.
+		if (
+			effect.add === undefined &&
+			effect.mult === undefined &&
+			record.bonus !== null
+		) {
 			effect.add = record.bonus;
 		}
 

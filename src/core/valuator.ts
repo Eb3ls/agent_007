@@ -342,7 +342,10 @@ export function scorePickup(
 
 /**
  * Absolute deliver score per §5.3.
- * Scores ALL reachable delivery tiles with Σ_effects and returns the best.
+ * Scores ALL reachable delivery tiles with Σ_effects and returns the best
+ * WORTHWHILE delivery, or null. A score ≤ 0 (e.g. a count-multiplier mult=0 on a
+ * lone parcel) is not actionable, so it is gated here at the source: every consumer
+ * gets a null instead of having to remember a > 0 check.
  * Score_deliver(T) = Σ_effects(R_c, T) − n·d·M·dist(T)
  */
 export function scoreDeliver(
@@ -395,7 +398,7 @@ export function scoreDeliver(
 		best = { tile: { x, y, id }, score };
 	}
 
-	return best;
+	return best && best.score > 0 ? best : null;
 }
 
 /**
@@ -494,6 +497,9 @@ export function batchCandidates(
 
 		const totalReward = R_c + chain.reward;
 		const score = mult * totalReward - targetCount * dp * chain.totalSteps;
+		// Gate non-positive batches at the source (same invariant as scoreDeliver):
+		// a chain whose travel cost exceeds its reward is not an actionable candidate.
+		if (score <= 0) continue;
 		results.push({
 			targetCount,
 			mult,

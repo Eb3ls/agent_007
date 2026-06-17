@@ -124,7 +124,9 @@ export class Extractor {
 					answer: parsed.answer ?? null,
 					token: parsed.token ?? null,
 					...(predicate !== undefined ? { predicate } : {}),
-					...(parsed.maxDist != null ? { maxDist: parsed.maxDist } : {}),
+					...(parsed.maxDist != null
+						? { maxDist: parsed.maxDist }
+						: {}),
 					raw: text,
 				};
 				log.info(

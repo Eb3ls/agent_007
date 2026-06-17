@@ -120,6 +120,63 @@ describe("Assembler — STAGE directive", () => {
 	});
 });
 
+describe("Assembler — buildModifier effect normalisation", () => {
+	function modifierJson(
+		effect: Record<string, number>,
+		bonus: number | null,
+	): string {
+		return JSON.stringify({
+			level: "L2",
+			opType: "MODIFIER",
+			selector: { on: "deliver" },
+			effect,
+			condition: { carryCountEquals: 1 },
+			lifetime: "persistent",
+			target: "both",
+			bonus,
+			answer: null,
+			token: null,
+		});
+	}
+
+	function emittedModifier(dirs: Directive[]) {
+		return dirs.find((d) => d.kind === "MODIFIER") as
+			| Extract<Directive, { kind: "MODIFIER" }>
+			| undefined;
+	}
+
+	it("mult=0 with a coexisting bonus → keeps mult:0, does NOT overwrite with add", async () => {
+		// Latent bug: `!effect.mult` treats 0 as absent, so a bonus would clobber the
+		// zero multiplier with an add. The undefined-check guard must preserve mult:0.
+		const { bdiClient, llm, assembler, bdiDirs } = makeSetup();
+
+		llm.queueResponses(modifierJson({ mult: 0 }, 50));
+		bdiClient.triggerMsg(
+			"god-id",
+			"God",
+			"deliver stacks of exactly 1 to get 0 of the standard reward",
+		);
+		await assembler.processPending();
+
+		const mod = emittedModifier(bdiDirs);
+		expect(mod).toBeDefined();
+		expect(mod!.effect.mult).toBe(0);
+		expect(mod!.effect.add).toBeUndefined();
+	});
+
+	it("empty effect with a bonus → add defaults to bonus (preserved behaviour)", async () => {
+		const { bdiClient, llm, assembler, bdiDirs } = makeSetup();
+
+		llm.queueResponses(modifierJson({}, 50));
+		bdiClient.triggerMsg("god-id", "God", "bonus 50 for delivering one");
+		await assembler.processPending();
+
+		const mod = emittedModifier(bdiDirs);
+		expect(mod).toBeDefined();
+		expect(mod!.effect.add).toBe(50);
+	});
+});
+
 describe("Assembler — PAUSE signal-token resume", () => {
 	it("arms extracted token on PAUSE; signal message fires RESUME", async () => {
 		const { bdiClient, llm, assembler, bdiDirs, llmDirs } = makeSetup();

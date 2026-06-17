@@ -273,6 +273,8 @@ export class AgentCore {
 	}
 
 	// Reflex: putdown if standing on the best delivery tile and no batch option scores higher.
+	// The net-positive gate lives in scoreDeliver (returns null on score ≤ 0), so a non-null
+	// deliverResult is always worthwhile — no explicit > 0 check needed here.
 	private async tryGuardedDeliver(
 		ctx: TickContext,
 		selfX: number,

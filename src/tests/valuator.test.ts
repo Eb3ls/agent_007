@@ -416,9 +416,8 @@ describe("modifier: deliver mult=0 at carryCountEquals forces deliver score = 0"
 			noDecayMetrics(),
 			directives,
 		);
-		// score = 0*20 - 0 = 0 (no decay)
-		expect(result).not.toBeNull();
-		expect(result!.score).toBeLessThanOrEqual(0);
+		// score = 0*20 - 0 = 0 → gated to null at source (not actionable).
+		expect(result).toBeNull();
 	});
 });
 
@@ -514,9 +513,9 @@ describe("batchCandidates — count-multiplier valley fix", () => {
 			],
 		};
 
-		// deliver-now: score = 0*30 = 0 ≤ 0 → don't deliver
+		// deliver-now: score = 0*30 = 0 ≤ 0 → gated to null (not actionable)
 		const deliverNow = scoreDeliver(map, bfs, carry, metrics, directives);
-		expect(deliverNow!.score).toBeLessThanOrEqual(0);
+		expect(deliverNow).toBeNull();
 
 		// pickup p2 score > 0 → agent should pick up p2 instead
 		const pickup = scorePickup(
@@ -528,7 +527,43 @@ describe("batchCandidates — count-multiplier valley fix", () => {
 			directives,
 		);
 		expect(pickup).not.toBeNull();
-		expect(pickup!.utility).toBeGreaterThan(deliverNow!.score);
+		expect(pickup!.utility).toBeGreaterThan(0);
+	});
+
+	it("non-positive batch (travel cost > reward) is gated out at source", () => {
+		const map = buildWideMap();
+		// Agent at (4,0); 3 low-reward parcels at (3,0),(2,0),(1,0); delivery at (0,0).
+		// Chain self→3→2→1→delivery = 4 steps. Heavy decay (dp=0.5) with mult=1:
+		// score = 1*3 - 3*0.5*4 = 3 - 6 = -3 ≤ 0 → must NOT be a candidate.
+		const bfs = bfsFromSelf(map, 4, 0);
+		const beliefs = createBeliefStore();
+		beliefs.parcels.set("pA", makeParcel("pA", 3, 0, 1));
+		beliefs.parcels.set("pB", makeParcel("pB", 2, 0, 1));
+		beliefs.parcels.set("pC", makeParcel("pC", 1, 0, 1));
+
+		const directives: ActiveDirectives = {
+			...emptyDirectives(),
+			modifiers: [
+				{
+					selector: { on: "deliver" },
+					condition: { carryCountAtLeast: 3 },
+					effect: { mult: 1 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+		};
+
+		const batches = batchCandidates(
+			map,
+			bfs,
+			beliefs,
+			emptyCarry(),
+			decayMetrics(500, 1000),
+			directives,
+		);
+		expect(batches.find((b) => b.targetCount === 3)).toBeUndefined();
 	});
 });
 

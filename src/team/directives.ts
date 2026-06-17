@@ -122,7 +122,10 @@ export class DirectiveHandler {
 		}
 		if (directives.length > 0) {
 			const summary = this.getAppliedSummary(directives.length);
-			log.info("directives", `accepted ${directives.length} mission(s) — ${summary}`);
+			log.info(
+				"directives",
+				`accepted ${directives.length} mission(s) — ${summary}`,
+			);
 		}
 	}
 
@@ -134,7 +137,8 @@ export class DirectiveHandler {
 		const stageNow = this._stages.length;
 		const parts: string[] = [];
 		if (modifiersNow > 0) parts.push(`modifiers=${modifiersNow}`);
-		if (pausedNow > 0) parts.push(`paused-by=${Array.from(this._pausedBy).join(",")}`);
+		if (pausedNow > 0)
+			parts.push(`paused-by=${Array.from(this._pausedBy).join(",")}`);
 		if (stageNow > 0) parts.push(`stage=${stageNow}`);
 		return parts.join(" ");
 	}
