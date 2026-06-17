@@ -3,7 +3,6 @@ import { StubLlmClient } from "./stubs/stub_llm_client.js";
 import type { Directive } from "../team/directives.js";
 import { Extractor } from "../mission/extractor.js";
 import { Assembler } from "../mission/assembler.js";
-import { createStaticMap } from "../static_map.js";
 import { Listener } from "../mission/listener.js";
 import { AgentBus } from "../team/agent_bus.js";
 import { describe, expect, it } from "vitest";
@@ -30,7 +29,7 @@ function makeSetup() {
 	const bus = new AgentBus();
 	const bdiClient = new StubGameClient("bdi");
 	const llm = new StubLlmClient();
-	const extractor = new Extractor(llm as never, createStaticMap());
+	const extractor = new Extractor(llm as never);
 	const listener = new Listener(bus, "God");
 	listener.attachClient(bdiClient as never);
 	const assembler = new Assembler(
@@ -47,6 +46,79 @@ function makeSetup() {
 	});
 	return { bus, bdiClient, llm, assembler, bdiDirs, llmDirs };
 }
+
+describe("Assembler — STAGE directive", () => {
+	it("STAGE with predicate emits STAGE+PAUSE with predicate target", async () => {
+		const { bdiClient, llm, assembler, bdiDirs } = makeSetup();
+
+		llm.queueResponses(
+			JSON.stringify({
+				level: "L3",
+				opType: "STAGE",
+				selector: { on: "deliver" },
+				effect: {},
+				condition: null,
+				lifetime: "one-shot",
+				target: "both",
+				coords: null,
+				bonus: null,
+				answer: null,
+				token: null,
+				predicate: ["odd-row"],
+			}),
+		);
+		bdiClient.triggerMsg(
+			"god-id",
+			"God",
+			"mettetevi su una tile con y dispari",
+		);
+		await assembler.processPending();
+
+		const stage = bdiDirs.find(
+			(d) => d.kind === "OVERRIDE" && d.op === "STAGE",
+		) as Extract<Directive, { op: "STAGE" }> | undefined;
+		expect(stage).toBeDefined();
+		expect(stage!.target).toEqual(["odd-row"]);
+
+		const pause = bdiDirs.find(
+			(d) => d.kind === "OVERRIDE" && d.op === "PAUSE",
+		);
+		expect(pause).toBeDefined();
+	});
+
+	it("STAGE with no coords and no predicate logs warning and only emits PAUSE", async () => {
+		const { bdiClient, llm, assembler, bdiDirs } = makeSetup();
+
+		llm.queueResponses(
+			JSON.stringify({
+				level: "L3",
+				opType: "STAGE",
+				selector: { on: "deliver" },
+				effect: {},
+				condition: null,
+				lifetime: "one-shot",
+				target: "both",
+				coords: null,
+				bonus: null,
+				answer: null,
+				token: null,
+				predicate: null,
+			}),
+		);
+		bdiClient.triggerMsg("god-id", "God", "wait here");
+		await assembler.processPending();
+
+		const stage = bdiDirs.find(
+			(d) => d.kind === "OVERRIDE" && d.op === "STAGE",
+		);
+		expect(stage).toBeUndefined();
+
+		const pause = bdiDirs.find(
+			(d) => d.kind === "OVERRIDE" && d.op === "PAUSE",
+		);
+		expect(pause).toBeDefined();
+	});
+});
 
 describe("Assembler — PAUSE signal-token resume", () => {
 	it("arms extracted token on PAUSE; signal message fires RESUME", async () => {

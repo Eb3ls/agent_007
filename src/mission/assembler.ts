@@ -143,21 +143,29 @@ export class Assembler {
 		missionId: string,
 		scope: "global" | "per-agent",
 	): void {
-		const targets: XY[] = record.selector.coords ?? [];
-		if (targets.length > 0) {
+		const coords: XY[] = record.selector.coords ?? [];
+		const predicate = record.predicate ?? [];
+		if (coords.length > 0) {
 			this.emitBoth({
 				kind: "OVERRIDE",
 				op: "STAGE",
-				target: targets,
+				target: coords,
+				missionId,
+			});
+		} else if (predicate.length > 0) {
+			this.emitBoth({
+				kind: "OVERRIDE",
+				op: "STAGE",
+				target: predicate,
 				missionId,
 			});
 		} else {
 			log.warn(
 				"assembler",
-				`STAGE has no resolved coords — pausing in place missionId=${missionId}`,
+				`STAGE has no target — pausing in place missionId=${missionId}`,
 			);
 		}
-		// Always pause: navigation target may be unresolvable but agent must stop.
+		// Always pause: agent must stop regardless of whether target resolved.
 		this.emitBoth({ kind: "OVERRIDE", op: "PAUSE", missionId });
 		if (record.token) this.armResume(record.token, missionId, scope);
 		log.info(

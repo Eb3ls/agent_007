@@ -1,10 +1,21 @@
 export type XY = { x: number; y: number };
 
-export type Predicate =
-	| { rowParity: "odd" | "even" }
-	| { row: number }
-	| { col: number }
-	| { nearXY: XY; radius: number };
+export type PredicateToken =
+	| "odd-row"
+	| "even-row"
+	| "odd-col"
+	| "even-col"
+	| "odd-tile"
+	| "even-tile"
+	| "delivery"
+	| "spawn"
+	| "leftmost"
+	| "rightmost"
+	| "topmost"
+	| "bottommost"
+	| "center";
+
+export type Predicate = PredicateToken[];
 
 export type TargetSelector =
 	| { on: "goto"; coords: XY[] }

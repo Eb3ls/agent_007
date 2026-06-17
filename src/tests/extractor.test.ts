@@ -7,7 +7,6 @@
  */
 import { createLlmClient } from "../mission/llm_client.js";
 import { Extractor } from "../mission/extractor.js";
-import { createStaticMap } from "../static_map.js";
 import { describe, expect, it, vi } from "vitest";
 import "dotenv/config";
 
@@ -27,7 +26,6 @@ function makeExtractor(): Extractor {
 			apiToken: process.env.LLM_API_TOKEN ?? "",
 			model: process.env.LLM_MODEL!,
 		}),
-		createStaticMap(),
 	);
 }
 
@@ -171,5 +169,16 @@ maybeDescribe("Extractor — live LLM", () => {
 		expect(r!.opType).toBe("MODIFIER");
 		expect(r!.selector.on).toBe("goto");
 		expect(r!.bonus).toBe(10);
+	});
+
+	// STAGE with parity predicate
+	it("STAGE odd-row emits predicate field", async () => {
+		const r = await makeExtractor().extract(
+			'Mettetevi entrambi su una tile con y dispari e aspettate il mio "via".',
+		);
+		expect(r).not.toBeNull();
+		expect(r!.opType).toBe("STAGE");
+		expect(r!.predicate).toEqual(["odd-row"]);
+		expect(r!.token).toBe("via");
 	});
 });

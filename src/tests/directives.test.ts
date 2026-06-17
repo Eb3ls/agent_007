@@ -204,4 +204,12 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 		h.releaseByMissionId("m2");
 		expect(h.state.paused).toBe(false);
 	});
+
+	it("OVERRIDE STAGE with predicate target stores correctly", () => {
+		const h = new DirectiveHandler();
+		h.enqueue({ kind: "OVERRIDE", op: "STAGE", target: ["odd-row"] });
+		h.apply();
+		expect(h.state.stage).not.toBeNull();
+		expect(h.state.stage!.target).toEqual(["odd-row"]);
+	});
 });

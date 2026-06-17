@@ -41,7 +41,7 @@ if (env.tokenLlm) {
 	if (env.serverAgentName) {
 		// env.llm is non-null whenever env.tokenLlm is set
 		const llmClient = createLlmClient(env.llm!);
-		const extractor = new Extractor(llmClient, clientBdi.staticMap);
+		const extractor = new Extractor(llmClient);
 		const l1Executor = new L1Executor(llmClient, {
 			map: clientBdi.staticMap,
 			chatClient: clientLlm,

@@ -1,6 +1,5 @@
 import { buildSystemPrompt, buildExtractionPrompt } from "./prompts.js";
-import { resolveLabel } from "./tile_resolver.js";
-import type { StaticMap } from "../static_map.js";
+import type { PredicateToken } from "../team/directives.js";
 import type { LlmClient } from "./llm_client.js";
 import { createHash } from "node:crypto";
 import { log } from "../logger.js";
@@ -37,11 +36,13 @@ export type MissionRecord = {
 	bonus: number | null;
 	answer: string | null;
 	token: string | null;
+	predicate?: PredicateToken[];
 	raw: string;
 };
 
 type ParsedResponse = Partial<MissionRecord> & {
 	coords?: Array<XY | string> | null;
+	predicate?: PredicateToken[] | null;
 	selector?: Partial<MissionRecord["selector"]> & {
 		coords?: Array<XY | string> | null;
 	};
@@ -57,10 +58,7 @@ function cacheKey(text: string): string {
 export class Extractor {
 	private readonly cache = new Map<string, MissionRecord | null>();
 
-	constructor(
-		private readonly llm: LlmClient,
-		private readonly map: StaticMap,
-	) {}
+	constructor(private readonly llm: LlmClient) {}
 
 	async extract(text: string): Promise<MissionRecord | null> {
 		const key = cacheKey(text);
@@ -89,11 +87,14 @@ export class Extractor {
 					(parsed.coords?.length
 						? parsed.coords
 						: parsed.selector?.coords) ?? [];
-				const resolvedCoords = rawCoords
-					.map((c) =>
-						typeof c === "string" ? resolveLabel(c, this.map) : c,
-					)
-					.filter((c): c is XY => c !== null);
+				const resolvedCoords = rawCoords.filter(
+					(c): c is XY => typeof c !== "string",
+				);
+
+				const predicate =
+					parsed.predicate && parsed.predicate.length > 0
+						? parsed.predicate
+						: undefined;
 
 				record = {
 					level,
@@ -113,11 +114,12 @@ export class Extractor {
 					bonus: parsed.bonus ?? null,
 					answer: parsed.answer ?? null,
 					token: parsed.token ?? null,
+					...(predicate !== undefined ? { predicate } : {}),
 					raw: text,
 				};
 				log.info(
 					"extractor",
-					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} lifetime=${record.lifetime} bonus=${record.bonus}${record.effect.mult !== undefined ? ` mult=${record.effect.mult}` : ""}${record.effect.add !== undefined ? ` add=${record.effect.add}` : ""}${record.token ? ` token=${record.token}` : ""}${record.condition ? ` condition=${JSON.stringify(record.condition)}` : ""}`,
+					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} predicate=${predicate ? JSON.stringify(predicate) : "none"} lifetime=${record.lifetime} bonus=${record.bonus}${record.effect.mult !== undefined ? ` mult=${record.effect.mult}` : ""}${record.effect.add !== undefined ? ` add=${record.effect.add}` : ""}${record.token ? ` token=${record.token}` : ""}${record.condition ? ` condition=${JSON.stringify(record.condition)}` : ""}`,
 				);
 			}
 		} catch (err) {
