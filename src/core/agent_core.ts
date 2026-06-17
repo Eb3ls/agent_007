@@ -1034,29 +1034,18 @@ export class AgentCore {
 
 			const ctx = this.buildTickContext(selfX, selfY, state, cfg);
 
-			// Pause: idle this tick.
-			if (state.paused) {
+			// Pause: idle this tick — UNLESS a STAGE is pending. A stage mission
+			// pauses immediately (red light), but the agent must first navigate to
+			// its hold position; the pause only holds it once staged (the stage is
+			// cleared on arrival, so the next tick idles here).
+			if (state.paused && !state.stage) {
 				await sleep(appCfg.loop.no_step_wait_ms);
 				continue;
 			}
 
-			// Reflexes: guarded deliver / score-cap drop / guarded grab.
-			const reflex = await this.runReflexes(
-				ctx,
-				selfX,
-				selfY,
-				state,
-				intention,
-				cfg,
-				deliveryCount,
-			);
-			deliveryCount = reflex.deliveryCount;
-			intention = reflex.intention;
-			// A fired reflex skips the rest of the tick, so deliberation never runs
-			// the same tick — reflex and deliberate never double-score.
-			if (reflex.skip) continue;
-
-			// Stage override or deliberation.
+			// Stage takes priority over reflexes/deliberation: drive to the hold
+			// position (and run thenAct on arrival). Reflexes stay suppressed while
+			// staging so the agent just goes there and holds.
 			if (state.stage) {
 				const stage = await this.runStagePhase(
 					ctx,
@@ -1069,6 +1058,22 @@ export class AgentCore {
 				intention = stage.intention;
 				if (stage.skip) continue;
 			} else {
+				// Reflexes: guarded deliver / score-cap drop / guarded grab.
+				const reflex = await this.runReflexes(
+					ctx,
+					selfX,
+					selfY,
+					state,
+					intention,
+					cfg,
+					deliveryCount,
+				);
+				deliveryCount = reflex.deliveryCount;
+				intention = reflex.intention;
+				// A fired reflex skips the rest of the tick, so deliberation never runs
+				// the same tick — reflex and deliberate never double-score.
+				if (reflex.skip) continue;
+
 				intention = await this.runDeliberationPhase(
 					ctx,
 					selfX,
