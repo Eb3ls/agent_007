@@ -1,8 +1,8 @@
 import type { BeliefStore } from "../belief_store.js";
+import { DIRS, TILE, tileId } from "../static_map.js";
 import type { StaticMap } from "../static_map.js";
 import type { Direction } from "../pathfinder.js";
 import { readFileSync, writeFileSync } from "fs";
-import { TILE, tileId } from "../static_map.js";
 import { directionOf } from "../pathfinder.js";
 import { execSync } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
@@ -21,14 +21,6 @@ interface PlannerResponse {
 }
 
 // --- PDDL generation helpers ---
-
-// Grid step deltas (right, left, up, down); shared by adjacency and push-line generation.
-const DELTAS = [
-	{ dx: 1, dy: 0 },
-	{ dx: -1, dy: 0 },
-	{ dx: 0, dy: 1 },
-	{ dx: 0, dy: -1 },
-] as const;
 
 // Single source of truth for PDDL object names.
 const loc = (x: number, y: number): string => `loc_${x}_${y}`;
@@ -84,7 +76,7 @@ function generateProblemPDDL(
 	for (const tile of map.tiles.values()) {
 		if (!isWalkable(tile.type)) continue;
 		const { x, y } = tile;
-		for (const { dx, dy } of DELTAS) {
+		for (const [dx, dy] of DIRS) {
 			if (walkableTiles.has(`${x + dx},${y + dy}`)) {
 				adjacencyFacts.push(
 					`(adjacent ${loc(x, y)} ${loc(x + dx, y + dy)})`,
@@ -107,7 +99,7 @@ function generateProblemPDDL(
 	const pushLineFacts: string[] = [];
 	for (const viaKey of crateTiles) {
 		const via = map.tiles.get(viaKey)!;
-		for (const { dx, dy } of DELTAS) {
+		for (const [dx, dy] of DIRS) {
 			const fromKey = `${via.x - dx},${via.y - dy}`;
 			const toKey = `${via.x + dx},${via.y + dy}`;
 			if (walkableTiles.has(fromKey) && crateTiles.has(toKey)) {

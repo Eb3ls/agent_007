@@ -48,7 +48,7 @@ import {
 	spawnsWithinRadius,
 	type StaticMap,
 } from "../static_map.js";
-import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
+import { bfsFromSelf, DELTA_OF, type BfsFromSelf } from "../pathfinder.js";
 import { cfg as appCfg, parseDecayInterval } from "../config.js";
 import type { Coordinator } from "../team/coordinator.js";
 import type { AgentBus } from "../team/agent_bus.js";
@@ -964,12 +964,14 @@ export class AgentCore {
 		// Push defer: yield if an opponent is close to the crate being pushed.
 		if (intention.kind === "push" && intention.plan.length > 0) {
 			const nextDir = intention.plan[0]!;
-			const nx =
-				selfX + (nextDir === "right" ? 1 : nextDir === "left" ? -1 : 0);
-			const ny =
-				selfY + (nextDir === "up" ? 1 : nextDir === "down" ? -1 : 0);
+			const [ddx, ddy] = DELTA_OF[nextDir];
+			const nx = selfX + ddx;
+			const ny = selfY + ddy;
 			const nextType = map.tiles.get(`${nx},${ny}`)?.type ?? "";
-			if (nextType.startsWith("5")) {
+			if (
+				nextType === TILE.CRATE_SLIDE ||
+				nextType === TILE.CRATE_SLIDE_MOVING
+			) {
 				const bfsFromCrate = bfsFromSelf(
 					map,
 					nx,

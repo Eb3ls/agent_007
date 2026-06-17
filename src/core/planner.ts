@@ -7,6 +7,7 @@ import {
 } from "../belief_store.js";
 import {
 	reconstructPath,
+	DELTA_OF,
 	type BfsFromSelf,
 	type Direction,
 } from "../pathfinder.js";
@@ -453,8 +454,9 @@ export function isSoundPlan(
 ): boolean {
 	if (plan.length === 0) return false;
 	const dir = plan[0]!;
-	const nx = selfX + (dir === "right" ? 1 : dir === "left" ? -1 : 0);
-	const ny = selfY + (dir === "up" ? 1 : dir === "down" ? -1 : 0);
+	const [dx, dy] = DELTA_OF[dir];
+	const nx = selfX + dx;
+	const ny = selfY + dy;
 	if (!inBounds(map, nx, ny)) return false;
 	return !blocked.has(tileId(map, nx, ny));
 }

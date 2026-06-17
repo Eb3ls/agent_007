@@ -106,3 +106,12 @@ export function directionOf(
 	if (tx < fx) return "left";
 	return "right";
 }
+
+// Maps each cardinal Direction to its [dx, dy] grid offset.
+// Convention matches directionOf: up=+y, down=−y, right=+x, left=−x.
+export const DELTA_OF: Record<Direction, readonly [number, number]> = {
+	right: [1, 0],
+	left: [-1, 0],
+	up: [0, 1],
+	down: [0, -1],
+};

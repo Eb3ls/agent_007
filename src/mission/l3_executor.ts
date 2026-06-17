@@ -1,5 +1,5 @@
+import { DIRS, inBounds, tileId, TILE, type StaticMap } from "../static_map.js";
 import type { AgentBus, ConfirmPayload } from "../team/agent_bus.js";
-import { inBounds, tileId, type StaticMap } from "../static_map.js";
 import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import type { Coordinator } from "../team/coordinator.js";
 import { cfg, parseDecayInterval } from "../config.js";
@@ -30,19 +30,13 @@ function hasTwoFreeNeighbors(
 		if (a.inView)
 			occupiedXY.add(`${Math.round(a.x ?? 0)},${Math.round(a.y ?? 0)}`);
 	}
-	const DELTAS = [
-		[1, 0],
-		[-1, 0],
-		[0, 1],
-		[0, -1],
-	] as const;
 	let free = 0;
-	for (const [dx, dy] of DELTAS) {
+	for (const [dx, dy] of DIRS) {
 		const nx = x + dx,
 			ny = y + dy;
 		if (!inBounds(map, nx, ny)) continue;
 		const tile = map.tiles.get(`${nx},${ny}`);
-		if (!tile || tile.type === "0") continue;
+		if (!tile || tile.type === TILE.EMPTY) continue;
 		if (occupiedXY.has(`${nx},${ny}`)) continue;
 		free++;
 	}
