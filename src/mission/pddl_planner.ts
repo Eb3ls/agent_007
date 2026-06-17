@@ -224,9 +224,13 @@ function callENHSP(
 					stdio: ["pipe", "pipe", "pipe"],
 				},
 			);
-		} catch (execErr: any) {
-			output = execErr.stdout ? execErr.stdout.toString() : "";
-			errorOutput = execErr.stderr ? execErr.stderr.toString() : "";
+		} catch (execErr) {
+			const e = execErr as {
+				stdout?: { toString(): string };
+				stderr?: { toString(): string };
+			};
+			output = e.stdout ? e.stdout.toString() : "";
+			errorOutput = e.stderr ? e.stderr.toString() : "";
 
 			log.debug(
 				"pddl_plan",
