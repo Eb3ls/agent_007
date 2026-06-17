@@ -50,8 +50,6 @@ export type ActiveModifier = {
 
 export type ActiveDirectives = {
 	paused: boolean;
-	/** missionId that caused the pause; null = PAUSE arrived without missionId (orphan). */
-	pauseMissionId: string | null;
 	stage: {
 		target: XY[] | Predicate;
 		thenAct?: "pickUp" | "putDown";
@@ -64,11 +62,12 @@ export type ActiveDirectives = {
 	forbiddenPickupParcelIds: ReadonlySet<string>;
 };
 
+const ORPHAN = "__orphan__";
+
 export class DirectiveHandler {
 	private readonly queue: Directive[] = [];
 	private pool: ActiveModifier[] = [];
-	private _paused = false;
-	private _pauseMissionId: string | null = null;
+	private _pausedBy = new Set<string>();
 	private _stages: NonNullable<ActiveDirectives["stage"]>[] = [];
 
 	enqueue(d: Directive): void {
@@ -79,11 +78,10 @@ export class DirectiveHandler {
 		for (const d of this.queue.splice(0)) {
 			if (d.kind === "OVERRIDE") {
 				if (d.op === "PAUSE") {
-					this._paused = true;
-					this._pauseMissionId = d.missionId ?? null;
+					this._pausedBy.add(d.missionId ?? ORPHAN);
 				} else if (d.op === "RESUME") {
-					this._paused = false;
-					this._pauseMissionId = null;
+					if (d.missionId) this._pausedBy.delete(d.missionId);
+					else this._pausedBy.clear();
 				} else {
 					this._stages.push({
 						target: d.target,
@@ -111,10 +109,7 @@ export class DirectiveHandler {
 	releaseByMissionId(missionId: string): void {
 		this.pool = this.pool.filter((m) => m.missionId !== missionId);
 		this._stages = this._stages.filter((s) => s.missionId !== missionId);
-		if (this._pauseMissionId === missionId) {
-			this._paused = false;
-			this._pauseMissionId = null;
-		}
+		this._pausedBy.delete(missionId);
 	}
 
 	clearStage(): void {
@@ -134,8 +129,7 @@ export class DirectiveHandler {
 			}
 		}
 		return {
-			paused: this._paused,
-			pauseMissionId: this._pauseMissionId,
+			paused: this._pausedBy.size > 0,
 			stage: this._stages[0] ?? null,
 			modifiers: this.pool,
 			hardForbiddenTileCoords,

@@ -63,7 +63,6 @@ function makeParcel(
 function emptyDirectives(): Readonly<ActiveDirectives> {
 	return {
 		paused: false,
-		pauseMissionId: null,
 		stage: null,
 		modifiers: [],
 		hardForbiddenTileCoords: [],
@@ -272,7 +271,6 @@ describe("modifier: deliver MODIFIER mult boosts deliver score", () => {
 		const bfs = bfsFromSelf(map, 2, 0);
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
 			forbiddenPickupParcelIds: new Set(),
@@ -304,7 +302,6 @@ describe("modifier: deliver MODIFIER mult boosts deliver score", () => {
 		const bfs = bfsFromSelf(map, 2, 0);
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
 			forbiddenPickupParcelIds: new Set(),
@@ -340,7 +337,6 @@ describe("modifier: forbiddenPickupParcelIds excludes the parcel", () => {
 		beliefs.parcels.set("p1", makeParcel("p1", 1, 0, 20));
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			modifiers: [],
 			hardForbiddenTileCoords: [],
@@ -365,7 +361,6 @@ describe("modifier: forbiddenPickupParcelIds excludes the parcel", () => {
 		beliefs.parcels.set("p2", makeParcel("p2", 2, 0, 5));
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			modifiers: [],
 			hardForbiddenTileCoords: [],
@@ -390,7 +385,6 @@ describe("modifier: deliver mult=0 at carryCountEquals forces deliver score = 0"
 		const bfs = bfsFromSelf(map, 2, 0);
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
 			forbiddenPickupParcelIds: new Set(),
@@ -439,7 +433,6 @@ describe("batchCandidates — count-multiplier valley fix", () => {
 		const metrics = noDecayMetrics();
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
 			forbiddenPickupParcelIds: new Set(),
@@ -494,7 +487,6 @@ describe("batchCandidates — count-multiplier valley fix", () => {
 		const metrics = noDecayMetrics();
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
 			forbiddenPickupParcelIds: new Set(),

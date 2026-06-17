@@ -172,4 +172,16 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 		h.releaseByMissionId("m2");
 		expect(h.state.paused).toBe(true);
 	});
+
+	it("two-mission PAUSE: releasing one does not resume if other still pauses", () => {
+		const h = new DirectiveHandler();
+		h.enqueue({ kind: "OVERRIDE", op: "PAUSE", missionId: "m1" });
+		h.enqueue({ kind: "OVERRIDE", op: "PAUSE", missionId: "m2" });
+		h.apply();
+		expect(h.state.paused).toBe(true);
+		h.releaseByMissionId("m1");
+		expect(h.state.paused).toBe(true);
+		h.releaseByMissionId("m2");
+		expect(h.state.paused).toBe(false);
+	});
 });
