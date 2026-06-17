@@ -45,8 +45,8 @@ function evaluateCandidate(
 }
 
 // Returns the highest-scoring viable candidate, or null if none pass.
-// Hysteresis: a new candidate must exceed the current intention's score by
-// cfg.intention.switch_margin_FRACTION to prevent flicker between near-equal options.
+// Hysteresis: a new candidate must exceed the current intention's score by the
+// absolute margin cfg.intention.switch_margin to prevent flicker between near-equal options.
 export function selectBestIntention(
 	context: IntentionRuleContext,
 	candidates: IntentionCandidate[],
