@@ -32,7 +32,7 @@ FIELD RULES:
     MODIFIER  = scoring rule (goto bonus, cross penalty, delivery condition)
     PAUSE     = stop both robots; RESUME = let them go again
     STAGE     = move robots to position then hold; ALWAYS requires a resume token word from the referee to restart
-    handoff   = robot A picks up, robot B delivers (L3)
+    handoff   = one robot picks up a parcel and the other robot delivers it; key signals: "picked up by one…delivered by the other", "passa il pacco", "consegna l'altro"; NO external resume token — mission completes automatically
     rendezvous= both robots must physically meet at the SAME specific location; mission completes automatically when both arrive — NO external resume token; phrase "wait for each other" is the key signal
     qa        = message asks a question OR a calculation ("what is X?", "calculate X"); put the answer in "answer" field
 - selector.on:
@@ -111,6 +111,12 @@ Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"
 
 Input: Go to the leftmost delivery tile and wait for my signal.
 Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":null,"predicate":["delivery","leftmost"]}
+
+Input: If a parcel is initially picked up by one agent and later delivered by the other agent, you will receive a 200 points bonus.
+Output: {"level":"L3","opType":"handoff","selector":{"on":"deliver"},"effect":{"add":200},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":200,"answer":null,"token":null,"maxDist":null}
+
+Input: Se un robot raccoglie un pacco e l'altro lo consegna, riceverete 500 punti.
+Output: {"level":"L3","opType":"handoff","selector":{"on":"deliver"},"effect":{"add":500},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":500,"answer":null,"token":null,"maxDist":null}
 
 Input: Move both agents to the neighborhood of position (21,3) within a maximum distance of 3, and have them wait for each other. You will receive 5000pts.
 Output: {"level":"L3","opType":"rendezvous","selector":{"on":"goto","coords":[{"x":21,"y":3}]},"effect":{"add":5000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":5000,"answer":null,"token":null,"maxDist":3}

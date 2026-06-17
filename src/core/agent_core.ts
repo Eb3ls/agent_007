@@ -471,8 +471,10 @@ export class AgentCore {
 			(t) => t.x === selfX && t.y === selfY,
 		);
 		if (atTarget) {
+			let pickedCount = 0;
 			if (stage.thenAct === "pickUp") {
 				const picked = await this.client.pickup();
+				pickedCount = picked.length;
 				applyPickupResult(this.beliefs, picked, cfg.myId);
 				clearUncarriedParcelsAt(this.beliefs, selfX, selfY);
 				this.bus?.emitCarryChange(this.id);
@@ -481,15 +483,21 @@ export class AgentCore {
 				applyDelivery(this.beliefs, cfg.myId);
 				this.bus?.emitCarryChange(this.id);
 			}
+			const confirmResult =
+				stage.thenAct === "putDown"
+					? "dropped"
+					: stage.thenAct === "pickUp" && pickedCount === 0
+						? "failed"
+						: "reached";
 			this.bus?.emitConfirm({
 				missionId: stage.missionId ?? "stage",
 				directiveType: "STAGE",
-				result: stage.thenAct === "putDown" ? "dropped" : "reached",
+				result: confirmResult,
 				agentId: this.id,
 			});
 			log.ok(
 				"stage",
-				`reached (${selfX},${selfY}) thenAct=${stage.thenAct ?? "none"}`,
+				`reached (${selfX},${selfY}) thenAct=${stage.thenAct ?? "none"}${stage.thenAct === "pickUp" ? ` picked=${pickedCount}` : ""}`,
 			);
 			this.directives.clearStage();
 			return { skip: true, intention: null };

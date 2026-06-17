@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 export type ConfirmPayload = {
 	missionId: string;
 	directiveType: string;
-	result: "reached" | "dropped" | "paused";
+	result: "reached" | "dropped" | "paused" | "failed";
 	agentId: string;
 };
 

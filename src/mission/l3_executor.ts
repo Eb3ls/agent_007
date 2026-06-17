@@ -1,4 +1,4 @@
-import { DIRS, inBounds, tileId, TILE, type StaticMap } from "../static_map.js";
+import { DIRS, idToXY, inBounds, tileId, TILE, type StaticMap } from "../static_map.js";
 import type { AgentBus, ConfirmPayload } from "../team/agent_bus.js";
 import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import type { Coordinator } from "../team/coordinator.js";
@@ -17,6 +17,13 @@ const AGENT_LLM = "llm";
 const RENDEZVOUS_SERIAL_STEPS = 1;
 const CONFIRM_TIMEOUT_MS = 60_000;
 const RENDEZVOUS_MAX_DIST = 3;
+const PARCEL_WAIT_TIMEOUT_MS = 45_000;
+const PARCEL_POLL_INTERVAL_MS = 500;
+const MAX_HANDOFF_ATTEMPTS = 3;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((r) => setTimeout(r, ms));
+}
 
 // ── Drop-tile feasibility ──────────────────────────────────────────────────────
 
@@ -301,45 +308,95 @@ export class L3Executor {
 		missionId: string,
 	): Promise<void> {
 		const ctx = this.resolveContext();
-
-		const site = this.selectHandoffSite();
-		if (!site) return;
-
+		const scope = scopeOf(record.target);
 		const missionBonus = record.bonus ?? 0;
-		const ev = this.computeEV(record, ctx, site, missionBonus);
-		// Hysteresis: only dispatch if EV exceeds a fraction of the mission bonus,
-		// preventing oscillation when EV is marginally positive.
 		const threshold = cfg.intention.hysteresis_pct * Math.abs(missionBonus);
-		if (ev <= threshold) {
+
+		// Wait for at least one free parcel to be visible before attempting.
+		if (!this.hasFreeParcel()) {
 			log.info(
 				"l3_executor",
-				`EV=${ev.toFixed(1)} ≤ threshold=${threshold.toFixed(1)} — not dispatching`,
+				`no free parcels — waiting up to ${PARCEL_WAIT_TIMEOUT_MS / 1000}s missionId=${missionId}`,
 			);
-			return;
+			const deadline = Date.now() + PARCEL_WAIT_TIMEOUT_MS;
+			while (!this.hasFreeParcel() && Date.now() < deadline) {
+				await sleep(PARCEL_POLL_INTERVAL_MS);
+			}
+			if (!this.hasFreeParcel()) {
+				log.warn(
+					"l3_executor",
+					`timed out waiting for free parcel — aborting missionId=${missionId}`,
+				);
+				return;
+			}
 		}
 
-		log.info(
-			"l3_executor",
-			`dispatching ${record.opType} carrier=${site.roles.carrier} receiver=${site.roles.receiver} drop=(${site.dropTile.x},${site.dropTile.y}) EV=${ev.toFixed(1)}`,
-		);
-		this.emitDirectives(site.roles, site.dropTile, missionId);
+		for (let attempt = 1; attempt <= MAX_HANDOFF_ATTEMPTS; attempt++) {
+			const site = this.selectHandoffSite();
+			if (!site) {
+				log.warn("l3_executor", `no handoff site on attempt ${attempt} missionId=${missionId}`);
+				if (attempt < MAX_HANDOFF_ATTEMPTS) await sleep(PARCEL_POLL_INTERVAL_MS);
+				continue;
+			}
 
-		try {
-			await this.awaitHandshake(missionId, site.roles);
-		} catch (err) {
-			log.warn(
+			const ev = this.computeEV(record, ctx, site, missionBonus);
+			if (ev <= threshold) {
+				log.info("l3_executor", `EV=${ev.toFixed(1)} ≤ threshold=${threshold.toFixed(1)} — not dispatching`);
+				return;
+			}
+
+			log.info(
 				"l3_executor",
-				`CONFIRM timeout — aborting missionId=${missionId}: ${String(err)}`,
+				`handoff attempt ${attempt}/${MAX_HANDOFF_ATTEMPTS} carrier=${site.roles.carrier} receiver=${site.roles.receiver} drop=(${site.dropTile.x},${site.dropTile.y}) EV=${ev.toFixed(1)} missionId=${missionId}`,
 			);
-			return;
+			this.stageCarrier(site.roles, site.dropTile, missionId);
+
+			let success: boolean;
+			try {
+				success = await this.awaitHandshake(missionId, site.roles, site.dropTile);
+			} catch (err) {
+				log.warn("l3_executor", `CONFIRM timeout attempt ${attempt} — aborting missionId=${missionId}: ${String(err)}`);
+				this.bus.emitRelease({ missionId, scope });
+				return;
+			}
+
+			if (success) {
+				// Receiver has the parcel — stage it directly to the nearest delivery tile
+				// so it delivers immediately rather than falling back to exploration.
+				const posR = this.coordinator.posOf(site.roles.receiver);
+				if (posR) {
+					const deliveryTile = this.findNearestDeliveryTile(posR);
+					if (deliveryTile) {
+						this.bus.emitDirective(site.roles.receiver, {
+							kind: "OVERRIDE",
+							op: "STAGE",
+							target: [deliveryTile],
+							thenAct: "putDown",
+							missionId: `${missionId}-deliver`,
+						});
+					}
+				}
+				this.bus.emitRelease({ missionId, scope });
+				log.info("l3_executor", `handoff complete — RELEASE missionId=${missionId}`);
+				return;
+			}
+
+			// Pickup failed (parcel gone) — free the carrier and retry.
+			this.bus.emitRelease({ missionId, scope });
+			log.warn("l3_executor", `handoff pickup failed (attempt ${attempt}/${MAX_HANDOFF_ATTEMPTS}) missionId=${missionId}`);
+
+			if (attempt < MAX_HANDOFF_ATTEMPTS) {
+				// Wait for a fresh parcel before the next attempt.
+				if (!this.hasFreeParcel()) {
+					const deadline = Date.now() + PARCEL_WAIT_TIMEOUT_MS;
+					while (!this.hasFreeParcel() && Date.now() < deadline) {
+						await sleep(PARCEL_POLL_INTERVAL_MS);
+					}
+				}
+			}
 		}
 
-		const scope = scopeOf(record.target);
-		this.bus.emitRelease({ missionId, scope });
-		log.info(
-			"l3_executor",
-			`${record.opType} complete — RELEASE missionId=${missionId}`,
-		);
+		log.warn("l3_executor", `handoff failed after ${MAX_HANDOFF_ATTEMPTS} attempts — aborting missionId=${missionId}`);
 	}
 
 	// Moves both agents to any tile within RENDEZVOUS_MAX_DIST of the target and
@@ -466,6 +523,13 @@ export class L3Executor {
 		);
 	}
 
+	private hasFreeParcel(): boolean {
+		for (const p of this.beliefs.parcels.values()) {
+			if (!p.carriedBy) return true;
+		}
+		return false;
+	}
+
 	// Reads game config and returns movement duration, parcel decay rate, and opportunity cost rate.
 	private resolveContext(): EvContext {
 		const config = this.clientBdi.config;
@@ -577,24 +641,14 @@ export class L3Executor {
 		}
 	}
 
-	// Sends STAGE directives to the carrier (putDown) and receiver (pickUp) at the drop tile.
-	private emitDirectives(
-		roles: Roles,
-		dropTile: XY,
-		missionId: string,
-	): void {
+	// Phase 1: stage only the carrier; receiver is staged in phase 2 (awaitHandshake)
+	// after the parcel is actually on the floor.
+	private stageCarrier(roles: Roles, dropTile: XY, missionId: string): void {
 		this.bus.emitDirective(roles.carrier, {
 			kind: "OVERRIDE",
 			op: "STAGE",
 			target: [dropTile],
 			thenAct: "putDown",
-			missionId,
-		});
-		this.bus.emitDirective(roles.receiver, {
-			kind: "OVERRIDE",
-			op: "STAGE",
-			target: [dropTile],
-			thenAct: "pickUp",
 			missionId,
 		});
 	}
@@ -638,19 +692,106 @@ export class L3Executor {
 		});
 	}
 
-	// Waits for the carrier to confirm it dropped, then waits for the receiver to confirm
-	// it reached the drop tile. Order is enforced: carrier must drop before receiver picks up.
+	// Returns the first walkable tile adjacent to pos, or null if none exists.
+	// Used to find a parking spot for the carrier after it drops, so the drop
+	// tile is unblocked for the receiver's BFS.
+	private findAdjacentWalkable(pos: XY): XY | null {
+		for (const [dx, dy] of DIRS) {
+			const nx = pos.x + dx;
+			const ny = pos.y + dy;
+			const tile = this.map.tiles.get(`${nx},${ny}`);
+			if (tile && tile.type !== TILE.EMPTY) return { x: nx, y: ny };
+		}
+		return null;
+	}
+
+	// Three-phase handshake:
+	//   1. Wait for carrier to drop.
+	//   2. Move carrier off the drop tile (so receiver's BFS can reach it), then pause it.
+	//   3. Stage receiver to pick up; return true if it got something, false if parcel was gone.
 	private async awaitHandshake(
 		missionId: string,
 		roles: Roles,
-	): Promise<void> {
+		dropTile: XY,
+	): Promise<boolean> {
 		await this.waitForConfirm(missionId, roles.carrier, "dropped");
+
+		// Step the carrier to an adjacent tile so it no longer blocks the drop tile.
+		const parkTile = this.findAdjacentWalkable(dropTile);
+		if (parkTile) {
+			this.bus.emitDirective(roles.carrier, {
+				kind: "OVERRIDE",
+				op: "STAGE",
+				target: [parkTile],
+				missionId,
+			});
+			await this.waitForConfirm(missionId, roles.carrier, "reached");
+		}
+
+		// Pause carrier (RELEASE from caller will clear it) and send receiver to pick up.
+		this.bus.emitDirective(roles.carrier, {
+			kind: "OVERRIDE",
+			op: "PAUSE",
+			missionId,
+		});
+		this.bus.emitDirective(roles.receiver, {
+			kind: "OVERRIDE",
+			op: "STAGE",
+			target: [dropTile],
+			thenAct: "pickUp",
+			missionId,
+		});
 		log.info(
 			"l3_executor",
-			`carrier dropped at drop-tile missionId=${missionId}`,
+			`carrier parked at (${parkTile?.x},${parkTile?.y}) + paused; receiver staged to drop-tile missionId=${missionId}`,
 		);
-		await this.waitForConfirm(missionId, roles.receiver, "reached");
+
+		const result = await this.waitForAnyConfirm(missionId, roles.receiver, [
+			"reached",
+			"failed",
+		]);
+		if (result === "failed") {
+			log.warn("l3_executor", `receiver found no parcel at drop tile missionId=${missionId}`);
+			return false;
+		}
 		log.info("l3_executor", `receiver picked up missionId=${missionId}`);
+		return true;
+	}
+
+	private findNearestDeliveryTile(pos: XY): XY | null {
+		const bfs = bfsFromSelf(this.map, pos.x, pos.y);
+		let best: XY | null = null;
+		let bestDist = Infinity;
+		for (const id of this.map.deliveryTileIds) {
+			const d = bfs.dist[id];
+			if (d === undefined || d < 0 || d >= bestDist) continue;
+			bestDist = d;
+			best = idToXY(this.map, id);
+		}
+		return best;
+	}
+
+	// Resolves when the agent emits any of the listed results; rejects on timeout.
+	private waitForAnyConfirm(
+		missionId: string,
+		agentId: string,
+		expected: ConfirmPayload["result"][],
+	): Promise<ConfirmPayload["result"]> {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.bus.off("CONFIRM", handler);
+				reject(new Error(`l3 timeout waiting for ${agentId} CONFIRM missionId=${missionId}`));
+			}, CONFIRM_TIMEOUT_MS);
+			const handler = (payload: ConfirmPayload) => {
+				if (payload.missionId !== missionId) return;
+				if (payload.agentId !== agentId) return;
+				if (!expected.includes(payload.result)) return;
+				clearTimeout(timer);
+				this.bus.off("CONFIRM", handler);
+				resolve(payload.result);
+			};
+			this.bus.on("CONFIRM", handler);
+		});
 	}
 
 	private waitForConfirm(
