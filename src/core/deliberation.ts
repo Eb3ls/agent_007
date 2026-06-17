@@ -17,10 +17,10 @@ import {
 	nearestOutOfViewSpawn,
 	nearestRoamTarget,
 } from "./planner.js";
+import { scopeOf, type ActiveDirectives } from "../team/directives.js";
 import { type StaticMap, tileId, idToXY } from "../static_map.js";
 import { computeCurrentIntentionUtility } from "./reconsider.js";
 import { type Intention, makeIntention } from "./intention.js";
-import type { ActiveDirectives } from "../team/directives.js";
 import type { TeamExclusions } from "../team/coordinator.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { BfsFromSelf } from "../pathfinder.js";
@@ -263,7 +263,7 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 					context.now,
 					undefined,
 					m.missionId,
-					m.target === "both" ? "global" : "per-agent",
+					scopeOf(m.target),
 				),
 				source: "goto",
 				utility: gotoScore,

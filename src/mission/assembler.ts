@@ -1,4 +1,9 @@
-import type { Condition, Directive, XY } from "../team/directives.js";
+import {
+	scopeOf,
+	type Condition,
+	type Directive,
+	type XY,
+} from "../team/directives.js";
 import type { AgentBus } from "../team/agent_bus.js";
 import type { GameClient } from "../game_client.js";
 import type { MissionRecord } from "./extractor.js";
@@ -48,9 +53,8 @@ export class Assembler {
 		if (this.handleStateQuery(record)) return;
 
 		const missionId = `m${++this.missionSeq}`;
-		const scope = record.target === "both" ? "global" : "per-agent";
-		const agentTarget: string | "both" =
-			record.target === "both" ? "both" : record.target;
+		const scope = scopeOf(record.target);
+		const agentTarget: string | "both" = record.target;
 
 		switch (record.opType) {
 			case "PAUSE":
@@ -109,7 +113,7 @@ export class Assembler {
 					selector: { ...record.selector, coords: result.coords },
 				},
 				mid,
-				record.target === "both" ? "both" : record.target,
+				record.target,
 			);
 			if (dir) {
 				this.emitBoth(dir);
@@ -216,7 +220,7 @@ export class Assembler {
 		this.emitBoth(directive);
 		log.info(
 			"assembler",
-			`MODIFIER on=${record.selector.on} missionId=${missionId} lifetime=${record.lifetime} scope=${record.target === "both" ? "global" : "per-agent"}`,
+			`MODIFIER on=${record.selector.on} missionId=${missionId} lifetime=${record.lifetime} scope=${scopeOf(record.target)}`,
 		);
 	}
 

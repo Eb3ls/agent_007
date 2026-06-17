@@ -32,15 +32,16 @@ import {
 	type CratePlannerContext,
 } from "../mission/crate_planner.js";
 import {
+	DirectiveHandler,
+	scopeOf,
+	type ActiveDirectives,
+	type PredicateToken,
+} from "../team/directives.js";
+import {
 	checkIntentionViability,
 	shouldReconsider,
 	shouldReconsiderPDDLForParcel,
 } from "./reconsider.js";
-import {
-	DirectiveHandler,
-	type ActiveDirectives,
-	type PredicateToken,
-} from "../team/directives.js";
 import {
 	TILE,
 	tileId,
@@ -1049,7 +1050,7 @@ export class AgentCore {
 			log.ok(this.id, `mission complete missionId=${m.missionId}`);
 			this.bus?.emitRelease({
 				missionId: m.missionId,
-				scope: m.target === "both" ? "global" : "per-agent",
+				scope: scopeOf(m.target),
 			});
 		}
 	}

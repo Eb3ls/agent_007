@@ -156,3 +156,9 @@ export class DirectiveHandler {
 		};
 	}
 }
+
+// Maps the mission target string to a release scope: "both" targets all agents (global),
+// any other value is per-agent.
+export function scopeOf(target: string): "global" | "per-agent" {
+	return target === "both" ? "global" : "per-agent";
+}

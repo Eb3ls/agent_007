@@ -6,6 +6,7 @@ import { cfg, parseDecayInterval } from "../config.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { GameClient } from "../game_client.js";
 import type { MissionRecord } from "./extractor.js";
+import { scopeOf } from "../team/directives.js";
 import { log } from "../logger.js";
 
 export type XY = { x: number; y: number };
@@ -300,10 +301,7 @@ export class L3Executor {
 			return;
 		}
 
-		const scope =
-			record.target === "both"
-				? ("global" as const)
-				: ("per-agent" as const);
+		const scope = scopeOf(record.target);
 		this.bus.emitRelease({ missionId, scope });
 		log.info(
 			"l3_executor",
