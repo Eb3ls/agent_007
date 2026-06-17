@@ -82,21 +82,38 @@ function sigmaEffects(
 	return R_c * mult + add;
 }
 
-// Returns the most restrictive (lowest) rewardOver cap across all active deliver-parcel modifiers,
-// or null when no cap is active.
+export type ParcelCapEffect = {
+	rewardOver: number;
+	mult: number;
+	add: number;
+};
+
+// Returns the combined effect of all active deliver-parcel cap modifiers,
+// keyed on the lowest rewardOver threshold. mult defaults to 0 (hard block)
+// when not specified, matching the corpus behaviour.
+export function parcelCapEffect(
+	modifiers: readonly ActiveModifier[],
+): ParcelCapEffect | null {
+	let rewardOver: number | null = null;
+	let mult = 1;
+	let add = 0;
+	for (const m of modifiers) {
+		if (m.selector.on !== "deliver-parcel") continue;
+		const ro = (m.selector as { on: "deliver-parcel"; rewardOver?: number })
+			.rewardOver;
+		if (ro === undefined) continue;
+		if (rewardOver === null || ro < rewardOver) rewardOver = ro;
+		mult *= m.effect.mult ?? 0;
+		if (m.effect.add !== undefined) add += m.effect.add;
+	}
+	return rewardOver !== null ? { rewardOver, mult, add } : null;
+}
+
+// Thin wrapper for callers that only need the threshold.
 export function activeScoreCap(
 	modifiers: readonly ActiveModifier[],
 ): number | null {
-	let cap: number | null = null;
-	for (const m of modifiers) {
-		if (m.selector.on !== "deliver-parcel") continue;
-		const rewardOver = (
-			m.selector as { on: "deliver-parcel"; rewardOver?: number }
-		).rewardOver;
-		if (rewardOver !== undefined && (cap === null || rewardOver < cap))
-			cap = rewardOver;
-	}
-	return cap;
+	return parcelCapEffect(modifiers)?.rewardOver ?? null;
 }
 
 /**
@@ -119,7 +136,7 @@ export function scorePickup(
 	const modifiers = directives?.modifiers ?? [];
 	const forbidden = directives?.forbiddenPickupParcelIds ?? new Set<string>();
 
-	const cap = activeScoreCap(modifiers);
+	const capFx = parcelCapEffect(modifiers);
 
 	const nearestDeliv = nearestDeliveryTile(map, bfs);
 	const s0 =
@@ -151,8 +168,9 @@ export function scorePickup(
 		)
 			continue;
 
-		// Score-cap: skip parcels whose reward exceeds active cap
-		if (cap !== null && p.reward > cap) continue;
+		// Hard-skip when cap mult is 0 (×0 block); fractional mult → scale reward below.
+		if (capFx !== null && p.reward > capFx.rewardOver && capFx.mult === 0)
+			continue;
 
 		const pId = tileId(map, p.x, p.y);
 		const distToP = bfs.dist[pId];
@@ -182,9 +200,14 @@ export function scorePickup(
 				));
 		if (R_p <= 0) continue;
 
-		if (dp > 0 && R_p <= dp * ((n + 1) * S - n * s0)) continue;
+		const R_p_eff =
+			capFx !== null && p.reward > capFx.rewardOver
+				? R_p * capFx.mult + capFx.add
+				: R_p;
 
-		const score = R_c + R_p - (n + 1) * dp * S;
+		if (dp > 0 && R_p_eff <= dp * ((n + 1) * S - n * s0)) continue;
+
+		const score = R_c + R_p_eff - (n + 1) * dp * S;
 		if (score > bestScore) {
 			bestScore = score;
 			best = p;

@@ -3,6 +3,7 @@ import {
 	scoreDeliver,
 	scoreGoto,
 	batchCandidates,
+	parcelCapEffect,
 	type ValuatorMetrics,
 } from "../core/valuator.js";
 import type { ActiveDirectives } from "../team/directives.js";
@@ -571,5 +572,102 @@ describe("currency: d=0 guard prunes nothing from pickup candidates", () => {
 			emptyDirectives(),
 		);
 		expect(result).not.toBeNull();
+	});
+});
+
+describe("modifier: deliver-parcel cap with fractional mult (M4)", () => {
+	it("parcelCapEffect: mult=0 (absent) = hard block", () => {
+		const modifiers = [
+			{
+				selector: { on: "deliver-parcel" as const, rewardOver: 10 },
+				effect: {},
+				lifetime: "persistent" as const,
+				missionId: "m1",
+				target: "both" as const,
+			},
+		];
+		const fx = parcelCapEffect(modifiers);
+		expect(fx).not.toBeNull();
+		expect(fx!.rewardOver).toBe(10);
+		expect(fx!.mult).toBe(0);
+	});
+
+	it("parcelCapEffect: explicit mult=0.5 preserved", () => {
+		const modifiers = [
+			{
+				selector: { on: "deliver-parcel" as const, rewardOver: 10 },
+				effect: { mult: 0.5 },
+				lifetime: "persistent" as const,
+				missionId: "m1",
+				target: "both" as const,
+			},
+		];
+		const fx = parcelCapEffect(modifiers);
+		expect(fx!.mult).toBe(0.5);
+	});
+
+	it("scorePickup: over-cap parcel with mult=0.5 is a candidate (not skipped)", () => {
+		const map = buildLinearMap();
+		const bfs = bfsFromSelf(map, 2, 0);
+		const beliefs = createBeliefStore();
+		// reward=20 exceeds rewardOver=10
+		beliefs.parcels.set("p1", makeParcel("p1", 1, 0, 20));
+		const metrics = noDecayMetrics();
+		const directives: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			modifiers: [
+				{
+					selector: { on: "deliver-parcel", rewardOver: 10 },
+					effect: { mult: 0.5 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+			hardForbiddenTileCoords: [],
+			forbiddenPickupParcelIds: new Set(),
+		};
+		const result = scorePickup(
+			map,
+			bfs,
+			beliefs,
+			emptyCarry(),
+			metrics,
+			directives,
+		);
+		expect(result).not.toBeNull();
+	});
+
+	it("scorePickup: over-cap parcel with mult=0 (absent) is skipped", () => {
+		const map = buildLinearMap();
+		const bfs = bfsFromSelf(map, 2, 0);
+		const beliefs = createBeliefStore();
+		beliefs.parcels.set("p1", makeParcel("p1", 1, 0, 20));
+		const metrics = noDecayMetrics();
+		const directives: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			modifiers: [
+				{
+					selector: { on: "deliver-parcel", rewardOver: 10 },
+					effect: {},
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+			hardForbiddenTileCoords: [],
+			forbiddenPickupParcelIds: new Set(),
+		};
+		const result = scorePickup(
+			map,
+			bfs,
+			beliefs,
+			emptyCarry(),
+			metrics,
+			directives,
+		);
+		expect(result).toBeNull();
 	});
 });

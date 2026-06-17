@@ -17,7 +17,7 @@ import {
 	type BeliefStore,
 } from "../belief_store.js";
 import {
-	activeScoreCap,
+	parcelCapEffect,
 	batchCandidates,
 	carryValue,
 	maxBatchScore,
@@ -227,12 +227,15 @@ export class AgentCore {
 		intention: Intention | null,
 		deliveryCount: number,
 	): Promise<ReflexResult> {
-		const cap = activeScoreCap(state.modifiers);
-		if (cap === null) return { skip: false, intention, deliveryCount };
+		const capFx = parcelCapEffect(state.modifiers);
+		// Only force-drop when the cap is a hard block (mult=0); fractional caps
+		// let the parcel score at reduced value — no immediate drop needed.
+		if (capFx === null || capFx.mult !== 0)
+			return { skip: false, intention, deliveryCount };
 
 		const overCapIds = ctx.carry.ids.filter((id) => {
 			const p = this.beliefs.parcels.get(id);
-			return p && p.reward > cap;
+			return p && p.reward > capFx.rewardOver;
 		});
 		if (overCapIds.length === 0)
 			return { skip: false, intention, deliveryCount };
@@ -248,7 +251,7 @@ export class AgentCore {
 		this.bus?.emitCarryChange(this.id);
 		log.warn(
 			"score-cap",
-			`dropped ${overCapIds.length} over-cap parcels (cap=${cap})`,
+			`dropped ${overCapIds.length} over-cap parcels (rewardOver=${capFx.rewardOver})`,
 		);
 		return { skip: true, intention, deliveryCount };
 	}
@@ -263,14 +266,16 @@ export class AgentCore {
 		deliveryCount: number,
 	): Promise<ReflexResult> {
 		const map = this.client.staticMap;
-		const cap = activeScoreCap(state.modifiers);
+		const capFx = parcelCapEffect(state.modifiers);
 		const parcelAtFeet = parcelHere(this.beliefs.parcels, selfX, selfY);
 
 		if (
 			!parcelAtFeet ||
 			state.stage ||
 			state.forbiddenPickupParcelIds.has(parcelAtFeet.id) ||
-			(cap !== null && parcelAtFeet.reward > cap) ||
+			(capFx !== null &&
+				parcelAtFeet.reward > capFx.rewardOver &&
+				capFx.mult === 0) ||
 			parcelAtFeet.reward <= 0
 		)
 			return { skip: false, intention, deliveryCount };
