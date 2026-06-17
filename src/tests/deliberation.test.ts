@@ -8,6 +8,7 @@ import type { IntentionCandidate } from "../core/intention_rules.js";
 import type { ActiveDirectives } from "../team/directives.js";
 import { createStaticMap, setMap } from "../static_map.js";
 import type { IOTile } from "@unitn-asa/deliveroo-js-sdk";
+import { deliverTileBlocked } from "../core/valuator.js";
 import { makeIntention } from "../core/intention.js";
 import type { CarryState } from "../core/planner.js";
 import { bfsFromSelf } from "../pathfinder.js";
@@ -499,5 +500,70 @@ describe("deliberate — selfExcludedParcelIds", () => {
 			makeContext({ map: corridor(), selfX: 5, beliefs }),
 		);
 		expect(r.intention?.kind).toBe("pickup");
+	});
+});
+
+// ─────────────────────────────────────────────
+// tile-scoped deliver mult=0 ("deliver in 0,0 you get 0 pts")
+// extraction → directive → valuator selection
+// ─────────────────────────────────────────────
+
+describe("deliberate — nullified delivery tile (mult=0 at (0,0))", () => {
+	// Two delivery tiles: (0,0) and (5,0); walkable between.
+	function twoDeliveries() {
+		const map = createStaticMap();
+		const tiles: IOTile[] = [
+			{ x: 0, y: 0, type: "2" as IOTile["type"] },
+			{ x: 1, y: 0, type: "1" as IOTile["type"] },
+			{ x: 2, y: 0, type: "1" as IOTile["type"] },
+			{ x: 3, y: 0, type: "1" as IOTile["type"] },
+			{ x: 4, y: 0, type: "1" as IOTile["type"] },
+			{ x: 5, y: 0, type: "2" as IOTile["type"] },
+		];
+		setMap(map, tiles);
+		return map;
+	}
+
+	const nullifyOrigin = (): ActiveDirectives => ({
+		...emptyDirectives(),
+		modifiers: [
+			{
+				selector: { on: "deliver", tile: { x: 0, y: 0 } },
+				effect: { mult: 0 },
+				lifetime: "persistent",
+				missionId: "m1",
+				target: "both",
+			},
+		],
+	});
+
+	it("carrying near (0,0): steers delivery to the non-nullified tile (5,0)", () => {
+		const map = twoDeliveries();
+		// self at x=1 → (0,0) is nearest (dist 1), (5,0) is far (dist 4).
+		const withoutMod = deliberate(
+			makeContext({ map, selfX: 1, carry: carryOf([30]) }),
+		);
+		expect(withoutMod.intention?.targetXY).toEqual(
+			expect.objectContaining({ x: 0, y: 0 }),
+		);
+
+		const withMod = deliberate(
+			makeContext({
+				map,
+				selfX: 1,
+				carry: carryOf([30]),
+				directives: nullifyOrigin(),
+			}),
+		);
+		expect(withMod.intention?.kind).toBe("deliver");
+		expect(withMod.intention?.targetXY).toEqual(
+			expect.objectContaining({ x: 5, y: 0 }),
+		);
+	});
+
+	it("deliverTileBlocked is true at (0,0), false elsewhere", () => {
+		const dir = nullifyOrigin();
+		expect(deliverTileBlocked(dir, { x: 0, y: 0 })).toBe(true);
+		expect(deliverTileBlocked(dir, { x: 5, y: 0 })).toBe(false);
 	});
 });

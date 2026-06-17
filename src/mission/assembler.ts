@@ -269,7 +269,7 @@ export class Assembler {
 		if (directive.kind === "MODIFIER") {
 			log.info(
 				"assembler",
-				`MODIFIER ${formatMissionRecord(record)} missionId=${missionId} scope=${scopeOf(record.target)}`,
+				`${formatMissionRecord(record)} missionId=${missionId} scope=${scopeOf(record.target)}`,
 			);
 		}
 	}
