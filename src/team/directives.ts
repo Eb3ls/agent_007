@@ -1,10 +1,21 @@
 export type XY = { x: number; y: number };
 
-export type Predicate =
-	| { rowParity: "odd" | "even" }
-	| { row: number }
-	| { col: number }
-	| { nearXY: XY; radius: number };
+export type PredicateToken =
+	| "odd-row"
+	| "even-row"
+	| "odd-col"
+	| "even-col"
+	| "odd-tile"
+	| "even-tile"
+	| "delivery"
+	| "spawn"
+	| "leftmost"
+	| "rightmost"
+	| "topmost"
+	| "bottommost"
+	| "center";
+
+export type Predicate = PredicateToken[];
 
 export type TargetSelector =
 	| { on: "goto"; coords: XY[] }
@@ -50,26 +61,27 @@ export type ActiveModifier = {
 
 export type ActiveDirectives = {
 	paused: boolean;
-	/** missionId that caused the pause; null = PAUSE arrived without missionId (orphan). */
-	pauseMissionId: string | null;
 	stage: {
 		target: XY[] | Predicate;
 		thenAct?: "pickUp" | "putDown";
 		missionId?: string;
 	} | null;
 	modifiers: readonly ActiveModifier[];
-	/** All XY tiles from on:"cross" modifiers — agent_core adds these to BFS blocked set. */
+	/** Unpriced on:"cross" tiles (no effect.add) — treated as hard BFS walls. */
 	hardForbiddenTileCoords: readonly XY[];
+	/** Priced on:"cross" tiles — penalty is subtracted from paths that cross them. */
+	pricedCrossTiles: readonly { x: number; y: number; penalty: number }[];
 	/** Parcel IDs explicitly forbidden for pickup (from on:"pickup" with parcelId). */
 	forbiddenPickupParcelIds: ReadonlySet<string>;
 };
 
+const ORPHAN = "__orphan__";
+
 export class DirectiveHandler {
 	private readonly queue: Directive[] = [];
 	private pool: ActiveModifier[] = [];
-	private _paused = false;
-	private _pauseMissionId: string | null = null;
-	private _stage: ActiveDirectives["stage"] = null;
+	private _pausedBy = new Set<string>();
+	private _stages: NonNullable<ActiveDirectives["stage"]>[] = [];
 
 	enqueue(d: Directive): void {
 		this.queue.push(d);
@@ -79,19 +91,18 @@ export class DirectiveHandler {
 		for (const d of this.queue.splice(0)) {
 			if (d.kind === "OVERRIDE") {
 				if (d.op === "PAUSE") {
-					this._paused = true;
-					this._pauseMissionId = d.missionId ?? null;
+					this._pausedBy.add(d.missionId ?? ORPHAN);
 				} else if (d.op === "RESUME") {
-					this._paused = false;
-					this._pauseMissionId = null;
+					if (d.missionId) this._pausedBy.delete(d.missionId);
+					else this._pausedBy.clear();
 				} else {
-					this._stage = {
+					this._stages.push({
 						target: d.target,
 						...(d.thenAct !== undefined && { thenAct: d.thenAct }),
 						...(d.missionId !== undefined && {
 							missionId: d.missionId,
 						}),
-					};
+					});
 				}
 			} else {
 				this.pool.push({
@@ -110,35 +121,44 @@ export class DirectiveHandler {
 
 	releaseByMissionId(missionId: string): void {
 		this.pool = this.pool.filter((m) => m.missionId !== missionId);
-		if (this._pauseMissionId === missionId) {
-			this._paused = false;
-			this._pauseMissionId = null;
-		}
+		this._stages = this._stages.filter((s) => s.missionId !== missionId);
+		this._pausedBy.delete(missionId);
 	}
 
 	clearStage(): void {
-		this._stage = null;
+		this._stages.shift();
 	}
 
 	get state(): ActiveDirectives {
 		const hardForbiddenTileCoords: XY[] = [];
+		const pricedCrossTiles: { x: number; y: number; penalty: number }[] =
+			[];
 		const forbiddenPickupParcelIds = new Set<string>();
 		for (const m of this.pool) {
 			if (m.selector.on === "cross") {
-				for (const xy of m.selector.tiles)
-					hardForbiddenTileCoords.push(xy);
+				const penalty = m.effect.add !== undefined ? -m.effect.add : 0;
+				for (const xy of m.selector.tiles) {
+					if (penalty > 0) pricedCrossTiles.push({ ...xy, penalty });
+					else hardForbiddenTileCoords.push(xy);
+				}
 			}
 			if (m.selector.on === "pickup" && m.selector.parcelId) {
 				forbiddenPickupParcelIds.add(m.selector.parcelId);
 			}
 		}
 		return {
-			paused: this._paused,
-			pauseMissionId: this._pauseMissionId,
-			stage: this._stage,
+			paused: this._pausedBy.size > 0,
+			stage: this._stages[0] ?? null,
 			modifiers: this.pool,
 			hardForbiddenTileCoords,
+			pricedCrossTiles,
 			forbiddenPickupParcelIds,
 		};
 	}
+}
+
+// Maps the mission target string to a release scope: "both" targets all agents (global),
+// any other value is per-agent.
+export function scopeOf(target: string): "global" | "per-agent" {
+	return target === "both" ? "global" : "per-agent";
 }

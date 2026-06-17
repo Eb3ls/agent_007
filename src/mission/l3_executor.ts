@@ -1,16 +1,23 @@
+import { DIRS, inBounds, tileId, TILE, type StaticMap } from "../static_map.js";
 import type { AgentBus, ConfirmPayload } from "../team/agent_bus.js";
-import { inBounds, tileId, type StaticMap } from "../static_map.js";
 import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import type { Coordinator } from "../team/coordinator.js";
 import { cfg, parseDecayInterval } from "../config.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { GameClient } from "../game_client.js";
 import type { MissionRecord } from "./extractor.js";
+import { scopeOf } from "../team/directives.js";
 import { log } from "../logger.js";
 
 export type XY = { x: number; y: number };
 
-// ── Drop-tile feasibility (§5.9) ──────────────────────────────────────────────
+const AGENT_BDI = "bdi";
+const AGENT_LLM = "llm";
+// rendezvous agents converge in one relay step; no sequential handoff phase
+const RENDEZVOUS_SERIAL_STEPS = 1;
+const CONFIRM_TIMEOUT_MS = 60_000;
+
+// ── Drop-tile feasibility ──────────────────────────────────────────────────────
 
 /** Returns true if tile has ≥2 walkable, non-occupied free neighbors. */
 function hasTwoFreeNeighbors(
@@ -24,19 +31,13 @@ function hasTwoFreeNeighbors(
 		if (a.inView)
 			occupiedXY.add(`${Math.round(a.x ?? 0)},${Math.round(a.y ?? 0)}`);
 	}
-	const DELTAS = [
-		[1, 0],
-		[-1, 0],
-		[0, 1],
-		[0, -1],
-	] as const;
 	let free = 0;
-	for (const [dx, dy] of DELTAS) {
+	for (const [dx, dy] of DIRS) {
 		const nx = x + dx,
 			ny = y + dy;
 		if (!inBounds(map, nx, ny)) continue;
 		const tile = map.tiles.get(`${nx},${ny}`);
-		if (!tile || tile.type === "0") continue;
+		if (!tile || tile.type === TILE.EMPTY) continue;
 		if (occupiedXY.has(`${nx},${ny}`)) continue;
 		free++;
 	}
@@ -74,7 +75,7 @@ export function findDropTile(
 	return best;
 }
 
-// ── Role assignment (§5.9) ───────────────────────────────────────────────────
+// ── Role assignment ───────────────────────────────────────────────────────────
 
 export type Roles = { carrier: string; receiver: string };
 
@@ -121,43 +122,11 @@ export function assignRoles(
 	return { carrier: carrierId, receiver: receiverId };
 }
 
-// ── EV formulas (§5.9) ───────────────────────────────────────────────────────
+// ── EV formulas ───────────────────────────────────────────────────────────────
 
-function computeStealRisk(
-	decayRate: number,
-	M: number,
-	serialSteps: number,
-	dropTile: XY,
-	map: StaticMap,
-	beliefs: BeliefStore,
-	parkedReward: number,
-): number {
-	const exposeMs = serialSteps * M;
-	const decayTerm = decayRate * exposeMs;
-	let hasThreat = false;
-	const bfsFromDrop = bfsFromSelf(map, dropTile.x, dropTile.y);
-	for (const a of beliefs.agents.values()) {
-		if (!a.inView) continue;
-		const aId = tileId(map, Math.round(a.x ?? 0), Math.round(a.y ?? 0));
-		const d = bfsFromDrop.dist[aId] ?? -1;
-		if (d >= 0 && d <= serialSteps) {
-			hasThreat = true;
-			break;
-		}
-	}
-	return (
-		decayTerm + (hasThreat ? cfg.intention.steal_prob * parkedReward : 0)
-	);
-}
-
-export type HandoffParams = {
-	missionBonus: number;
-	relayReward: number;
-	oppRate: number;
-	carrierCarryN: number;
+type StealRiskParams = {
 	decayRate: number;
 	M: number;
-	setupSteps: number;
 	serialSteps: number;
 	dropTile: XY;
 	map: StaticMap;
@@ -165,17 +134,59 @@ export type HandoffParams = {
 	parkedReward: number;
 };
 
+// Steal risk = decay during exposure at the drop tile + probability that a nearby
+// competitor reaches the tile and steals the parcel before the receiver picks it up.
+function computeStealRisk(p: StealRiskParams): number {
+	const exposeMs = p.serialSteps * p.M;
+	const decayTerm = p.decayRate * exposeMs;
+	let hasThreat = false;
+	const bfsFromDrop = bfsFromSelf(p.map, p.dropTile.x, p.dropTile.y);
+	for (const a of p.beliefs.agents.values()) {
+		if (!a.inView) continue;
+		const aId = tileId(p.map, Math.round(a.x ?? 0), Math.round(a.y ?? 0));
+		const d = bfsFromDrop.dist[aId] ?? -1;
+		if (d >= 0 && d <= p.serialSteps) {
+			hasThreat = true;
+			break;
+		}
+	}
+	return (
+		decayTerm + (hasThreat ? cfg.intention.steal_prob * p.parkedReward : 0)
+	);
+}
+
+type BaseEvParams = {
+	missionBonus: number;
+	oppRate: number;
+	carrierCarryN: number;
+	decayRate: number;
+	M: number;
+	setupSteps: number;
+	dropTile: XY;
+	map: StaticMap;
+	beliefs: BeliefStore;
+	parkedReward: number;
+};
+
+export type HandoffParams = BaseEvParams & {
+	relayReward: number;
+	serialSteps: number;
+};
+export type RendezvousParams = BaseEvParams;
+
+// EV of a handoff = mission bonus + relay reward the receiver earns at delivery
+// minus carrier opportunity cost, decay on carried parcels during setup, and steal risk.
 export function evalHandoff(p: HandoffParams): number {
 	const setupMs = p.setupSteps * p.M;
-	const stealRisk = computeStealRisk(
-		p.decayRate,
-		p.M,
-		p.serialSteps,
-		p.dropTile,
-		p.map,
-		p.beliefs,
-		p.parkedReward,
-	);
+	const stealRisk = computeStealRisk({
+		decayRate: p.decayRate,
+		M: p.M,
+		serialSteps: p.serialSteps,
+		dropTile: p.dropTile,
+		map: p.map,
+		beliefs: p.beliefs,
+		parkedReward: p.parkedReward,
+	});
 	return (
 		p.missionBonus +
 		p.relayReward -
@@ -186,30 +197,19 @@ export function evalHandoff(p: HandoffParams): number {
 	);
 }
 
-export type RendezvousParams = {
-	missionBonus: number;
-	oppRate: number;
-	carrierCarryN: number;
-	decayRate: number;
-	M: number;
-	setupSteps: number;
-	dropTile: XY;
-	map: StaticMap;
-	beliefs: BeliefStore;
-	parkedReward: number;
-};
-
+// EV of a rendezvous = mission bonus minus opportunity cost and decay during
+// setup; no relay reward because neither agent delivers for the other.
 export function evalRendezvous(p: RendezvousParams): number {
 	const setupMs = p.setupSteps * p.M;
-	const stealRisk = computeStealRisk(
-		p.decayRate,
-		p.M,
-		1,
-		p.dropTile,
-		p.map,
-		p.beliefs,
-		p.parkedReward,
-	);
+	const stealRisk = computeStealRisk({
+		decayRate: p.decayRate,
+		M: p.M,
+		serialSteps: RENDEZVOUS_SERIAL_STEPS,
+		dropTile: p.dropTile,
+		map: p.map,
+		beliefs: p.beliefs,
+		parkedReward: p.parkedReward,
+	});
 	return (
 		p.missionBonus -
 		p.oppRate * setupMs -
@@ -219,6 +219,19 @@ export function evalRendezvous(p: RendezvousParams): number {
 }
 
 // ── L3Executor ────────────────────────────────────────────────────────────────
+
+type EvContext = {
+	M: number;
+	decayRate: number;
+	oppRate: number;
+};
+
+type HandoffSite = {
+	roles: Roles;
+	dropTile: XY;
+	setupSteps: number;
+	carrierCarry: { count: number; reward: number };
+};
 
 export class L3Executor {
 	private running = false;
@@ -254,6 +267,50 @@ export class L3Executor {
 		record: MissionRecord,
 		missionId: string,
 	): Promise<void> {
+		const ctx = this.resolveContext();
+
+		const site = this.selectHandoffSite();
+		if (!site) return;
+
+		const missionBonus = record.bonus ?? 0;
+		const ev = this.computeEV(record, ctx, site, missionBonus);
+		// Hysteresis: only dispatch if EV exceeds a fraction of the mission bonus,
+		// preventing oscillation when EV is marginally positive.
+		const threshold = cfg.intention.hysteresis_pct * Math.abs(missionBonus);
+		if (ev <= threshold) {
+			log.info(
+				"l3_executor",
+				`EV=${ev.toFixed(1)} ≤ threshold=${threshold.toFixed(1)} — not dispatching`,
+			);
+			return;
+		}
+
+		log.info(
+			"l3_executor",
+			`dispatching ${record.opType} carrier=${site.roles.carrier} receiver=${site.roles.receiver} drop=(${site.dropTile.x},${site.dropTile.y}) EV=${ev.toFixed(1)}`,
+		);
+		this.emitDirectives(site.roles, site.dropTile, missionId);
+
+		try {
+			await this.awaitHandshake(missionId, site.roles);
+		} catch (err) {
+			log.warn(
+				"l3_executor",
+				`CONFIRM timeout — aborting missionId=${missionId}: ${String(err)}`,
+			);
+			return;
+		}
+
+		const scope = scopeOf(record.target);
+		this.bus.emitRelease({ missionId, scope });
+		log.info(
+			"l3_executor",
+			`${record.opType} complete — RELEASE missionId=${missionId}`,
+		);
+	}
+
+	// Reads game config and returns movement duration, parcel decay rate, and opportunity cost rate.
+	private resolveContext(): EvContext {
 		const config = this.clientBdi.config;
 		if (!config)
 			throw new Error(
@@ -265,39 +322,47 @@ export class L3Executor {
 		);
 		const decayRate = decayIntervalMs > 0 ? 1 / decayIntervalMs : 0;
 		const oppRate = this.coordinator.getL();
-		const missionBonus = record.bonus ?? 0;
+		return { M, decayRate, oppRate };
+	}
 
-		const idA = "bdi",
-			idB = "llm";
-		const posA = this.coordinator.posOf(idA);
-		const posB = this.coordinator.posOf(idB);
+	// Runs BFS from both agent positions, assigns carrier/receiver roles, finds the best
+	// drop tile, and returns carrier travel distance and current carry state.
+	private selectHandoffSite(): HandoffSite | null {
+		const posA = this.coordinator.posOf(AGENT_BDI);
+		const posB = this.coordinator.posOf(AGENT_LLM);
 		if (!posA || !posB) {
 			log.warn("l3_executor", "cannot get agent positions — aborting");
-			return;
+			return null;
 		}
 
 		const bfsA = bfsFromSelf(this.map, posA.x, posA.y);
 		const bfsB = bfsFromSelf(this.map, posB.x, posB.y);
 
-		const roles = assignRoles(this.map, this.beliefs, posA, posB, idA, idB);
+		const roles = assignRoles(
+			this.map,
+			this.beliefs,
+			posA,
+			posB,
+			AGENT_BDI,
+			AGENT_LLM,
+		);
 		if (!roles) {
 			log.warn(
 				"l3_executor",
 				"no free parcels for role assignment — aborting",
 			);
-			return;
+			return null;
 		}
 
 		const dropTile = findDropTile(this.map, this.beliefs, bfsA, bfsB);
 		if (!dropTile) {
 			log.warn("l3_executor", "no feasible drop-tile — aborting");
-			return;
+			return null;
 		}
 
-		const bfsCarrier = roles.carrier === idA ? bfsA : bfsB;
+		const bfsCarrier = roles.carrier === AGENT_BDI ? bfsA : bfsB;
 		const dropTileId = tileId(this.map, dropTile.x, dropTile.y);
 		const setupSteps = Math.max(bfsCarrier.dist[dropTileId] ?? 0, 0);
-		const serialSteps = 1;
 
 		const carrierCarry = this.coordinator.carryOf(roles.carrier);
 		if (!carrierCarry) {
@@ -305,15 +370,27 @@ export class L3Executor {
 				"l3_executor",
 				"cannot get carrier carry state — aborting",
 			);
-			return;
+			return null;
 		}
 
-		let ev: number;
+		return { roles, dropTile, setupSteps, carrierCarry };
+	}
+
+	// Computes the expected value of a handoff or rendezvous: mission bonus minus
+	// opportunity cost, decay loss during setup, and steal risk at the drop tile.
+	private computeEV(
+		record: MissionRecord,
+		ctx: EvContext,
+		site: HandoffSite,
+		missionBonus: number,
+	): number {
+		const { M, decayRate, oppRate } = ctx;
+		const { dropTile, setupSteps, carrierCarry } = site;
 		if (record.opType === "handoff") {
 			const relayReward =
 				carrierCarry.reward *
 				Math.max(0, 1 - decayRate * M * setupSteps);
-			ev = evalHandoff({
+			return evalHandoff({
 				missionBonus,
 				relayReward,
 				oppRate,
@@ -321,14 +398,14 @@ export class L3Executor {
 				decayRate,
 				M,
 				setupSteps,
-				serialSteps,
+				serialSteps: RENDEZVOUS_SERIAL_STEPS,
 				dropTile,
 				map: this.map,
 				beliefs: this.beliefs,
 				parkedReward: relayReward,
 			});
 		} else {
-			ev = evalRendezvous({
+			return evalRendezvous({
 				missionBonus,
 				oppRate,
 				carrierCarryN: carrierCarry.count,
@@ -341,21 +418,14 @@ export class L3Executor {
 				parkedReward: carrierCarry.reward,
 			});
 		}
+	}
 
-		const threshold = cfg.intention.hysteresis_pct * Math.abs(missionBonus);
-		if (ev <= threshold) {
-			log.info(
-				"l3_executor",
-				`EV=${ev.toFixed(1)} ≤ threshold=${threshold.toFixed(1)} — not dispatching`,
-			);
-			return;
-		}
-
-		log.info(
-			"l3_executor",
-			`dispatching ${record.opType} carrier=${roles.carrier} receiver=${roles.receiver} drop=(${dropTile.x},${dropTile.y}) EV=${ev.toFixed(1)}`,
-		);
-
+	// Sends STAGE directives to the carrier (putDown) and receiver (pickUp) at the drop tile.
+	private emitDirectives(
+		roles: Roles,
+		dropTile: XY,
+		missionId: string,
+	): void {
 		this.bus.emitDirective(roles.carrier, {
 			kind: "OVERRIDE",
 			op: "STAGE",
@@ -370,35 +440,21 @@ export class L3Executor {
 			thenAct: "pickUp",
 			missionId,
 		});
+	}
 
-		try {
-			await this.waitForConfirm(missionId, roles.carrier, "dropped");
-			log.info(
-				"l3_executor",
-				`carrier dropped at drop-tile missionId=${missionId}`,
-			);
-			await this.waitForConfirm(missionId, roles.receiver, "reached");
-			log.info(
-				"l3_executor",
-				`receiver picked up missionId=${missionId}`,
-			);
-		} catch (err) {
-			log.warn(
-				"l3_executor",
-				`CONFIRM timeout — aborting missionId=${missionId}: ${String(err)}`,
-			);
-			return;
-		}
-
-		const scope =
-			record.target === "both"
-				? ("global" as const)
-				: ("per-agent" as const);
-		this.bus.emitRelease({ missionId, scope });
+	// Waits for the carrier to confirm it dropped, then waits for the receiver to confirm
+	// it reached the drop tile. Order is enforced: carrier must drop before receiver picks up.
+	private async awaitHandshake(
+		missionId: string,
+		roles: Roles,
+	): Promise<void> {
+		await this.waitForConfirm(missionId, roles.carrier, "dropped");
 		log.info(
 			"l3_executor",
-			`${record.opType} complete — RELEASE missionId=${missionId}`,
+			`carrier dropped at drop-tile missionId=${missionId}`,
 		);
+		await this.waitForConfirm(missionId, roles.receiver, "reached");
+		log.info("l3_executor", `receiver picked up missionId=${missionId}`);
 	}
 
 	private waitForConfirm(
@@ -407,7 +463,6 @@ export class L3Executor {
 		expectedResult: ConfirmPayload["result"],
 	): Promise<void> {
 		return new Promise((resolve, reject) => {
-			const timeoutMs = 60_000;
 			const timer = setTimeout(() => {
 				this.bus.off("CONFIRM", handler);
 				reject(
@@ -415,7 +470,7 @@ export class L3Executor {
 						`l3 timeout waiting for ${agentId} CONFIRM missionId=${missionId}`,
 					),
 				);
-			}, timeoutMs);
+			}, CONFIRM_TIMEOUT_MS);
 
 			const handler = (payload: ConfirmPayload) => {
 				if (payload.missionId !== missionId) return;

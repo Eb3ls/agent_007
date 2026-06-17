@@ -28,6 +28,58 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 		expect(h.state.stage).toBeNull();
 	});
 
+	it("OVERRIDE STAGE queues; clearStage advances to next", () => {
+		const h = new DirectiveHandler();
+		h.enqueue({
+			kind: "OVERRIDE",
+			op: "STAGE",
+			target: [{ x: 1, y: 1 }],
+			thenAct: "pickUp",
+			missionId: "m1",
+		});
+		h.enqueue({
+			kind: "OVERRIDE",
+			op: "STAGE",
+			target: [{ x: 2, y: 2 }],
+			thenAct: "putDown",
+			missionId: "m2",
+		});
+		h.apply();
+		expect(
+			(h.state.stage!.target as { x: number; y: number }[])[0],
+		).toEqual({ x: 1, y: 1 });
+		h.clearStage();
+		expect(
+			(h.state.stage!.target as { x: number; y: number }[])[0],
+		).toEqual({ x: 2, y: 2 });
+		h.clearStage();
+		expect(h.state.stage).toBeNull();
+	});
+
+	it("releaseByMissionId removes queued stages for that mission", () => {
+		const h = new DirectiveHandler();
+		h.enqueue({
+			kind: "OVERRIDE",
+			op: "STAGE",
+			target: [{ x: 1, y: 1 }],
+			missionId: "m1",
+		});
+		h.enqueue({
+			kind: "OVERRIDE",
+			op: "STAGE",
+			target: [{ x: 2, y: 2 }],
+			missionId: "m2",
+		});
+		h.apply();
+		h.releaseByMissionId("m1");
+		// m1 was the head — should advance to m2
+		expect(
+			(h.state.stage!.target as { x: number; y: number }[])[0],
+		).toEqual({ x: 2, y: 2 });
+		h.releaseByMissionId("m2");
+		expect(h.state.stage).toBeNull();
+	});
+
 	it("MODIFIER added to pool and visible in modifiers", () => {
 		const h = new DirectiveHandler();
 		h.enqueue({
@@ -44,7 +96,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 		expect(h.state.modifiers[0]!.effect.mult).toBe(2);
 	});
 
-	it("on:cross tiles appear in hardForbiddenTileCoords", () => {
+	it("priced on:cross tiles (effect.add present) appear in pricedCrossTiles", () => {
 		const h = new DirectiveHandler();
 		h.enqueue({
 			kind: "MODIFIER",
@@ -61,8 +113,28 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 			target: "both",
 		});
 		h.apply();
-		expect(h.state.hardForbiddenTileCoords).toHaveLength(2);
-		expect(h.state.hardForbiddenTileCoords[0]).toEqual({ x: 2, y: 0 });
+		expect(h.state.hardForbiddenTileCoords).toHaveLength(0);
+		expect(h.state.pricedCrossTiles).toHaveLength(2);
+		expect(h.state.pricedCrossTiles[0]).toEqual({
+			x: 2,
+			y: 0,
+			penalty: 100,
+		});
+	});
+
+	it("unpriced on:cross tiles (no effect.add) appear in hardForbiddenTileCoords", () => {
+		const h = new DirectiveHandler();
+		h.enqueue({
+			kind: "MODIFIER",
+			selector: { on: "cross", tiles: [{ x: 5, y: 0 }] },
+			effect: {},
+			lifetime: "persistent",
+			missionId: "m1",
+			target: "both",
+		});
+		h.apply();
+		expect(h.state.hardForbiddenTileCoords).toHaveLength(1);
+		expect(h.state.pricedCrossTiles).toHaveLength(0);
 	});
 
 	it("on:pickup parcelId appears in forbiddenPickupParcelIds", () => {
@@ -119,5 +191,25 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 		h.apply();
 		h.releaseByMissionId("m2");
 		expect(h.state.paused).toBe(true);
+	});
+
+	it("two-mission PAUSE: releasing one does not resume if other still pauses", () => {
+		const h = new DirectiveHandler();
+		h.enqueue({ kind: "OVERRIDE", op: "PAUSE", missionId: "m1" });
+		h.enqueue({ kind: "OVERRIDE", op: "PAUSE", missionId: "m2" });
+		h.apply();
+		expect(h.state.paused).toBe(true);
+		h.releaseByMissionId("m1");
+		expect(h.state.paused).toBe(true);
+		h.releaseByMissionId("m2");
+		expect(h.state.paused).toBe(false);
+	});
+
+	it("OVERRIDE STAGE with predicate target stores correctly", () => {
+		const h = new DirectiveHandler();
+		h.enqueue({ kind: "OVERRIDE", op: "STAGE", target: ["odd-row"] });
+		h.apply();
+		expect(h.state.stage).not.toBeNull();
+		expect(h.state.stage!.target).toEqual(["odd-row"]);
 	});
 });

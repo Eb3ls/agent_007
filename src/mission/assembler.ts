@@ -1,4 +1,9 @@
-import type { Condition, Directive, XY } from "../team/directives.js";
+import {
+	scopeOf,
+	type Condition,
+	type Directive,
+	type XY,
+} from "../team/directives.js";
 import type { AgentBus } from "../team/agent_bus.js";
 import type { GameClient } from "../game_client.js";
 import type { MissionRecord } from "./extractor.js";
@@ -28,6 +33,7 @@ export class Assembler {
 		}
 	}
 
+	// Extracts a MissionRecord from the raw message text and routes it to the appropriate per-opType handler.
 	private async handleMessage(
 		text: string,
 		senderId: string,
@@ -47,9 +53,8 @@ export class Assembler {
 		if (this.handleStateQuery(record)) return;
 
 		const missionId = `m${++this.missionSeq}`;
-		const scope = record.target === "both" ? "global" : "per-agent";
-		const agentTarget: string | "both" =
-			record.target === "both" ? "both" : record.target;
+		const scope = scopeOf(record.target);
+		const agentTarget: string | "both" = record.target;
 
 		switch (record.opType) {
 			case "PAUSE":
@@ -74,6 +79,7 @@ export class Assembler {
 
 	// --- per-opType handlers ---
 
+	// Sends the LLM-generated answer back to the sender and returns true to stop further processing.
 	private async handleQa(
 		record: MissionRecord,
 		senderId: string,
@@ -86,7 +92,8 @@ export class Assembler {
 		return record.opType === "qa";
 	}
 
-	// L1 STATE_QUERY: no physical coords yet — resolve via l1_executor then emit MODIFIER
+	// Fires L1 resolution asynchronously: returns true immediately so the caller can reply "working on it",
+	// then re-injects the resolved MODIFIER once the LLM finishes.
 	private handleStateQuery(record: MissionRecord): boolean {
 		if (
 			record.level !== "L1" ||
@@ -106,7 +113,7 @@ export class Assembler {
 					selector: { ...record.selector, coords: result.coords },
 				},
 				mid,
-				record.target === "both" ? "both" : record.target,
+				record.target,
 			);
 			if (dir) {
 				this.emitBoth(dir);
@@ -120,6 +127,7 @@ export class Assembler {
 		return true;
 	}
 
+	// Emits PAUSE to both agents and optionally arms a resume token.
 	private handlePause(
 		record: MissionRecord,
 		missionId: string,
@@ -133,31 +141,41 @@ export class Assembler {
 		);
 	}
 
+	// Emits RESUME to both agents.
 	private handleResume(missionId: string): void {
 		this.emitBoth({ kind: "OVERRIDE", op: "RESUME", missionId });
 		log.info("assembler", `RESUME missionId=${missionId}`);
 	}
 
+	// Emits STAGE + PAUSE to both agents and arms a resume token if provided.
 	private handleStage(
 		record: MissionRecord,
 		missionId: string,
 		scope: "global" | "per-agent",
 	): void {
-		const targets: XY[] = record.selector.coords ?? [];
-		if (targets.length > 0) {
+		const coords: XY[] = record.selector.coords ?? [];
+		const predicate = record.predicate ?? [];
+		if (coords.length > 0) {
 			this.emitBoth({
 				kind: "OVERRIDE",
 				op: "STAGE",
-				target: targets,
+				target: coords,
+				missionId,
+			});
+		} else if (predicate.length > 0) {
+			this.emitBoth({
+				kind: "OVERRIDE",
+				op: "STAGE",
+				target: predicate,
 				missionId,
 			});
 		} else {
 			log.warn(
 				"assembler",
-				`STAGE has no resolved coords — pausing in place missionId=${missionId}`,
+				`STAGE has no target — pausing in place missionId=${missionId}`,
 			);
 		}
-		// Always pause: navigation target may be unresolvable but agent must stop.
+		// Always pause: agent must stop regardless of whether target resolved.
 		this.emitBoth({ kind: "OVERRIDE", op: "PAUSE", missionId });
 		if (record.token) this.armResume(record.token, missionId, scope);
 		log.info(
@@ -166,6 +184,7 @@ export class Assembler {
 		);
 	}
 
+	// Delegates handoff/rendezvous to L3Executor; warns if mutex busy.
 	private handleChoreography(record: MissionRecord, missionId: string): void {
 		if (!this.l3Executor) {
 			log.warn(
@@ -184,6 +203,7 @@ export class Assembler {
 		);
 	}
 
+	// Builds a MODIFIER directive from the record and emits it to both agents.
 	private handleModifier(
 		record: MissionRecord,
 		missionId: string,
@@ -200,19 +220,20 @@ export class Assembler {
 		this.emitBoth(directive);
 		log.info(
 			"assembler",
-			`MODIFIER on=${record.selector.on} missionId=${missionId} lifetime=${record.lifetime} scope=${record.target === "both" ? "global" : "per-agent"}`,
+			`MODIFIER on=${record.selector.on} missionId=${missionId} lifetime=${record.lifetime} scope=${scopeOf(record.target)}`,
 		);
 	}
 
 	// --- shared helpers ---
 
+	// Sends the same directive to both bdi and llm agents.
 	private emitBoth(d: Directive): void {
 		this.bus.emitDirective("bdi", d);
 		this.bus.emitDirective("llm", d);
 	}
 
-	// Arm a token so an incoming signal word triggers RESUME + RELEASE.
-	// Self-unsubscribes after firing to prevent handler accumulation.
+	// Registers a one-shot signal handler: fires RESUME + RELEASE when the token word is received,
+	// then removes itself to prevent duplicate triggers on subsequent messages.
 	private armResume(
 		token: string,
 		missionId: string,
@@ -233,6 +254,7 @@ export class Assembler {
 		});
 	}
 
+	// Builds a MODIFIER directive from a MissionRecord, normalising selector, effect, and condition fields.
 	private buildModifier(
 		record: MissionRecord,
 		missionId: string,
@@ -250,7 +272,7 @@ export class Assembler {
 		if (sel.on === "cross" && (!sel.tiles || sel.tiles.length === 0))
 			return null;
 
-		// Build condition from the record's optional flat object into a union Condition type.
+		// LLM emits conditions as a flat object; reconstruct the typed union before forwarding to directives.
 		let condition: Condition | undefined = undefined;
 		if (record.condition) {
 			const c = record.condition;

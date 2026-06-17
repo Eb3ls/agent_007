@@ -3,6 +3,7 @@ import {
 	scoreDeliver,
 	scoreGoto,
 	batchCandidates,
+	parcelCapEffect,
 	type ValuatorMetrics,
 } from "../core/valuator.js";
 import type { ActiveDirectives } from "../team/directives.js";
@@ -63,10 +64,10 @@ function makeParcel(
 function emptyDirectives(): Readonly<ActiveDirectives> {
 	return {
 		paused: false,
-		pauseMissionId: null,
 		stage: null,
 		modifiers: [],
 		hardForbiddenTileCoords: [],
+		pricedCrossTiles: [],
 		forbiddenPickupParcelIds: new Set(),
 	};
 }
@@ -272,9 +273,9 @@ describe("modifier: deliver MODIFIER mult boosts deliver score", () => {
 		const bfs = bfsFromSelf(map, 2, 0);
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -304,9 +305,9 @@ describe("modifier: deliver MODIFIER mult boosts deliver score", () => {
 		const bfs = bfsFromSelf(map, 2, 0);
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -340,10 +341,10 @@ describe("modifier: forbiddenPickupParcelIds excludes the parcel", () => {
 		beliefs.parcels.set("p1", makeParcel("p1", 1, 0, 20));
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			modifiers: [],
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(["p1"]),
 		};
 		const result = scorePickup(
@@ -365,10 +366,10 @@ describe("modifier: forbiddenPickupParcelIds excludes the parcel", () => {
 		beliefs.parcels.set("p2", makeParcel("p2", 2, 0, 5));
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			modifiers: [],
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(["p1"]),
 		};
 		const result = scorePickup(
@@ -390,9 +391,9 @@ describe("modifier: deliver mult=0 at carryCountEquals forces deliver score = 0"
 		const bfs = bfsFromSelf(map, 2, 0);
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -439,9 +440,9 @@ describe("batchCandidates — count-multiplier valley fix", () => {
 		const metrics = noDecayMetrics();
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -494,9 +495,9 @@ describe("batchCandidates — count-multiplier valley fix", () => {
 		const metrics = noDecayMetrics();
 		const directives: ActiveDirectives = {
 			paused: false,
-			pauseMissionId: null,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -579,5 +580,104 @@ describe("currency: d=0 guard prunes nothing from pickup candidates", () => {
 			emptyDirectives(),
 		);
 		expect(result).not.toBeNull();
+	});
+});
+
+describe("modifier: deliver-parcel cap with fractional mult (M4)", () => {
+	it("parcelCapEffect: mult=0 (absent) = hard block", () => {
+		const modifiers = [
+			{
+				selector: { on: "deliver-parcel" as const, rewardOver: 10 },
+				effect: {},
+				lifetime: "persistent" as const,
+				missionId: "m1",
+				target: "both" as const,
+			},
+		];
+		const fx = parcelCapEffect(modifiers);
+		expect(fx).not.toBeNull();
+		expect(fx!.rewardOver).toBe(10);
+		expect(fx!.mult).toBe(0);
+	});
+
+	it("parcelCapEffect: explicit mult=0.5 preserved", () => {
+		const modifiers = [
+			{
+				selector: { on: "deliver-parcel" as const, rewardOver: 10 },
+				effect: { mult: 0.5 },
+				lifetime: "persistent" as const,
+				missionId: "m1",
+				target: "both" as const,
+			},
+		];
+		const fx = parcelCapEffect(modifiers);
+		expect(fx!.mult).toBe(0.5);
+	});
+
+	it("scorePickup: over-cap parcel with mult=0.5 is a candidate (not skipped)", () => {
+		const map = buildLinearMap();
+		const bfs = bfsFromSelf(map, 2, 0);
+		const beliefs = createBeliefStore();
+		// reward=20 exceeds rewardOver=10
+		beliefs.parcels.set("p1", makeParcel("p1", 1, 0, 20));
+		const metrics = noDecayMetrics();
+		const directives: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			modifiers: [
+				{
+					selector: { on: "deliver-parcel", rewardOver: 10 },
+					effect: { mult: 0.5 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+		};
+		const result = scorePickup(
+			map,
+			bfs,
+			beliefs,
+			emptyCarry(),
+			metrics,
+			directives,
+		);
+		expect(result).not.toBeNull();
+	});
+
+	it("scorePickup: over-cap parcel with mult=0 (absent) is skipped", () => {
+		const map = buildLinearMap();
+		const bfs = bfsFromSelf(map, 2, 0);
+		const beliefs = createBeliefStore();
+		beliefs.parcels.set("p1", makeParcel("p1", 1, 0, 20));
+		const metrics = noDecayMetrics();
+		const directives: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			modifiers: [
+				{
+					selector: { on: "deliver-parcel", rewardOver: 10 },
+					effect: {},
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+		};
+		const result = scorePickup(
+			map,
+			bfs,
+			beliefs,
+			emptyCarry(),
+			metrics,
+			directives,
+		);
+		expect(result).toBeNull();
 	});
 });

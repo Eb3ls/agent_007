@@ -14,6 +14,8 @@ export type LlmClientConfig = {
 export class LlmClient {
 	constructor(private readonly cfg: LlmClientConfig) {}
 
+	// Retries up to maxRetries times with linear backoff (500ms · attempt).
+	// Each attempt uses a fresh AbortController — timeout applies per-attempt, not total.
 	async complete(messages: ChatMessage[]): Promise<string> {
 		let lastErr: unknown;
 		for (let attempt = 0; attempt <= this.cfg.maxRetries; attempt++) {
@@ -33,7 +35,7 @@ export class LlmClient {
 					body: JSON.stringify({
 						model: this.cfg.model,
 						messages,
-						temperature: 0,
+						temperature: 0, // deterministic JSON extraction — variance causes parse failures.
 					}),
 				}).finally(() => {
 					if (tid !== undefined) clearTimeout(tid);
@@ -48,6 +50,7 @@ export class LlmClient {
 					choices?: Array<{ message?: { content?: string } }>;
 				};
 				const content = data.choices?.[0]?.message?.content;
+				// Empty content = model refused or returned stop_reason without text; treat as retriable error.
 				if (!content) throw new Error("LLM returned empty content");
 				return content;
 			} catch (err) {
@@ -63,6 +66,7 @@ export class LlmClient {
 	}
 }
 
+// Factory that creates an LlmClient with a default of 2 retries on transient errors.
 export function createLlmClient(
 	cfg: Omit<LlmClientConfig, "maxRetries">,
 ): LlmClient {

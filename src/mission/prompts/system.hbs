@@ -21,7 +21,8 @@ OUTPUT SCHEMA:
   "coords":    [{x,y} | "label",...] | null,
   "bonus":     number | null,
   "answer":    string | null,
-  "token":     string | null
+  "token":     string | null,
+  "predicate": ["odd-row"|"even-row"|"odd-col"|"even-col"|"odd-tile"|"even-tile"|"delivery"|"spawn"|"leftmost"|"rightmost"|"topmost"|"bottommost"|"center"] | null
 }
 
 FIELD RULES:
@@ -50,6 +51,10 @@ FIELD RULES:
 - bonus: the numeric value in the message (can be negative); convert words to numbers ("ten"=10, "hundred"=100); null if absent
 - answer: answer to any question the message asks; null if no question
 - token: the exact resume word/phrase the referee will say to restart movement (e.g. "green", "via"); null if not stated
+- predicate: STAGE only — closed-vocabulary token array describing the target tile class; null for any other opType or when selector.coords has explicit {x,y}
+    tokens: "odd-row","even-row","odd-col","even-col","odd-tile","even-tile","delivery","spawn","leftmost","rightmost","topmost","bottommost","center"
+    combine tokens: ["delivery","leftmost"] = leftmost delivery tile; ["odd-row"] = any tile on an odd-numbered row (y is odd); ["odd-tile"] = tile where both x and y are odd
+    row = y-axis, col = x-axis; "dispari"=odd, "pari"=even
 - If a field cannot be determined: use null — never guess
 
 COORD RULES:
@@ -94,7 +99,13 @@ Input: Stop moving and hold your position until I tell you to go.
 Output: {"level":"L2","opType":"PAUSE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: Move both robots onto an odd-numbered row, stop, and wait. When you receive the word "green" from me, go. Bonus is 700pts.
-Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{"add":700},"condition":null,"lifetime":"one-shot","target":"both","coords":["odd-numbered row"],"bonus":700,"answer":null,"token":"green"}
+Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{"add":700},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":700,"answer":null,"token":"green","predicate":["odd-row"]}
 
 Input: Semaforo: andate sulla riga pari più vicina e fermatevi. Ripartite al mio "via".
-Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":["even row"],"bonus":null,"answer":null,"token":"via"}
+Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":"via","predicate":["even-row"]}
+
+Input: Mettetevi entrambi su una tile dispari e aspettate il mio via.
+Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":"via","predicate":["odd-tile"]}
+
+Input: Go to the leftmost delivery tile and wait for my signal.
+Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":null,"predicate":["delivery","leftmost"]}

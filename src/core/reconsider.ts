@@ -19,9 +19,16 @@ export type TerminalReason =
 	| "move_blocked" // moveFailStreak >= cfg.intention.max_move_fail_streak
 	| "aged"; // intention exceeded cfg.intention.max_age_steps
 
+export type TargetLostDetail =
+	| "evicted" // no longer in beliefs.parcels
+	| "stolen" // carried by another agent
+	| "moved" // seen in-view at different coords
+	| "stale" // out-of-view belief expired
+	| "not-on-tile"; // reached target tile but parcel not ours
+
 export type ViabilityCheck =
 	| { viable: true }
-	| { viable: false; reason: TerminalReason };
+	| { viable: false; reason: TerminalReason; detail?: TargetLostDetail };
 
 function computeTargetDistance(
 	map: StaticMap,
@@ -33,31 +40,30 @@ function computeTargetDistance(
 	return d === undefined || d === -1 ? null : d;
 }
 
-// False if the target parcel was stolen, has moved in-view, or belief has gone stale out-of-view.
+// Returns why the target parcel is lost, or null if still valid.
 function checkTargetParcel(
 	myId: string,
 	intention: Intention,
 	beliefs: BeliefStore,
 	now: number,
 	movementDurationMs: number,
-): boolean {
-	if (intention.kind !== "pickup") return true;
+): TargetLostDetail | null {
+	if (intention.kind !== "pickup") return null;
 	const parcel = beliefs.parcels.get(intention.targetId!);
-	if (!parcel) return false;
-	if (parcel.carriedBy && parcel.carriedBy !== myId) return false;
-
+	if (!parcel) return "evicted";
+	if (parcel.carriedBy && parcel.carriedBy !== myId) return "stolen";
 	if (
 		parcel.inView &&
 		(parcel.x !== intention.targetXY.x || parcel.y !== intention.targetXY.y)
 	)
-		return false;
+		return "moved";
 	if (
 		!parcel.inView &&
 		now - parcel.lastSeenAt >
 			movementDurationMs * cfg.belief.parcel_belief_stale_steps
 	)
-		return false;
-	return true;
+		return "stale";
+	return null;
 }
 
 // Computes absolute utility of the current intention — same formula as pickBestParcelTarget
@@ -109,6 +115,7 @@ export function computeCurrentIntentionUtility(
 	);
 	if (reward <= 0) return 0;
 
+	// Mirrors pickBestParcelTarget's detour formula exactly — scores must be on the same scale for comparison.
 	const totalDist = dist + distToDel; // detour path: self → parcel → delivery
 	const parcelNet = reward - decayCost(reward, decayPerStep, totalDist);
 	if (carry.n === 0) return parcelNet;
@@ -179,6 +186,8 @@ export function shouldReconsider(
 		currentUtility < cfg.intention.abort_margin
 	)
 		return true;
+	// opportunity_margin: fresh option must beat current by this fraction before switching —
+	// prevents abandoning a nearly-done intention for a marginally better one.
 	return (
 		freshTarget.utility >
 		currentUtility *
@@ -233,7 +242,11 @@ export function checkIntentionViability(
 				: undefined;
 			if (parcel?.carriedBy === myId)
 				return { viable: false, reason: "succeeded" };
-			return { viable: false, reason: "target_lost" };
+			return {
+				viable: false,
+				reason: "target_lost",
+				detail: "not-on-tile",
+			};
 		}
 		return { viable: false, reason: "succeeded" };
 	}
@@ -249,8 +262,14 @@ export function checkIntentionViability(
 	}
 
 	// 2) Parcel gone or belief stale while en route
-	if (!checkTargetParcel(myId, intention, beliefs, now, movementDurationMs))
-		return { viable: false, reason: "target_lost" };
+	const lost = checkTargetParcel(
+		myId,
+		intention,
+		beliefs,
+		now,
+		movementDurationMs,
+	);
+	if (lost) return { viable: false, reason: "target_lost", detail: lost };
 
 	// 3) Explore: target in FOV and close enough to react quickly if a parcel spawns
 	if (intention.kind === "explore") {

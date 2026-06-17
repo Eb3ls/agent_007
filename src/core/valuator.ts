@@ -1,8 +1,10 @@
 import {
 	computeContestFactor,
+	computeDecayPerStep,
 	expectedReward,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
+	sumRewards,
 	type CarryState,
 	type PickResult,
 } from "./planner.js";
@@ -13,12 +15,46 @@ import type {
 } from "../team/directives.js";
 import type { BeliefStore, ParcelBelief } from "../belief_store.js";
 import { idToXY, tileId, type StaticMap } from "../static_map.js";
-import type { BfsFromSelf } from "../pathfinder.js";
-import { bfsFromSelf } from "../pathfinder.js";
+import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import { cfg } from "../config.js";
 
 export type { CarryState, PickResult };
 export { nearestOutOfViewSpawn as scoreExplore };
+
+/**
+ * Context for priced-cross tile scoring.
+ * bfsAvoid = BFS with priced tiles also blocked (detour distances).
+ * pricedById = tileId → penalty (positive cost).
+ */
+export type CrossCtx = {
+	bfsAvoid: BfsFromSelf;
+	pricedById: Map<number, number>;
+};
+
+/**
+ * Sum of penalties for distinct priced tiles on the BFS path to (tx,ty).
+ * Walks bfs.prev backward from target to origin (dist=0); origin is not charged.
+ * Charged per distinct tile — not per step.
+ * NOTE: open spec question whether charge is per-crossing or per-step; per-tile for now.
+ */
+export function pathCrossPenalty(
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	tx: number,
+	ty: number,
+	pricedById: Map<number, number>,
+): number {
+	const targetId = tileId(map, tx, ty);
+	if (targetId === -1 || bfs.dist[targetId] === -1) return Infinity;
+	let penalty = 0;
+	let id = targetId;
+	while (bfs.prev[id] !== -1) {
+		const p = pricedById.get(id);
+		if (p !== undefined) penalty += p;
+		id = bfs.prev[id]!;
+	}
+	return penalty;
+}
 
 export type ValuatorMetrics = {
 	M: number;
@@ -38,15 +74,13 @@ export type BatchResult = {
 	firstParcel: ParcelBelief;
 };
 
-function dPerStep(metrics: ValuatorMetrics): number {
-	return Number.isFinite(metrics.decayIntervalMs)
-		? metrics.M / metrics.decayIntervalMs
-		: 0;
-}
-
-function conditionMet(cond: Condition | undefined, carry: CarryState): boolean {
+// Returns true if the modifier condition matches the current carry state (or if no condition is set).
+export function conditionMet(
+	cond: Condition | undefined,
+	carry: CarryState,
+): boolean {
 	if (!cond) return true;
-	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
+	const R_c = sumRewards(carry);
 	if ("carryCountEquals" in cond) return carry.n === cond.carryCountEquals;
 	if ("carryCountAtLeast" in cond) return carry.n >= cond.carryCountAtLeast;
 	if ("carryCountOver" in cond) return carry.n > cond.carryCountOver;
@@ -54,6 +88,7 @@ function conditionMet(cond: Condition | undefined, carry: CarryState): boolean {
 	return true;
 }
 
+// Applies modifier effects to the carry set: returns the net multiplier on R_c from active MODIFIER directives.
 /**
  * Σ_effects(R_c) = R_c × Π(mult_i) + Σ(add_i) for all matching deliver modifiers.
  * tile: if provided, tile-specific modifiers only apply when selector.tile matches.
@@ -81,26 +116,38 @@ function sigmaEffects(
 	return R_c * mult + add;
 }
 
-// Returns the most restrictive (lowest) rewardOver cap across all active deliver-parcel modifiers,
-// or null when no cap is active.
-export function activeScoreCap(
+export type ParcelCapEffect = {
+	rewardOver: number;
+	mult: number;
+	add: number;
+};
+
+// Returns the combined effect of all active deliver-parcel cap modifiers,
+// keyed on the lowest rewardOver threshold. mult defaults to 0 (hard block)
+// when not specified, matching the corpus behaviour.
+export function parcelCapEffect(
 	modifiers: readonly ActiveModifier[],
-): number | null {
-	let cap: number | null = null;
+): ParcelCapEffect | null {
+	let rewardOver: number | null = null;
+	let mult = 1;
+	let add = 0;
 	for (const m of modifiers) {
 		if (m.selector.on !== "deliver-parcel") continue;
-		const rewardOver = (
-			m.selector as { on: "deliver-parcel"; rewardOver?: number }
-		).rewardOver;
-		if (rewardOver !== undefined && (cap === null || rewardOver < cap))
-			cap = rewardOver;
+		const ro = (m.selector as { on: "deliver-parcel"; rewardOver?: number })
+			.rewardOver;
+		if (ro === undefined) continue;
+		if (rewardOver === null || ro < rewardOver) rewardOver = ro;
+		mult *= m.effect.mult ?? 0;
+		if (m.effect.add !== undefined) add += m.effect.add;
 	}
-	return cap;
+	return rewardOver !== null ? { rewardOver, mult, add } : null;
 }
 
 /**
  * Absolute full-trip pickup score per §5.3.
  * Score_pickup(P) = R_c + R_p_eff − (n+1)·d·M·S
+ * R_c = carried reward sum · cap_mult, R_p_eff = target parcel reward after cap,
+ * n = carry count, d = decay/step, M = movement ms, S = steps to target.
  * Parcels whose reward exceeds an active deliver-parcel cap → parcel_reward_eff = 0 → skipped.
  */
 export function scorePickup(
@@ -112,13 +159,14 @@ export function scorePickup(
 	directives?: Readonly<ActiveDirectives>,
 	stealHorizonSteps: number = cfg.belief.expected_steal_horizon_steps,
 	extraExcludedIds?: ReadonlySet<string>,
+	crossCtx?: CrossCtx,
 ): PickResult | null {
 	const now = Date.now();
-	const dp = dPerStep(metrics);
+	const dp = computeDecayPerStep(metrics.decayIntervalMs, metrics.M);
 	const modifiers = directives?.modifiers ?? [];
 	const forbidden = directives?.forbiddenPickupParcelIds ?? new Set<string>();
 
-	const cap = activeScoreCap(modifiers);
+	const capFx = parcelCapEffect(modifiers);
 
 	const nearestDeliv = nearestDeliveryTile(map, bfs);
 	const s0 =
@@ -127,7 +175,7 @@ export function scorePickup(
 				Infinity)
 			: Infinity;
 
-	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
+	const R_c = sumRewards(carry);
 	const n = carry.n;
 
 	let best: ParcelBelief | null = null;
@@ -150,15 +198,48 @@ export function scorePickup(
 		)
 			continue;
 
-		// Score-cap: skip parcels whose reward exceeds active cap
-		if (cap !== null && p.reward > cap) continue;
+		// Hard-skip when cap mult is 0 (×0 block); fractional mult → scale reward below.
+		if (capFx !== null && p.reward > capFx.rewardOver && capFx.mult === 0)
+			continue;
 
 		const pId = tileId(map, p.x, p.y);
-		const distToP = bfs.dist[pId];
-		if (distToP === undefined || distToP === -1) continue;
-
 		const distPToDel = map.baseReverseDistToDelivery[pId];
 		if (distPToDel === undefined || distPToDel === -1) continue;
+
+		// Effective distance to parcel: best of avoid-path and cross-path minus penalty.
+		let distToP: number;
+		if (crossCtx) {
+			const avoidDist = crossCtx.bfsAvoid.dist[pId];
+			const crossDist = bfs.dist[pId];
+			if (
+				(avoidDist === undefined || avoidDist === -1) &&
+				(crossDist === undefined || crossDist === -1)
+			)
+				continue;
+			const avoidEff =
+				avoidDist !== undefined && avoidDist !== -1
+					? avoidDist
+					: Infinity;
+			// Spread penalty across all stops: each stop shares 1/(n+1) of the crossing cost.
+			const crossEff =
+				crossDist !== undefined && crossDist !== -1
+					? crossDist +
+						pathCrossPenalty(
+							map,
+							bfs,
+							p.x,
+							p.y,
+							crossCtx.pricedById,
+						) /
+							Math.max(dp * (n + 1), 1)
+					: Infinity;
+			distToP = Math.min(avoidEff, crossEff);
+			if (!Number.isFinite(distToP)) continue;
+		} else {
+			const d = bfs.dist[pId];
+			if (d === undefined || d === -1) continue;
+			distToP = d;
+		}
 
 		const S = distToP + distPToDel;
 
@@ -175,15 +256,21 @@ export function scorePickup(
 					beliefs,
 					p.x,
 					p.y,
-					distToP,
+					Math.round(distToP),
 					metrics.M,
 					now,
 				));
 		if (R_p <= 0) continue;
 
-		if (dp > 0 && R_p <= dp * ((n + 1) * S - n * s0)) continue;
+		const R_p_eff =
+			capFx !== null && p.reward > capFx.rewardOver
+				? R_p * capFx.mult + capFx.add
+				: R_p;
 
-		const score = R_c + R_p - (n + 1) * dp * S;
+		// Prune: parcel can't recoup its additional trip cost over all n+1 stops.
+		if (dp > 0 && R_p_eff <= dp * ((n + 1) * S - n * s0)) continue;
+
+		const score = R_c + R_p_eff - (n + 1) * dp * S;
 		if (score > bestScore) {
 			bestScore = score;
 			best = p;
@@ -204,22 +291,45 @@ export function scoreDeliver(
 	carry: CarryState,
 	metrics: ValuatorMetrics,
 	directives?: Readonly<ActiveDirectives>,
+	crossCtx?: CrossCtx,
 ): DeliverResult | null {
 	if (carry.n === 0) return null;
 
-	const dp = dPerStep(metrics);
-	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
+	const dp = computeDecayPerStep(metrics.decayIntervalMs, metrics.M);
+	const R_c = sumRewards(carry);
 	const modifiers = directives?.modifiers ?? [];
 
 	let best: DeliverResult | null = null;
 	let bestScore = -Infinity;
 
 	for (const id of map.deliveryTileIds) {
-		const dist = bfs.dist[id];
-		if (dist === undefined || dist === -1) continue;
 		const { x, y } = idToXY(map, id);
-		const score =
-			sigmaEffects(R_c, modifiers, carry, { x, y }) - carry.n * dp * dist;
+		let score = -Infinity;
+
+		if (crossCtx) {
+			const base = sigmaEffects(R_c, modifiers, carry, { x, y });
+			const avoidDist = crossCtx.bfsAvoid.dist[id];
+			if (avoidDist !== undefined && avoidDist !== -1)
+				score = Math.max(score, base - carry.n * dp * avoidDist);
+			const crossDist = bfs.dist[id];
+			if (crossDist !== undefined && crossDist !== -1) {
+				const pen = pathCrossPenalty(
+					map,
+					bfs,
+					x,
+					y,
+					crossCtx.pricedById,
+				);
+				score = Math.max(score, base - carry.n * dp * crossDist - pen);
+			}
+		} else {
+			const dist = bfs.dist[id];
+			if (dist === undefined || dist === -1) continue;
+			score =
+				sigmaEffects(R_c, modifiers, carry, { x, y }) -
+				carry.n * dp * dist;
+		}
+
 		if (!Number.isFinite(score) || score <= bestScore) continue;
 		bestScore = score;
 		best = { tile: { x, y, id }, score };
@@ -239,15 +349,36 @@ export function scoreGoto(
 	bonus: number,
 	carry: CarryState,
 	metrics: ValuatorMetrics,
+	crossCtx?: CrossCtx,
 ): number | null {
 	const tId = tileId(map, target.x, target.y);
-	const sT = bfs.dist[tId];
-	if (sT === undefined || sT === -1) return null;
-
 	const d = Number.isFinite(metrics.decayIntervalMs)
 		? 1 / metrics.decayIntervalMs
 		: 0;
-	return bonus - (metrics.L + carry.n * d) * metrics.M * sT;
+	const coeff = (metrics.L + carry.n * d) * metrics.M;
+
+	if (crossCtx) {
+		let best = -Infinity;
+		const avoidDist = crossCtx.bfsAvoid.dist[tId];
+		if (avoidDist !== undefined && avoidDist !== -1)
+			best = Math.max(best, bonus - coeff * avoidDist);
+		const crossDist = bfs.dist[tId];
+		if (crossDist !== undefined && crossDist !== -1) {
+			const pen = pathCrossPenalty(
+				map,
+				bfs,
+				target.x,
+				target.y,
+				crossCtx.pricedById,
+			);
+			best = Math.max(best, bonus - coeff * crossDist - pen);
+		}
+		return Number.isFinite(best) ? best : null;
+	}
+
+	const sT = bfs.dist[tId];
+	if (sT === undefined || sT === -1) return null;
+	return bonus - coeff * sT;
 }
 
 /**
@@ -281,8 +412,8 @@ export function batchCandidates(
 
 	if (targets.length === 0) return [];
 
-	const dp = dPerStep(metrics);
-	const R_c = carry.rewards.reduce((a, b) => a + b, 0);
+	const dp = computeDecayPerStep(metrics.decayIntervalMs, metrics.M);
+	const R_c = sumRewards(carry);
 	const forbidden = directives.forbiddenPickupParcelIds;
 	const results: BatchResult[] = [];
 
@@ -314,6 +445,8 @@ export function batchCandidates(
 	return results;
 }
 
+// Greedily chains up to `need` pickups: re-runs BFS from each picked parcel so distances compose correctly.
+// need===1 reuses currentBfs (caller already positioned there).
 function buildGreedyChain(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -388,4 +521,35 @@ function buildGreedyChain(
 	totalSteps += delivDist;
 
 	return { reward: totalReward, totalSteps, firstParcel };
+}
+
+// Returns the highest batch score, or -Infinity if the batch list is empty.
+export function maxBatchScore(batches: BatchResult[]): number {
+	return batches.length > 0
+		? Math.max(...batches.map((b) => b.score))
+		: -Infinity;
+}
+
+// Max of deliver score and best batch multiplier score — the net value of the current carry portfolio.
+export function carryValue(
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	beliefs: BeliefStore,
+	carry: CarryState,
+	metrics: ValuatorMetrics,
+	directives: Readonly<ActiveDirectives>,
+): number {
+	const d = scoreDeliver(map, bfs, carry, metrics, directives);
+	const batches = batchCandidates(
+		map,
+		bfs,
+		beliefs,
+		carry,
+		metrics,
+		directives,
+	);
+	return Math.max(
+		d?.score ?? 0,
+		batches.length > 0 ? maxBatchScore(batches) : 0,
+	);
 }

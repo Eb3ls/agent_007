@@ -1,30 +1,52 @@
 import {
-	selectBestIntention,
-	type IntentionCandidate,
-	type IntentionRuleContext,
-} from "./intention_rules.js";
-import {
 	scorePickup,
 	scoreDeliver,
 	scoreGoto,
 	batchCandidates,
+	type CrossCtx,
 	type ValuatorMetrics,
 } from "./valuator.js";
+import {
+	selectBestIntention,
+	type IntentionCandidate,
+	type IntentionRuleContext,
+} from "./intention_rules.js";
 import {
 	buildPlan,
 	computeDecayPerStep,
 	nearestOutOfViewSpawn,
 	nearestRoamTarget,
 } from "./planner.js";
+import { scopeOf, type ActiveDirectives } from "../team/directives.js";
 import { type StaticMap, tileId, idToXY } from "../static_map.js";
 import { computeCurrentIntentionUtility } from "./reconsider.js";
 import { type Intention, makeIntention } from "./intention.js";
-import type { ActiveDirectives } from "../team/directives.js";
 import type { TeamExclusions } from "../team/coordinator.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { BfsFromSelf } from "../pathfinder.js";
-import { log } from "../logger.js";
 import { cfg } from "../config.js";
+
+const DECISION_TOP_K = 4;
+
+// Formats the deliberation decision as a human-readable string: selected candidate and top alternatives with their utilities.
+export function buildWhy(
+	candidates: IntentionCandidate[],
+	selected: IntentionCandidate,
+	topK: number = DECISION_TOP_K,
+): string {
+	const label = (c: IntentionCandidate) =>
+		`${c.detail ?? c.source}(${c.utility.toFixed(0)})`;
+	const others = candidates
+		.filter((c) => c !== selected)
+		.sort((a, b) => b.utility - a.utility);
+	const shown = others.slice(0, Math.max(0, topK - 1));
+	const more = others.length - shown.length;
+	let s = [`→  ${label(selected)}`, ...shown.map(label)].join(" > ");
+	if (more > 0) s += ` (+${more})`;
+	return s;
+}
+
+export type DeliberateResult = { intention: Intention | null; why: string };
 
 export type DeliberationContext = {
 	myId: string;
@@ -46,8 +68,11 @@ export type DeliberationContext = {
 	metrics?: ValuatorMetrics;
 	/** Server-reported average parcel reward for explore EV estimate. Fallback: 10. */
 	rewardAvg?: number;
+	/** Priced-cross BFS context — built when pricedCrossTiles non-empty. */
+	crossCtx?: CrossCtx;
 };
 
+// Returns spawn tile IDs observed empty within the TTL window, plus team-excluded spawn IDs.
 function freshObservedEmptySpawns(
 	beliefs: BeliefStore,
 	now: number,
@@ -64,6 +89,7 @@ function freshObservedEmptySpawns(
 	return fresh;
 }
 
+// Estimates the expected value of walking to an unexplored spawn: spawn probability × expected reward × decay factor.
 function computeExploreEV(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -88,6 +114,8 @@ function computeExploreEV(
 		1,
 		map.spawnTileIds.length - beliefs.observedEmptySpawns.size,
 	);
+	// spawnProb: distance (steps) as a proxy for time elapsed — longer walks give more spawns a chance to appear.
+	// Dividing by empty-spawner count assumes spawns are uniformly distributed across idle spawners.
 	const spawnProb = Math.min(1, steps / Math.max(1, spawnerEmptyN));
 	return Math.max(
 		0,
@@ -95,7 +123,8 @@ function computeExploreEV(
 	);
 }
 
-export function deliberate(context: DeliberationContext): Intention | null {
+// Scores all candidate intentions and returns the best one above the start_margin threshold.
+export function deliberate(context: DeliberationContext): DeliberateResult {
 	const metrics: ValuatorMetrics = context.metrics ?? {
 		M: context.movementDurationMs,
 		L: 0,
@@ -130,6 +159,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		context.carry,
 		metrics,
 		directives,
+		context.crossCtx,
 	);
 	if (deliverResult) {
 		candidates.push({
@@ -153,6 +183,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		directives,
 		undefined,
 		excludedParcels,
+		context.crossCtx,
 	);
 	if (pickupResult) {
 		candidates.push({
@@ -188,6 +219,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 				),
 				source: "batch",
 				utility: b.score,
+				detail: `batch→${b.targetCount}×${b.mult}`,
 			});
 		}
 	}
@@ -220,6 +252,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 				bonus,
 				context.carry,
 				metrics,
+				context.crossCtx,
 			);
 			if (gotoScore === null) continue;
 
@@ -230,7 +263,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 					context.now,
 					undefined,
 					m.missionId,
-					m.target === "both" ? "global" : "per-agent",
+					scopeOf(m.target),
 				),
 				source: "goto",
 				utility: gotoScore,
@@ -300,38 +333,18 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	};
 
 	const selected = selectBestIntention(ruleContext, candidates);
-	if (!selected) return null;
+	if (!selected) return { intention: null, why: "no candidates" };
 
-	const hasModifiers = (context.directives?.modifiers.length ?? 0) > 0;
-	const candidateStr =
-		candidates.map((c) => `${c.source}(${c.utility.toFixed(1)})`).join(" | ") +
-		` → ${selected.source}(${selected.utility.toFixed(1)}) carry=${context.carry.n}`;
-	if (hasModifiers) {
-		const modStr = (context.directives?.modifiers ?? [])
-			.map((m) => {
-				const tile =
-					m.selector.on === "deliver" && m.selector.tile
-						? `@(${m.selector.tile.x},${m.selector.tile.y})`
-						: "";
-				const eff = [
-					m.effect.mult !== undefined ? `×${m.effect.mult}` : "",
-					m.effect.add !== undefined ? `${m.effect.add >= 0 ? "+" : ""}${m.effect.add}` : "",
-				].filter(Boolean).join("");
-				return `${m.selector.on}${tile}${eff}`;
-			})
-			.join(", ");
-		log.info("deliberate", `[mods: ${modStr}] ${candidateStr}`);
-	} else {
-		log.debug("deliberate", candidateStr);
-	}
+	const why = buildWhy(candidates, selected);
 
+	// Explore is cheap so start_margin doesn't apply — only costly switches need the inertia buffer.
 	if (
 		selected.source !== "current" &&
 		selected.intention.kind !== "explore" &&
 		cfg.intention.start_margin > 0 &&
 		selected.utility < cfg.intention.start_margin
 	)
-		return null;
+		return { intention: null, why: "below start_margin" };
 
 	const plan = buildPlan(
 		context.map,
@@ -339,15 +352,19 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		selected.intention.targetXY.x,
 		selected.intention.targetXY.y,
 	);
-	if (plan.length === 0) return null;
+	if (plan.length === 0) return { intention: null, why: "no path" };
 
 	if (selected.source === "current") {
-		return { ...context.intention!, plan };
+		// Re-use the live intention object (with its in-progress plan) rather than the freshly-scored candidate shell.
+		return { intention: { ...context.intention!, plan }, why };
 	}
 	return {
-		...selected.intention,
-		committedAt: context.now,
-		moveFailStreak: 0,
-		plan,
+		intention: {
+			...selected.intention,
+			committedAt: context.now,
+			moveFailStreak: 0,
+			plan,
+		},
+		why,
 	};
 }
