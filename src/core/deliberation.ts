@@ -24,8 +24,28 @@ import type { ActiveDirectives } from "../team/directives.js";
 import type { TeamExclusions } from "../team/coordinator.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { BfsFromSelf } from "../pathfinder.js";
-import { log } from "../logger.js";
 import { cfg } from "../config.js";
+
+const DECISION_TOP_K = 4;
+
+export function buildWhy(
+	candidates: IntentionCandidate[],
+	selected: IntentionCandidate,
+	topK: number = DECISION_TOP_K,
+): string {
+	const label = (c: IntentionCandidate) =>
+		`${c.detail ?? c.source}(${c.utility.toFixed(0)})`;
+	const others = candidates
+		.filter((c) => c !== selected)
+		.sort((a, b) => b.utility - a.utility);
+	const shown = others.slice(0, Math.max(0, topK - 1));
+	const more = others.length - shown.length;
+	let s = [`→  ${label(selected)}`, ...shown.map(label)].join(" > ");
+	if (more > 0) s += ` (+${more})`;
+	return s;
+}
+
+export type DeliberateResult = { intention: Intention | null; why: string };
 
 export type DeliberationContext = {
 	myId: string;
@@ -98,7 +118,7 @@ function computeExploreEV(
 	);
 }
 
-export function deliberate(context: DeliberationContext): Intention | null {
+export function deliberate(context: DeliberationContext): DeliberateResult {
 	const metrics: ValuatorMetrics = context.metrics ?? {
 		M: context.movementDurationMs,
 		L: 0,
@@ -193,6 +213,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 				),
 				source: "batch",
 				utility: b.score,
+				detail: `batch→${b.targetCount}×${b.mult}`,
 			});
 		}
 	}
@@ -306,30 +327,9 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	};
 
 	const selected = selectBestIntention(ruleContext, candidates);
-	if (!selected) return null;
+	if (!selected) return { intention: null, why: "no candidates" };
 
-	const hasModifiers = (context.directives?.modifiers.length ?? 0) > 0;
-	const candidateStr =
-		candidates.map((c) => `${c.source}(${c.utility.toFixed(1)})`).join(" | ") +
-		` → ${selected.source}(${selected.utility.toFixed(1)}) carry=${context.carry.n}`;
-	if (hasModifiers) {
-		const modStr = (context.directives?.modifiers ?? [])
-			.map((m) => {
-				const tile =
-					m.selector.on === "deliver" && m.selector.tile
-						? `@(${m.selector.tile.x},${m.selector.tile.y})`
-						: "";
-				const eff = [
-					m.effect.mult !== undefined ? `×${m.effect.mult}` : "",
-					m.effect.add !== undefined ? `${m.effect.add >= 0 ? "+" : ""}${m.effect.add}` : "",
-				].filter(Boolean).join("");
-				return `${m.selector.on}${tile}${eff}`;
-			})
-			.join(", ");
-		log.info("deliberate", `[mods: ${modStr}] ${candidateStr}`);
-	} else {
-		log.debug("deliberate", candidateStr);
-	}
+	const why = buildWhy(candidates, selected);
 
 	if (
 		selected.source !== "current" &&
@@ -337,7 +337,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		cfg.intention.start_margin > 0 &&
 		selected.utility < cfg.intention.start_margin
 	)
-		return null;
+		return { intention: null, why: "below start_margin" };
 
 	const plan = buildPlan(
 		context.map,
@@ -345,15 +345,18 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		selected.intention.targetXY.x,
 		selected.intention.targetXY.y,
 	);
-	if (plan.length === 0) return null;
+	if (plan.length === 0) return { intention: null, why: "no path" };
 
 	if (selected.source === "current") {
-		return { ...context.intention!, plan };
+		return { intention: { ...context.intention!, plan }, why };
 	}
 	return {
-		...selected.intention,
-		committedAt: context.now,
-		moveFailStreak: 0,
-		plan,
+		intention: {
+			...selected.intention,
+			committedAt: context.now,
+			moveFailStreak: 0,
+			plan,
+		},
+		why,
 	};
 }

@@ -79,7 +79,10 @@ function dPerStep(metrics: ValuatorMetrics): number {
 		: 0;
 }
 
-function conditionMet(cond: Condition | undefined, carry: CarryState): boolean {
+export function conditionMet(
+	cond: Condition | undefined,
+	carry: CarryState,
+): boolean {
 	if (!cond) return true;
 	const R_c = sumRewards(carry);
 	if ("carryCountEquals" in cond) return carry.n === cond.carryCountEquals;

@@ -15,6 +15,7 @@ export type IntentionCandidate = {
 	intention: Intention;
 	source: IntentionCandidateSource;
 	utility: number;
+	detail?: string; // human label for decision logs, e.g. "batch→2×10"
 };
 
 export type IntentionRuleContext = {
@@ -78,4 +79,10 @@ export function selectBestIntention(
 	}
 
 	return best;
+}
+
+export function intentSig(intention: Intention | null): string {
+	return intention
+		? `${intention.kind}:(${intention.targetXY.x},${intention.targetXY.y})`
+		: "idle";
 }

@@ -10,6 +10,7 @@ import {
 	type CarryState,
 } from "./planner.js";
 import {
+	conditionMet,
 	parcelCapEffect,
 	batchCandidates,
 	carryValue,
@@ -47,15 +48,12 @@ import {
 	spawnsWithinRadius,
 	type StaticMap,
 } from "../static_map.js";
-import {
-	bfsFromSelf,
-	type BfsFromSelf,
-	type Direction,
-} from "../pathfinder.js";
+import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import { cfg as appCfg, parseDecayInterval } from "../config.js";
 import type { Coordinator } from "../team/coordinator.js";
 import type { AgentBus } from "../team/agent_bus.js";
 import type { GameClient } from "../game_client.js";
+import { intentSig } from "./intention_rules.js";
 import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
 import { makeIntention } from "./intention.js";
@@ -155,6 +153,8 @@ type StageResult = {
 export class AgentCore {
 	private readonly directives = new DirectiveHandler();
 	private M = 0;
+	private lastIntentSig: string | null = null;
+	private intentRebuilds = 0;
 
 	constructor(
 		private readonly id: string,
@@ -310,6 +310,7 @@ export class AgentCore {
 			"deliver",
 			`putdown=${dropped.length} cleared=${ctx.carry.n} total_delivered=${deliveryCount}`,
 		);
+		this.completeOneShotDeliverModifiers(state, ctx.carry, selfX, selfY);
 		if (intention?.kind === "deliver" && intention.missionId) {
 			this.bus?.emitRelease({
 				missionId: intention.missionId,
@@ -517,6 +518,10 @@ export class AgentCore {
 		crateCtx: CratePlannerContext | null,
 	): Promise<Intention | null> {
 		const map = this.client.staticMap;
+		let terminatedThisTick = false;
+		let terminatedSig = "";
+		let terminatedReason = "";
+		let deliberateWhy = "";
 
 		// Gate 1: viability.
 		if (intention) {
@@ -532,15 +537,26 @@ export class AgentCore {
 				cfg.movementDurationMs,
 			);
 			if (!viability.viable) {
-				log.warn(
-					"intent",
-					`terminal kind=${intention.kind} reason=${viability.reason}`,
+				terminatedThisTick = true;
+				terminatedSig = intentSig(intention);
+				terminatedReason =
+					viability.reason +
+					("detail" in viability && viability.detail
+						? `:${viability.detail}`
+						: "");
+				log.debug(
+					`${this.id}:intent`,
+					`terminal kind=${intention.kind} reason=${terminatedReason}`,
 				);
 				if (
 					viability.reason === "succeeded" &&
 					intention.kind === "goto" &&
 					intention.missionId
 				) {
+					log.ok(
+						this.id,
+						`mission complete missionId=${intention.missionId}`,
+					);
 					this.bus?.emitRelease({
 						missionId: intention.missionId,
 						scope: intention.releaseScope ?? "global",
@@ -587,12 +603,12 @@ export class AgentCore {
 					pushIntention.usedPDDL = true;
 					intention = pushIntention;
 					log.info(
-						"intent",
+						`${this.id}:intent`,
 						`PDDL crate nav: ${navPath.length} steps`,
 					);
 				} else {
 					log.warn(
-						"intent",
+						`${this.id}:intent`,
 						`sound-fail kind=${intention.kind} reason=unreachable`,
 					);
 					intention = null;
@@ -633,7 +649,7 @@ export class AgentCore {
 				L: this.coordinator?.getL() ?? 0,
 				decayIntervalMs: cfg.decayIntervalMs,
 			};
-			intention = deliberate({
+			const result = deliberate({
 				myId: cfg.myId,
 				map,
 				beliefs: this.beliefs,
@@ -652,6 +668,8 @@ export class AgentCore {
 				...(teamExclusions && { teamExclusions }),
 				...(ctx.crossCtx && { crossCtx: ctx.crossCtx }),
 			});
+			intention = result.intention;
+			deliberateWhy = result.why;
 
 			if (intention) {
 				const changed =
@@ -660,8 +678,8 @@ export class AgentCore {
 					intention.targetXY.x !== prev.targetXY.x ||
 					intention.targetXY.y !== prev.targetXY.y;
 				if (changed)
-					log.warn(
-						"intent",
+					log.debug(
+						`${this.id}:intent`,
 						`${reconsider && prev ? "reconsider→replan" : "new"} kind=${intention.kind} carrying=${ctx.carry.n > 0} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
 					);
 			}
@@ -705,24 +723,37 @@ export class AgentCore {
 				return best;
 			};
 
-			let plan: Direction[] = [];
-			let target: { x: number; y: number } | null = null;
-			let label = "";
-
 			if (carryingUndeliverable) {
-				target = nearest(map.deliveryTileIds, true);
-				if (target) {
-					plan = await buildPlanWithCrateHandling(
+				const fallbackTarget = nearest(map.deliveryTileIds, true);
+				if (fallbackTarget) {
+					const fallbackPlan = await buildPlanWithCrateHandling(
 						map,
 						ctx.bfs,
-						target.x,
-						target.y,
+						fallbackTarget.x,
+						fallbackTarget.y,
 						this.beliefs,
 						selfX,
 						selfY,
 						crateCtx,
 					);
-					label = `deliver → (${target.x},${target.y})`;
+					if (fallbackPlan.length > 0) {
+						// A delivery-bound crate push must run to completion: kind
+						// "push" so shouldReconsiderPDDLForParcel (which only preempts
+						// "explore") won't swap it for a nearby pickup every tick,
+						// leaving the agent wandering while it carries undeliverable
+						// parcels.
+						intention = makeIntention(
+							"push",
+							fallbackTarget,
+							ctx.now,
+						);
+						intention.plan = fallbackPlan;
+						intention.usedPDDL = true;
+						log.warn(
+							`${this.id}:intent`,
+							`PDDL crate fallback deliver → (${fallbackTarget.x},${fallbackTarget.y})`,
+						);
+					}
 				}
 			} else if (
 				spawnsBlocked &&
@@ -731,8 +762,7 @@ export class AgentCore {
 				const pickup = nearest(map.spawnTileIds, true);
 				const delivery = nearest(map.deliveryTileIds, false);
 				if (pickup && delivery) {
-					target = delivery;
-					plan = await buildPlanWithCrateHandling(
+					const fallbackPlan = await buildPlanWithCrateHandling(
 						map,
 						ctx.bfs,
 						delivery.x,
@@ -743,20 +773,50 @@ export class AgentCore {
 						crateCtx,
 						pickup,
 					);
-					label = `collect (${pickup.x},${pickup.y})→(${delivery.x},${delivery.y})`;
+					if (fallbackPlan.length > 0) {
+						// spawn-exploration case stays "explore" so a parcel that comes
+						// into view can still preempt it.
+						intention = makeIntention("explore", delivery, ctx.now);
+						intention.plan = fallbackPlan;
+						intention.usedPDDL = true;
+						log.warn(
+							`${this.id}:intent`,
+							`PDDL crate fallback collect (${pickup.x},${pickup.y})→(${delivery.x},${delivery.y})`,
+						);
+					}
 				}
 			}
+		}
 
-			if (target && plan.length > 0) {
-				// Both fallbacks run to completion: kind "push" so the BFS-based
-				// viability/reconsider gates can't abort a solver-verified crate plan
-				// mid-route (which would leave the agent wandering). Parcels are still
-				// picked up and delivered via the position reflexes along the route.
-				intention = makeIntention("push", target, ctx.now);
-				intention.plan = plan;
-				intention.usedPDDL = true;
-				log.warn("intent", `PDDL crate fallback ${label}`);
+		const sig = intentSig(intention);
+		if (sig === this.lastIntentSig) {
+			if (terminatedThisTick) this.intentRebuilds++;
+		} else {
+			const verb =
+				this.lastIntentSig === null || this.lastIntentSig === "idle"
+					? "new"
+					: "switch";
+			let suffix = "";
+			if (terminatedThisTick) {
+				const n =
+					this.intentRebuilds > 0
+						? ` ×${this.intentRebuilds + 1}`
+						: "";
+				suffix = ` (prev ${terminatedSig}: ${terminatedReason}${n})`;
+			} else if (this.intentRebuilds > 0) {
+				suffix = ` (re-planned ×${this.intentRebuilds})`;
 			}
+			if (intention) {
+				const why = deliberateWhy ? `  why: ${deliberateWhy}` : "";
+				log.warn(
+					`${this.id}:intent`,
+					`${verb} kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps carrying=${ctx.carry.n > 0}${why}${suffix}`,
+				);
+			} else {
+				log.warn(`${this.id}:intent`, `idle${suffix}`);
+			}
+			this.lastIntentSig = sig;
+			this.intentRebuilds = 0;
 		}
 
 		return intention;
@@ -873,7 +933,7 @@ export class AgentCore {
 			);
 			if (plan.length === 0) {
 				log.warn(
-					"intent",
+					`${this.id}:intent`,
 					`no plan for kind=${intention.kind} — dropping`,
 				);
 				return { selfX, selfY, intention: null };
@@ -948,13 +1008,39 @@ export class AgentCore {
 		return { selfX, selfY, intention };
 	}
 
+	private completeOneShotDeliverModifiers(
+		state: ActiveDirectives,
+		carry: CarryState,
+		tileX: number,
+		tileY: number,
+	): void {
+		for (const m of state.modifiers) {
+			if (m.lifetime !== "one-shot") continue;
+			const sel = m.selector;
+			if (sel.on === "deliver") {
+				if (sel.tile && (sel.tile.x !== tileX || sel.tile.y !== tileY))
+					continue;
+				if (!conditionMet(m.condition, carry)) continue;
+			} else if (sel.on === "deliver-parcel") {
+				const thr = sel.rewardOver ?? 0;
+				if (!carry.rewards.some((r) => r > thr)) continue;
+			} else {
+				continue;
+			}
+			log.ok(this.id, `mission complete missionId=${m.missionId}`);
+			this.bus?.emitRelease({
+				missionId: m.missionId,
+				scope: m.target === "both" ? "global" : "per-agent",
+			});
+		}
+	}
+
 	async run(): Promise<void> {
 		const { cfg, crateCtx, selfX: initX, selfY: initY } = await this.init();
 		let selfX = initX,
 			selfY = initY;
 
 		let intention: Intention | null = null;
-		let intentionMissing = false;
 		let loopCount = 0;
 		let deliveryCount = 0;
 
@@ -1034,17 +1120,9 @@ export class AgentCore {
 			}
 
 			if (!intention) {
-				if (!intentionMissing) {
-					log.warn(
-						"wait",
-						`no intention — carrying=${ctx.carry.n > 0} pos=(${selfX},${selfY})`,
-					);
-					intentionMissing = true;
-				}
 				await sleep(appCfg.loop.no_step_wait_ms);
 				continue;
 			}
-			intentionMissing = false;
 
 			// Move: empty-plan rebuild + push-defer + execute.
 			({ selfX, selfY, intention } = await this.runMovePhase(
