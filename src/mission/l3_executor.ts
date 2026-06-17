@@ -1,4 +1,11 @@
-import { DIRS, idToXY, inBounds, tileId, TILE, type StaticMap } from "../static_map.js";
+import {
+	DIRS,
+	idToXY,
+	inBounds,
+	tileId,
+	TILE,
+	type StaticMap,
+} from "../static_map.js";
 import type { AgentBus, ConfirmPayload } from "../team/agent_bus.js";
 import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import type { Coordinator } from "../team/coordinator.js";
@@ -334,14 +341,21 @@ export class L3Executor {
 		for (let attempt = 1; attempt <= MAX_HANDOFF_ATTEMPTS; attempt++) {
 			const site = this.selectHandoffSite();
 			if (!site) {
-				log.warn("l3_executor", `no handoff site on attempt ${attempt} missionId=${missionId}`);
-				if (attempt < MAX_HANDOFF_ATTEMPTS) await sleep(PARCEL_POLL_INTERVAL_MS);
+				log.warn(
+					"l3_executor",
+					`no handoff site on attempt ${attempt} missionId=${missionId}`,
+				);
+				if (attempt < MAX_HANDOFF_ATTEMPTS)
+					await sleep(PARCEL_POLL_INTERVAL_MS);
 				continue;
 			}
 
 			const ev = this.computeEV(record, ctx, site, missionBonus);
 			if (ev <= threshold) {
-				log.info("l3_executor", `EV=${ev.toFixed(1)} ≤ threshold=${threshold.toFixed(1)} — not dispatching`);
+				log.info(
+					"l3_executor",
+					`EV=${ev.toFixed(1)} ≤ threshold=${threshold.toFixed(1)} — not dispatching`,
+				);
 				return;
 			}
 
@@ -353,9 +367,16 @@ export class L3Executor {
 
 			let success: boolean;
 			try {
-				success = await this.awaitHandshake(missionId, site.roles, site.dropTile);
+				success = await this.awaitHandshake(
+					missionId,
+					site.roles,
+					site.dropTile,
+				);
 			} catch (err) {
-				log.warn("l3_executor", `CONFIRM timeout attempt ${attempt} — aborting missionId=${missionId}: ${String(err)}`);
+				log.warn(
+					"l3_executor",
+					`CONFIRM timeout attempt ${attempt} — aborting missionId=${missionId}: ${String(err)}`,
+				);
 				this.bus.emitRelease({ missionId, scope });
 				return;
 			}
@@ -377,13 +398,19 @@ export class L3Executor {
 					}
 				}
 				this.bus.emitRelease({ missionId, scope });
-				log.info("l3_executor", `handoff complete — RELEASE missionId=${missionId}`);
+				log.info(
+					"l3_executor",
+					`handoff complete — RELEASE missionId=${missionId}`,
+				);
 				return;
 			}
 
 			// Pickup failed (parcel gone) — free the carrier and retry.
 			this.bus.emitRelease({ missionId, scope });
-			log.warn("l3_executor", `handoff pickup failed (attempt ${attempt}/${MAX_HANDOFF_ATTEMPTS}) missionId=${missionId}`);
+			log.warn(
+				"l3_executor",
+				`handoff pickup failed (attempt ${attempt}/${MAX_HANDOFF_ATTEMPTS}) missionId=${missionId}`,
+			);
 
 			if (attempt < MAX_HANDOFF_ATTEMPTS) {
 				// Wait for a fresh parcel before the next attempt.
@@ -396,7 +423,10 @@ export class L3Executor {
 			}
 		}
 
-		log.warn("l3_executor", `handoff failed after ${MAX_HANDOFF_ATTEMPTS} attempts — aborting missionId=${missionId}`);
+		log.warn(
+			"l3_executor",
+			`handoff failed after ${MAX_HANDOFF_ATTEMPTS} attempts — aborting missionId=${missionId}`,
+		);
 	}
 
 	// Moves both agents to any tile within RENDEZVOUS_MAX_DIST of the target and
@@ -751,7 +781,10 @@ export class L3Executor {
 			"failed",
 		]);
 		if (result === "failed") {
-			log.warn("l3_executor", `receiver found no parcel at drop tile missionId=${missionId}`);
+			log.warn(
+				"l3_executor",
+				`receiver found no parcel at drop tile missionId=${missionId}`,
+			);
 			return false;
 		}
 		log.info("l3_executor", `receiver picked up missionId=${missionId}`);
@@ -780,7 +813,11 @@ export class L3Executor {
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.bus.off("CONFIRM", handler);
-				reject(new Error(`l3 timeout waiting for ${agentId} CONFIRM missionId=${missionId}`));
+				reject(
+					new Error(
+						`l3 timeout waiting for ${agentId} CONFIRM missionId=${missionId}`,
+					),
+				);
 			}, CONFIRM_TIMEOUT_MS);
 			const handler = (payload: ConfirmPayload) => {
 				if (payload.missionId !== missionId) return;

@@ -13,12 +13,12 @@ const USER_TMPL = Handlebars.compile(
 	readFileSync(join(__dir, "prompts/user.hbs"), "utf8"),
 	{ noEscape: true },
 );
-const L1_SYSTEM_TMPL = Handlebars.compile(
-	readFileSync(join(__dir, "prompts/l1_system.hbs"), "utf8"),
+const RESOLVER_SYSTEM_TMPL = Handlebars.compile(
+	readFileSync(join(__dir, "prompts/resolver_system.hbs"), "utf8"),
 	{ noEscape: true },
 );
-const L1_USER_TMPL = Handlebars.compile(
-	readFileSync(join(__dir, "prompts/l1_user.hbs"), "utf8"),
+const RESOLVER_USER_TMPL = Handlebars.compile(
+	readFileSync(join(__dir, "prompts/resolver_user.hbs"), "utf8"),
 	{ noEscape: true },
 );
 
@@ -30,10 +30,10 @@ export function buildExtractionPrompt(text: string): string {
 	return USER_TMPL({ text });
 }
 
-export function buildL1SystemPrompt(): string {
-	return L1_SYSTEM_TMPL({});
+export function buildResolverSystemPrompt(): string {
+	return RESOLVER_SYSTEM_TMPL({});
 }
 
-export function buildL1UserPrompt(raw: string): string {
-	return L1_USER_TMPL({ raw });
+export function buildResolverUserPrompt(raw: string): string {
+	return RESOLVER_USER_TMPL({ raw });
 }

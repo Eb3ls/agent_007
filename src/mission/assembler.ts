@@ -4,12 +4,13 @@ import {
 	type Directive,
 	type XY,
 } from "../team/directives.js";
+import { resolvePredicateTokens, type StaticMap } from "../static_map.js";
 import type { AgentBus } from "../team/agent_bus.js";
 import type { GameClient } from "../game_client.js";
 import type { MissionRecord } from "./extractor.js";
 import type { L3Executor } from "./l3_executor.js";
-import type { L1Executor } from "./l1_executor.js";
 import type { Extractor } from "./extractor.js";
+import type { Resolver } from "./resolver.js";
 import type { Listener } from "./listener.js";
 import { log } from "../logger.js";
 
@@ -21,7 +22,8 @@ export class Assembler {
 		private readonly chatClient: GameClient,
 		private readonly listener: Listener,
 		private readonly extractor: Extractor,
-		private readonly l1Executor?: L1Executor,
+		private readonly map: StaticMap,
+		private readonly resolver?: Resolver,
 		private readonly l3Executor?: L3Executor,
 	) {}
 
@@ -52,7 +54,7 @@ export class Assembler {
 		log.debug("assembler", `missionRecord: ${JSON.stringify(record)}`);
 
 		if (await this.handleQa(record, senderId)) return;
-		if (this.handleStateQuery(record)) return;
+		if (this.resolveAndRoute(record)) return;
 
 		const missionId = `m${++this.missionSeq}`;
 		const scope = scopeOf(record.target);
@@ -94,60 +96,82 @@ export class Assembler {
 		return record.opType === "qa";
 	}
 
-	// Fires L1 resolution asynchronously: returns true immediately so the caller can reply "working on it",
-	// then re-injects the resolved MODIFIER once the LLM finishes.
-	private handleStateQuery(record: MissionRecord): boolean {
-		if (
-			record.level !== "L1" ||
-			record.answer ||
-			(record.selector.coords && record.selector.coords.length > 0) ||
-			!this.l1Executor
-		)
+	// Deterministic-first resolution for coord-consuming missions (MODIFIER, rendezvous).
+	// Returns true when the mission was resolved (sync via predicate) or handed to the async
+	// resolver loop; false when there is nothing to resolve and the caller should dispatch as-is.
+	private resolveAndRoute(record: MissionRecord): boolean {
+		if (record.answer) return false;
+		if (record.opType !== "MODIFIER" && record.opType !== "rendezvous")
 			return false;
 
-		void this.l1Executor.run(record).then((result) => {
+		// Explicit override: the target isn't vocab-expressible → tool-based resolver loop.
+		if (record.needsResolve) {
+			if (!this.resolver) return false;
+			this.runResolver(record);
+			return true;
+		}
+
+		// Deterministic fast path: resolve predicate tokens to tiles with no LLM call.
+		if (record.predicate && record.predicate.length > 0) {
+			const tiles = resolvePredicateTokens(record.predicate, this.map);
+			if (tiles.length > 0) {
+				this.dispatchResolved(record, tiles);
+				return true;
+			}
+			// Deterministic resolution found nothing → fall back to the resolver loop.
+			if (this.resolver) {
+				this.runResolver(record);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Runs the LLM resolver loop asynchronously and dispatches the resolved coords on completion.
+	private runResolver(record: MissionRecord): void {
+		if (!this.resolver) return;
+		void this.resolver.run(record).then((result) => {
 			if (result.kind !== "modifier" || result.coords.length === 0)
 				return;
-			const mid = `m${++this.missionSeq}`;
-			// Map resolved coords to appropriate selector field based on opType.
-			// Special case: on="deliver" with resolved coords → convert to "goto" so agents route there.
-			const baseSelector = record.selector;
-			let resolvedSelector: typeof record.selector;
-			if (baseSelector.on === "deliver" && result.coords.length > 0) {
-				// Keep deliver semantics with the resolved specific tile.
-				resolvedSelector = {
-					on: "deliver" as const,
-					tile: result.coords[0] ?? null,
-				};
-				log.info("assembler", `resolved deliver tile missionId=${mid}`);
-			} else if (baseSelector.on === "cross") {
-				// For cross: use tiles array
-				resolvedSelector = {
-					on: "cross" as const,
-					tiles: result.coords,
-				};
-			} else {
-				// For goto and others: use coords array
-				resolvedSelector = {
-					...baseSelector,
-					coords: result.coords,
-				};
-			}
-			const dir = this.buildModifier(
-				{ ...record, selector: resolvedSelector },
-				mid,
-				record.target,
-			);
-			if (dir) {
-				this.emitBoth(dir);
-				log.info(
-					"assembler",
-					`l1 resolved coords → MODIFIER missionId=${mid}`,
-				);
-			}
+			this.dispatchResolved(record, result.coords);
 		});
-		log.info("assembler", "routed to l1_executor (STATE_QUERY)");
-		return true;
+		log.info("assembler", "routed to resolver loop");
+	}
+
+	// Injects resolved tiles into the record's selector (per opType) and routes the resolved
+	// record to its normal handler. Clears resolution flags to prevent re-triggering.
+	private dispatchResolved(record: MissionRecord, tiles: XY[]): void {
+		const mid = `m${++this.missionSeq}`;
+		// Drop predicate so the resolved record can't re-trigger resolution.
+		const { predicate: _resolved, ...rest } = record;
+		void _resolved;
+		const resolved: MissionRecord = {
+			...rest,
+			selector: this.injectCoords(record, tiles),
+			needsResolve: false,
+		};
+		if (resolved.opType === "rendezvous" || resolved.opType === "handoff") {
+			this.handleChoreography(resolved, mid);
+		} else {
+			this.handleModifier(resolved, mid, resolved.target);
+		}
+		log.info(
+			"assembler",
+			`resolved → ${resolved.opType} missionId=${mid} tiles=${tiles.length}`,
+		);
+	}
+
+	// Maps resolved tiles into the selector field appropriate for the selector kind:
+	// deliver → single tile, cross → forbidden set, goto/rendezvous → coords.
+	private injectCoords(
+		record: MissionRecord,
+		tiles: XY[],
+	): MissionRecord["selector"] {
+		const sel = record.selector;
+		if (sel.on === "deliver")
+			return { on: "deliver", tile: tiles[0] ?? null };
+		if (sel.on === "cross") return { on: "cross", tiles };
+		return { ...sel, coords: tiles };
 	}
 
 	// Emits PAUSE to both agents and optionally arms a resume token.

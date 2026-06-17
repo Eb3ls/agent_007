@@ -1,12 +1,15 @@
-import { buildL1SystemPrompt, buildL1UserPrompt } from "./prompts.js";
-import type { L1Ctx, L1DoneShape, ToolCall } from "./tools.js";
+import {
+	buildResolverSystemPrompt,
+	buildResolverUserPrompt,
+} from "./prompts.js";
+import type { ResolverCtx, ResolveDoneShape, ToolCall } from "./tools.js";
 import type { LlmClient, ChatMessage } from "./llm_client.js";
 import type { MissionRecord } from "./extractor.js";
 import { executeTool } from "./tools.js";
 import { log } from "../logger.js";
 import { cfg } from "../config.js";
 
-export type L1Result = L1DoneShape;
+export type ResolveResult = ResolveDoneShape;
 
 // Included in error feedback so the model knows exactly what to fix.
 const FORMAT_HINT =
@@ -20,32 +23,32 @@ function errorObservation(msg: string): ChatMessage {
 	};
 }
 
-export class L1Executor {
+export class Resolver {
 	constructor(
 		private readonly llm: LlmClient,
-		private readonly ctx: L1Ctx,
+		private readonly ctx: ResolverCtx,
 	) {}
 
 	// ReAct loop: each step asks the LLM for a thought + action, runs the tool, feeds the observation back.
 	// Bounded by cfg.maxSteps; parse errors are fed back as observations so the model can self-correct.
-	async run(record: MissionRecord): Promise<L1Result> {
-		log.info("l1_executor", `started on: ${record.raw.slice(0, 60)}`);
+	async run(record: MissionRecord): Promise<ResolveResult> {
+		log.info("resolver", `started on: ${record.raw.slice(0, 60)}`);
 		const history: ChatMessage[] = [
-			{ role: "system", content: buildL1SystemPrompt() },
-			{ role: "user", content: buildL1UserPrompt(record.raw) },
+			{ role: "system", content: buildResolverSystemPrompt() },
+			{ role: "user", content: buildResolverUserPrompt(record.raw) },
 		];
 
 		let messageSent = false;
 
-		log.info("l1_executor", `starting exec loop for mission${record.raw}`);
+		log.info("resolver", `starting exec loop for mission${record.raw}`);
 
-		for (let step = 0; step < cfg.mission.l1_max_steps; step++) {
+		for (let step = 0; step < cfg.mission.resolver_max_steps; step++) {
 			let raw: string;
 			try {
 				raw = await this.llm.complete(history);
 			} catch (err) {
 				log.warn(
-					"l1_executor",
+					"resolver",
 					`step ${step}: LLM error — ${String(err)}`,
 				);
 				break;
@@ -55,7 +58,7 @@ export class L1Executor {
 			try {
 				parsed = JSON.parse(raw) as typeof parsed;
 			} catch {
-				log.warn("l1_executor", `step ${step}: JSON parse failed`);
+				log.warn("resolver", `step ${step}: JSON parse failed`);
 				history.push({ role: "assistant", content: raw });
 				history.push(
 					errorObservation(
@@ -71,7 +74,7 @@ export class L1Executor {
 				parsed.action === null ||
 				typeof (parsed.action as { tool?: unknown }).tool !== "string"
 			) {
-				log.warn("l1_executor", `step ${step}: bad action shape`);
+				log.warn("resolver", `step ${step}: bad action shape`);
 				history.push({ role: "assistant", content: raw });
 				history.push(
 					errorObservation(`Invalid action shape. ${FORMAT_HINT}`),
@@ -88,22 +91,22 @@ export class L1Executor {
 					| null
 					| undefined;
 				if (messageSent) {
-					log.info("l1_executor", "done: answered");
+					log.info("resolver", "done: answered");
 					return { kind: "answered" };
 				}
 				if (!doneArgs) {
-					log.warn("l1_executor", "done: no args");
+					log.warn("resolver", "done: no args");
 					return { kind: "failed" };
 				}
 				const coords = doneArgs.resolvedCoords;
 				if (coords && coords.length > 0) {
 					log.ok(
-						"l1_executor",
+						"resolver",
 						`done: resolved ${coords.length} coords`,
 					);
 					return { kind: "modifier", coords };
 				}
-				log.warn("l1_executor", "done: no coords");
+				log.warn("resolver", "done: no coords");
 				return { kind: "failed" };
 			}
 
@@ -126,12 +129,12 @@ export class L1Executor {
 		}
 
 		if (messageSent) {
-			log.info("l1_executor", "max steps exhausted: answered");
+			log.info("resolver", "max steps exhausted: answered");
 			return { kind: "answered" };
 		}
 		log.error(
-			"l1_executor",
-			`max steps exhausted (${cfg.mission.l1_max_steps}) — failing`,
+			"resolver",
+			`max steps exhausted (${cfg.mission.resolver_max_steps}) — failing`,
 		);
 		return { kind: "failed" };
 	}

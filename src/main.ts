@@ -1,10 +1,10 @@
 import { createLlmClient } from "./mission/llm_client.js";
 import { L3Executor } from "./mission/l3_executor.js";
-import { L1Executor } from "./mission/l1_executor.js";
 import { createBeliefStore } from "./belief_store.js";
 import { Coordinator } from "./team/coordinator.js";
 import { Extractor } from "./mission/extractor.js";
 import { Assembler } from "./mission/assembler.js";
+import { Resolver } from "./mission/resolver.js";
 import { Listener } from "./mission/listener.js";
 import { AgentCore } from "./core/agent_core.js";
 import { AgentBus } from "./team/agent_bus.js";
@@ -42,7 +42,7 @@ if (env.tokenLlm) {
 		// env.llm is non-null whenever env.tokenLlm is set
 		const llmClient = createLlmClient(env.llm!);
 		const extractor = new Extractor(llmClient);
-		const l1Executor = new L1Executor(llmClient, {
+		const resolver = new Resolver(llmClient, {
 			map: clientBdi.staticMap,
 			chatClient: clientLlm,
 			senderId: env.serverAgentName,
@@ -61,7 +61,8 @@ if (env.tokenLlm) {
 			clientLlm,
 			listener,
 			extractor,
-			l1Executor,
+			clientBdi.staticMap,
+			resolver,
 			l3Executor,
 		);
 
