@@ -69,7 +69,7 @@ export class DirectiveHandler {
 	private pool: ActiveModifier[] = [];
 	private _paused = false;
 	private _pauseMissionId: string | null = null;
-	private _stage: ActiveDirectives["stage"] = null;
+	private _stages: NonNullable<ActiveDirectives["stage"]>[] = [];
 
 	enqueue(d: Directive): void {
 		this.queue.push(d);
@@ -85,13 +85,13 @@ export class DirectiveHandler {
 					this._paused = false;
 					this._pauseMissionId = null;
 				} else {
-					this._stage = {
+					this._stages.push({
 						target: d.target,
 						...(d.thenAct !== undefined && { thenAct: d.thenAct }),
 						...(d.missionId !== undefined && {
 							missionId: d.missionId,
 						}),
-					};
+					});
 				}
 			} else {
 				this.pool.push({
@@ -110,6 +110,7 @@ export class DirectiveHandler {
 
 	releaseByMissionId(missionId: string): void {
 		this.pool = this.pool.filter((m) => m.missionId !== missionId);
+		this._stages = this._stages.filter((s) => s.missionId !== missionId);
 		if (this._pauseMissionId === missionId) {
 			this._paused = false;
 			this._pauseMissionId = null;
@@ -117,7 +118,7 @@ export class DirectiveHandler {
 	}
 
 	clearStage(): void {
-		this._stage = null;
+		this._stages.shift();
 	}
 
 	get state(): ActiveDirectives {
@@ -135,7 +136,7 @@ export class DirectiveHandler {
 		return {
 			paused: this._paused,
 			pauseMissionId: this._pauseMissionId,
-			stage: this._stage,
+			stage: this._stages[0] ?? null,
 			modifiers: this.pool,
 			hardForbiddenTileCoords,
 			forbiddenPickupParcelIds,
