@@ -1,5 +1,6 @@
 import {
 	computeContestFactor,
+	computeDecayPerStep,
 	expectedReward,
 	nearestDeliveryTile,
 	nearestOutOfViewSpawn,
@@ -72,12 +73,6 @@ export type BatchResult = {
 	score: number;
 	firstParcel: ParcelBelief;
 };
-
-function dPerStep(metrics: ValuatorMetrics): number {
-	return Number.isFinite(metrics.decayIntervalMs)
-		? metrics.M / metrics.decayIntervalMs
-		: 0;
-}
 
 // Returns true if the modifier condition matches the current carry state (or if no condition is set).
 export function conditionMet(
@@ -167,7 +162,7 @@ export function scorePickup(
 	crossCtx?: CrossCtx,
 ): PickResult | null {
 	const now = Date.now();
-	const dp = dPerStep(metrics);
+	const dp = computeDecayPerStep(metrics.decayIntervalMs, metrics.M);
 	const modifiers = directives?.modifiers ?? [];
 	const forbidden = directives?.forbiddenPickupParcelIds ?? new Set<string>();
 
@@ -300,7 +295,7 @@ export function scoreDeliver(
 ): DeliverResult | null {
 	if (carry.n === 0) return null;
 
-	const dp = dPerStep(metrics);
+	const dp = computeDecayPerStep(metrics.decayIntervalMs, metrics.M);
 	const R_c = sumRewards(carry);
 	const modifiers = directives?.modifiers ?? [];
 
@@ -417,7 +412,7 @@ export function batchCandidates(
 
 	if (targets.length === 0) return [];
 
-	const dp = dPerStep(metrics);
+	const dp = computeDecayPerStep(metrics.decayIntervalMs, metrics.M);
 	const R_c = sumRewards(carry);
 	const forbidden = directives.forbiddenPickupParcelIds;
 	const results: BatchResult[] = [];
