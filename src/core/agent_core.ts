@@ -740,6 +740,10 @@ export class AgentCore {
 				return best;
 			};
 
+			let target: { x: number; y: number } | null = null;
+			let plan: any[] = [];
+			let label = "";
+
 			if (carryingUndeliverable && !deliberatedPickup) {
 				// Delivery leg: nothing reachable left to collect, so push the carried
 				// parcels straight to the nearest (sealed) delivery tile.
@@ -748,14 +752,14 @@ export class AgentCore {
 					plan = await buildPlanWithCrateHandling(
 						map,
 						ctx.bfs,
-						fallbackTarget.x,
-						fallbackTarget.y,
+						target.x,
+						target.y,
 						this.beliefs,
 						selfX,
 						selfY,
 						crateCtx,
 					);
-					if (fallbackPlan.length > 0) {
+					if (plan.length > 0) {
 						// A delivery-bound crate push must run to completion: kind
 						// "push" so shouldReconsiderPDDLForParcel (which only preempts
 						// "explore") won't swap it for a nearby pickup every tick,
@@ -763,14 +767,15 @@ export class AgentCore {
 						// parcels.
 						intention = makeIntention(
 							"push",
-							fallbackTarget,
+							target,
 							ctx.now,
 						);
-						intention.plan = fallbackPlan;
+						intention.plan = plan;
 						intention.usedPDDL = true;
+						label = `deliver → (${target.x},${target.y})`;
 						log.warn(
 							`${this.id}:intent`,
-							`PDDL crate fallback deliver → (${fallbackTarget.x},${fallbackTarget.y})`,
+							`PDDL crate fallback ${label}`,
 						);
 					}
 				}
@@ -810,8 +815,10 @@ export class AgentCore {
 				intention.usedPDDL = true;
 				log.warn("intent", `PDDL crate fallback ${label}`);
 			}
-			this.lastIntentSig = sig;
-			this.intentRebuilds = 0;
+			if (intention) {
+				this.lastIntentSig = intentSig(intention);
+				this.intentRebuilds = 0;
+			}
 		}
 
 		return intention;
