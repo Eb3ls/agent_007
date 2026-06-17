@@ -658,11 +658,7 @@ export class AgentCore {
 
 		if (!intention || reconsider) {
 			const prev = intention;
-			const metrics: ValuatorMetrics = {
-				M: this.M,
-				L: this.coordinator?.getL() ?? 0,
-				decayIntervalMs: cfg.decayIntervalMs,
-			};
+			const metrics = this.metrics(cfg);
 			const result = deliberate({
 				myId: cfg.myId,
 				map,
