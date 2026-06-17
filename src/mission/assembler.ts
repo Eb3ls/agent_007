@@ -5,6 +5,7 @@ import {
 	type XY,
 } from "../team/directives.js";
 import { resolvePredicateTokens, type StaticMap } from "../static_map.js";
+import { formatMissionRecord } from "./mission_log.js";
 import type { AgentBus } from "../team/agent_bus.js";
 import type { GameClient } from "../game_client.js";
 import type { MissionRecord } from "./extractor.js";
@@ -266,14 +267,9 @@ export class Assembler {
 		}
 		this.emitBoth(directive);
 		if (directive.kind === "MODIFIER") {
-			const sel = directive.selector;
-			const selectorDesc =
-				sel.on === "goto" || sel.on === "cross"
-					? `on=${sel.on} count=${sel.on === "goto" ? sel.coords.length : sel.tiles.length}`
-					: `on=${sel.on}`;
 			log.info(
 				"assembler",
-				`MODIFIER ${selectorDesc} missionId=${missionId} lifetime=${record.lifetime} scope=${scopeOf(record.target)}`,
+				`MODIFIER ${formatMissionRecord(record)} missionId=${missionId} scope=${scopeOf(record.target)}`,
 			);
 		}
 	}

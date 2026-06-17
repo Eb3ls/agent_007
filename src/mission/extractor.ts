@@ -1,5 +1,6 @@
 import { buildSystemPrompt, buildExtractionPrompt } from "./prompts.js";
 import type { PredicateToken } from "../team/directives.js";
+import { formatMissionRecord } from "./mission_log.js";
 import type { LlmClient } from "./llm_client.js";
 import { createHash } from "node:crypto";
 import { log } from "../logger.js";
@@ -128,10 +129,7 @@ export class Extractor {
 						: {}),
 					raw: text,
 				};
-				log.info(
-					"extractor",
-					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} predicate=${predicate ? JSON.stringify(predicate) : "none"} lifetime=${record.lifetime} bonus=${record.bonus}${record.effect.mult !== undefined ? ` mult=${record.effect.mult}` : ""}${record.effect.add !== undefined ? ` add=${record.effect.add}` : ""}${record.token ? ` token=${record.token}` : ""}${record.maxDist != null ? ` maxDist=${record.maxDist}` : ""}${record.needsResolve ? ` needsResolve=true` : ""}${record.condition ? ` condition=${JSON.stringify(record.condition)}` : ""}`,
-				);
+				log.info("extractor", formatMissionRecord(record));
 			}
 		} catch (err) {
 			log.error(
