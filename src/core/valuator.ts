@@ -79,6 +79,7 @@ function dPerStep(metrics: ValuatorMetrics): number {
 		: 0;
 }
 
+// Returns true if the modifier condition matches the current carry state (or if no condition is set).
 export function conditionMet(
 	cond: Condition | undefined,
 	carry: CarryState,
@@ -92,6 +93,7 @@ export function conditionMet(
 	return true;
 }
 
+// Applies modifier effects to the carry set: returns the net multiplier on R_c from active MODIFIER directives.
 /**
  * Σ_effects(R_c) = R_c × Π(mult_i) + Σ(add_i) for all matching deliver modifiers.
  * tile: if provided, tile-specific modifiers only apply when selector.tile matches.
@@ -156,6 +158,8 @@ export function activeScoreCap(
 /**
  * Absolute full-trip pickup score per §5.3.
  * Score_pickup(P) = R_c + R_p_eff − (n+1)·d·M·S
+ * R_c = carried reward sum · cap_mult, R_p_eff = target parcel reward after cap,
+ * n = carry count, d = decay/step, M = movement ms, S = steps to target.
  * Parcels whose reward exceeds an active deliver-parcel cap → parcel_reward_eff = 0 → skipped.
  */
 export function scorePickup(
@@ -228,6 +232,7 @@ export function scorePickup(
 				avoidDist !== undefined && avoidDist !== -1
 					? avoidDist
 					: Infinity;
+			// Spread penalty across all stops: each stop shares 1/(n+1) of the crossing cost.
 			const crossEff =
 				crossDist !== undefined && crossDist !== -1
 					? crossDist +
@@ -274,6 +279,7 @@ export function scorePickup(
 				? R_p * capFx.mult + capFx.add
 				: R_p;
 
+		// Prune: parcel can't recoup its additional trip cost over all n+1 stops.
 		if (dp > 0 && R_p_eff <= dp * ((n + 1) * S - n * s0)) continue;
 
 		const score = R_c + R_p_eff - (n + 1) * dp * S;
@@ -451,6 +457,8 @@ export function batchCandidates(
 	return results;
 }
 
+// Greedily chains up to `need` pickups: re-runs BFS from each picked parcel so distances compose correctly.
+// need===1 reuses currentBfs (caller already positioned there).
 function buildGreedyChain(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -527,12 +535,14 @@ function buildGreedyChain(
 	return { reward: totalReward, totalSteps, firstParcel };
 }
 
+// Returns the highest batch score, or -Infinity if the batch list is empty.
 export function maxBatchScore(batches: BatchResult[]): number {
 	return batches.length > 0
 		? Math.max(...batches.map((b) => b.score))
 		: -Infinity;
 }
 
+// Max of deliver score and best batch multiplier score — the net value of the current carry portfolio.
 export function carryValue(
 	map: StaticMap,
 	bfs: BfsFromSelf,

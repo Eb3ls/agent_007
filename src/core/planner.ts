@@ -78,6 +78,7 @@ export function passableCrateTileSet(
 	return passable;
 }
 
+// Returns the nearest delivery tile by BFS distance, or null if none is reachable.
 export function nearestDeliveryTile(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -100,6 +101,7 @@ type CompetitorPenaltyConfig = {
 	movementDurationMs: number;
 };
 
+// Cost = walk-to-spawn + spawn-to-delivery + competitor-penalty; minimises total round-trip time.
 // Prefers spawns that minimize walk + delivery distance + competitor presence,
 // skipping tiles in current FOV or recently observed empty.
 export function nearestOutOfViewSpawn(
@@ -190,6 +192,7 @@ export function shouldDrop(
 	return carrying && map.baseReverseDistToDelivery[selfId] === 0;
 }
 
+// Returns the first free parcel at (selfX, selfY), if any.
 export function parcelHere(
 	parcels: Map<string, ParcelBelief>,
 	selfX: number,
@@ -218,6 +221,7 @@ export function currentReward(
 
 // Expected reward accounting for probabilistic availability: in-view parcels are
 // certain; out-of-view parcels are discounted by P_alive = exp(-age/horizon).
+// stealHorizonSteps: decay horizon for steal probability; 0 disables contest discounting.
 export function expectedReward(
 	p: ParcelBelief,
 	decayIntervalMs: number,
@@ -268,16 +272,15 @@ export function computeContestFactor(
 			Math.abs(Math.round(agent.y) - parcelY);
 		const margin = distSelf - distComp; // positive = competitor closer
 		if (margin <= 0) continue;
+		// P_steal grows with the competitor's tile-advantage; exp(-margin/horizon) decays quickly when self leads.
 		const pSteal = trust * (1 - Math.exp(-margin / cfg.race.horizon_steps));
 		if (pSteal > maxSteal) maxSteal = pSteal;
 	}
 	return maxSteal;
 }
 
-// Returns the best parcel to target, with absolute pickup utility.
-// When empty (carry.n === 0): utility = parcel net value after decay to delivery.
-// When carrying: utility = total portfolio value (all carried + new parcel) after
-// taking the detour path self → parcel → delivery.
+// Two-mode utility: empty carry → full trip cost; carrying → marginal detour from delivery path.
+// Both modes share the same decayCost/contest primitives for a comparable score scale.
 export function pickBestParcelTarget(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -364,6 +367,7 @@ export type CarryState = {
 	ids: string[];
 };
 
+// Returns the sum of all carried parcel rewards.
 export function sumRewards(carry: CarryState): number {
 	return carry.rewards.reduce((a, b) => a + b, 0);
 }
@@ -429,6 +433,7 @@ export function computeDeliverUtility(
 	);
 }
 
+// Reconstructs the BFS path to (targetX, targetY) as a direction array, or [] if unreachable.
 export function buildPlan(
 	map: StaticMap,
 	bfs: BfsFromSelf,

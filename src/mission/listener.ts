@@ -27,14 +27,17 @@ export class Listener {
 		});
 	}
 
+	// Registers a word; the next message containing it fires a signal instead of being queued.
 	armToken(token: string): void {
 		this.armedTokens.add(token.toLowerCase());
 	}
 
+	// Returns and clears all pending messages.
 	drain(): QueuedMessage[] {
 		return this.queue.splice(0);
 	}
 
+	// Filters by allowlist, checks armed tokens, then queues or fires a signal.
 	private handleIncoming(
 		senderId: string,
 		senderName: string,
@@ -53,7 +56,6 @@ export class Listener {
 			}
 		}
 
-		log.info("listener", `queued from=${senderName} len=${text.length}`);
 		this.queue.push({ text, senderId, replyFn: reply });
 	}
 }

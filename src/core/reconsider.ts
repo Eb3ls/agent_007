@@ -115,6 +115,7 @@ export function computeCurrentIntentionUtility(
 	);
 	if (reward <= 0) return 0;
 
+	// Mirrors pickBestParcelTarget's detour formula exactly — scores must be on the same scale for comparison.
 	const totalDist = dist + distToDel; // detour path: self → parcel → delivery
 	const parcelNet = reward - decayCost(reward, decayPerStep, totalDist);
 	if (carry.n === 0) return parcelNet;
@@ -185,6 +186,8 @@ export function shouldReconsider(
 		currentUtility < cfg.intention.abort_margin
 	)
 		return true;
+	// opportunity_margin: fresh option must beat current by this fraction before switching —
+	// prevents abandoning a nearly-done intention for a marginally better one.
 	return (
 		freshTarget.utility >
 		currentUtility *

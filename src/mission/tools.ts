@@ -39,7 +39,8 @@ function requireString(args: unknown, key: string, tool: string): string {
 
 function execCalculate(args: unknown): number {
 	const expr = requireString(args, "expr", "calculate");
-	// Only allow arithmetic (digits, operators, parens, dots, spaces).
+	// Allowlist: digits, +-*/^().,spaces, and 'e'/'E' (exponents like 1e3). All other letters rejected.
+	// Function() eval is safe here because the allowlist blocks identifiers — no globals can be named.
 	if (/[a-df-wyz_$]/i.test(expr))
 		toolError("Non-arithmetic identifier in expr");
 	try {
@@ -50,6 +51,7 @@ function execCalculate(args: unknown): number {
 	}
 }
 
+// Answers spawn_tiles, delivery_tiles, tile_at, or bounds queries against the static map.
 function execMapQuery(args: unknown, ctx: L1Ctx): unknown {
 	const a = args as { query: string; x?: number; y?: number };
 	switch (a.query) {
@@ -73,17 +75,20 @@ function execMapQuery(args: unknown, ctx: L1Ctx): unknown {
 	}
 }
 
+// Resolves a human-readable tile label to its XY coordinates.
 function execResolveTile(args: unknown, ctx: L1Ctx): XY | null {
 	const label = requireString(args, "label", "resolve_tile");
 	return resolveLabel(label, ctx.map);
 }
 
+// Sends a chat message; defaults to replying to the current sender when no recipient is specified.
 async function execSendMessage(args: unknown, ctx: L1Ctx): Promise<string> {
 	const a = args as { to?: string; msg: string };
 	await ctx.chatClient.say(a.to ?? ctx.senderId, a.msg);
 	return "sent";
 }
 
+// Dispatches a tool call to its implementation; throws ToolError for unknown tool names.
 export async function executeTool(
 	call: ToolCall,
 	ctx: L1Ctx,
@@ -97,6 +102,7 @@ export async function executeTool(
 			return execResolveTile(call.args, ctx);
 		case "send_message":
 			return execSendMessage(call.args, ctx);
+		// "done" is terminal — handled by l1_executor before executeTool is called; never reaches here.
 		default:
 			toolError(
 				`Unknown tool "${call.tool}". Valid tools: calculate, map_query, resolve_tile, send_message, done.`,

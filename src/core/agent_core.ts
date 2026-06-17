@@ -59,6 +59,8 @@ import { deliberate } from "./deliberation.js";
 import { makeIntention } from "./intention.js";
 import { log } from "../logger.js";
 
+// Resolves a predicate token array to concrete XY positions on the map.
+// Tokens: "center", "delivery", "spawn", corner/edge shorthands, and parity filters (odd/even x|y).
 export function resolvePredicateTokens(
 	tokens: PredicateToken[],
 	map: StaticMap,
@@ -169,6 +171,7 @@ export class AgentCore {
 		});
 	}
 
+	// Polls until the server has sent a valid integer position and the static map is populated.
 	private async waitForReady(): Promise<{
 		id: string;
 		x: number;
@@ -189,6 +192,8 @@ export class AgentCore {
 		}
 	}
 
+	// Builds per-tick computation context: blocked tiles, passable crates, BFS from self,
+	// carry state, and optional cross-tile cost context for priced-cross directives.
 	private buildTickContext(
 		selfX: number,
 		selfY: number,
@@ -216,6 +221,7 @@ export class AgentCore {
 				: undefined;
 		const bfs = bfsFromSelf(map, selfX, selfY, blocked, passableCrates);
 
+		// Secondary BFS excludes priced tiles so scorePickup can compare avoid-vs-cross path costs.
 		let crossCtx: CrossCtx | undefined;
 		if (state.pricedCrossTiles.length > 0) {
 			const blockedWithPriced = new Set(blocked);
@@ -260,6 +266,7 @@ export class AgentCore {
 		};
 	}
 
+	// Assembles ValuatorMetrics from the current M-EMA and coordinator throughput rate.
 	private metrics(cfg: TickConfig): ValuatorMetrics {
 		return {
 			M: this.M,
@@ -268,6 +275,7 @@ export class AgentCore {
 		};
 	}
 
+	// Reflex: putdown if standing on the best delivery tile and no batch option scores higher.
 	private async tryGuardedDeliver(
 		ctx: TickContext,
 		selfX: number,
@@ -321,6 +329,7 @@ export class AgentCore {
 		return { skip: true, intention, deliveryCount };
 	}
 
+	// Reflex: drops carried parcels whose reward exceeds the hard cap threshold (mult=0 modifier).
 	private async tryDropOverCap(
 		ctx: TickContext,
 		state: ActiveDirectives,
@@ -356,6 +365,7 @@ export class AgentCore {
 		return { skip: true, intention, deliveryCount };
 	}
 
+	// Reflex: picks up a free parcel underfoot if adding it improves the carry portfolio value.
 	private async tryGuardedGrab(
 		ctx: TickContext,
 		selfX: number,
@@ -400,6 +410,7 @@ export class AgentCore {
 		return { skip: true, intention, deliveryCount };
 	}
 
+	// Runs all reflexes in priority order: deliver → cap-drop → grab. Returns on the first that fires.
 	private async runReflexes(
 		ctx: TickContext,
 		selfX: number,
@@ -434,6 +445,7 @@ export class AgentCore {
 		);
 	}
 
+	// Handles an active STAGE directive: routes toward the nearest reachable target tile and executes thenAct on arrival.
 	private async runStagePhase(
 		ctx: TickContext,
 		selfX: number,
@@ -508,6 +520,8 @@ export class AgentCore {
 		return { skip: false, intention };
 	}
 
+	// Runs the three-gate deliberation pipeline (viability, soundness, reconsider) and crate PDDL fallback,
+	// then logs intention transitions and returns the selected intention.
 	private async runDeliberationPhase(
 		ctx: TickContext,
 		selfX: number,
@@ -788,6 +802,8 @@ export class AgentCore {
 			}
 		}
 
+		// Track intent changes for transition logs: only emit "why" when the intention actually switches,
+		// not every tick — suppresses log spam during stable carry/deliver sequences.
 		const sig = intentSig(intention);
 		if (sig === this.lastIntentSig) {
 			if (terminatedThisTick) this.intentRebuilds++;
@@ -822,6 +838,7 @@ export class AgentCore {
 		return intention;
 	}
 
+	// Waits for server ready, parses game config, seeds the coordinator L-value, and creates the crate planner context.
 	private async init(): Promise<{
 		cfg: TickConfig;
 		crateCtx: CratePlannerContext | null;
@@ -874,6 +891,7 @@ export class AgentCore {
 		return { cfg, crateCtx, selfX, selfY };
 	}
 
+	// Broadcasts the finalized intention summary to the coordinator so teammates can exclude the same target.
 	private publishIntention(
 		intention: Intention | null,
 		ctx: TickContext,
@@ -914,6 +932,8 @@ export class AgentCore {
 		});
 	}
 
+	// Executes one movement step: rebuilds an empty plan, defers a push if a competitor
+	// is near the crate, then issues the move and updates the M-EMA on success.
 	private async runMovePhase(
 		intention: Intention,
 		ctx: TickContext,
@@ -1008,6 +1028,7 @@ export class AgentCore {
 		return { selfX, selfY, intention };
 	}
 
+	// Fires RELEASE for any one-shot deliver modifiers whose selector condition was satisfied by this delivery.
 	private completeOneShotDeliverModifiers(
 		state: ActiveDirectives,
 		carry: CarryState,
@@ -1035,6 +1056,7 @@ export class AgentCore {
 		}
 	}
 
+	// Main BDI loop: drains directives, runs reflexes, deliberates or stages, publishes intention, and moves.
 	async run(): Promise<void> {
 		const { cfg, crateCtx, selfX: initX, selfY: initY } = await this.init();
 		let selfX = initX,

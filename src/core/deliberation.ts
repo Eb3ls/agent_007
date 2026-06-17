@@ -28,6 +28,7 @@ import { cfg } from "../config.js";
 
 const DECISION_TOP_K = 4;
 
+// Formats the deliberation decision as a human-readable string: selected candidate and top alternatives with their utilities.
 export function buildWhy(
 	candidates: IntentionCandidate[],
 	selected: IntentionCandidate,
@@ -71,6 +72,7 @@ export type DeliberationContext = {
 	crossCtx?: CrossCtx;
 };
 
+// Returns spawn tile IDs observed empty within the TTL window, plus team-excluded spawn IDs.
 function freshObservedEmptySpawns(
 	beliefs: BeliefStore,
 	now: number,
@@ -87,6 +89,7 @@ function freshObservedEmptySpawns(
 	return fresh;
 }
 
+// Estimates the expected value of walking to an unexplored spawn: spawn probability × expected reward × decay factor.
 function computeExploreEV(
 	map: StaticMap,
 	bfs: BfsFromSelf,
@@ -111,6 +114,8 @@ function computeExploreEV(
 		1,
 		map.spawnTileIds.length - beliefs.observedEmptySpawns.size,
 	);
+	// spawnProb: distance (steps) as a proxy for time elapsed — longer walks give more spawns a chance to appear.
+	// Dividing by empty-spawner count assumes spawns are uniformly distributed across idle spawners.
 	const spawnProb = Math.min(1, steps / Math.max(1, spawnerEmptyN));
 	return Math.max(
 		0,
@@ -118,6 +123,7 @@ function computeExploreEV(
 	);
 }
 
+// Scores all candidate intentions and returns the best one above the start_margin threshold.
 export function deliberate(context: DeliberationContext): DeliberateResult {
 	const metrics: ValuatorMetrics = context.metrics ?? {
 		M: context.movementDurationMs,
@@ -331,6 +337,7 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 
 	const why = buildWhy(candidates, selected);
 
+	// Explore is cheap so start_margin doesn't apply — only costly switches need the inertia buffer.
 	if (
 		selected.source !== "current" &&
 		selected.intention.kind !== "explore" &&
@@ -348,6 +355,7 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 	if (plan.length === 0) return { intention: null, why: "no path" };
 
 	if (selected.source === "current") {
+		// Re-use the live intention object (with its in-progress plan) rather than the freshly-scored candidate shell.
 		return { intention: { ...context.intention!, plan }, why };
 	}
 	return {

@@ -48,6 +48,7 @@ type ParsedResponse = Partial<MissionRecord> & {
 	};
 };
 
+// Collapse whitespace before hashing: equivalent prompts with different spacing share a cache entry.
 function cacheKey(text: string): string {
 	return createHash("sha1")
 		.update(text.trim().replace(/\s+/g, " "))
@@ -60,6 +61,7 @@ export class Extractor {
 
 	constructor(private readonly llm: LlmClient) {}
 
+	// Sends the text to the LLM, parses the JSON response into a MissionRecord, and caches by content hash.
 	async extract(text: string): Promise<MissionRecord | null> {
 		const key = cacheKey(text);
 		if (this.cache.has(key)) {
@@ -83,6 +85,8 @@ export class Extractor {
 					`missing required fields opType=${opType} level=${level} for: ${text.slice(0, 60)}`,
 				);
 			} else {
+				// Prefer top-level coords; fall back to selector coords. Filter strings — unresolved label placeholders
+				// that the LLM emitted instead of numeric values.
 				const rawCoords: Array<XY | string> =
 					(parsed.coords?.length
 						? parsed.coords

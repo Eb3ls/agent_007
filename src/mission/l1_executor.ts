@@ -26,6 +26,8 @@ export class L1Executor {
 		private readonly ctx: L1Ctx,
 	) {}
 
+	// ReAct loop: each step asks the LLM for a thought + action, runs the tool, feeds the observation back.
+	// Bounded by cfg.maxSteps; parse errors are fed back as observations so the model can self-correct.
 	async run(record: MissionRecord): Promise<L1Result> {
 		const history: ChatMessage[] = [
 			{ role: "system", content: buildL1SystemPrompt() },
@@ -76,6 +78,7 @@ export class L1Executor {
 
 			history.push({ role: "assistant", content: raw });
 
+			// "done" exits the loop: model signals it has enough information or cannot proceed further.
 			if (parsed.action.tool === "done") {
 				const doneArgs = parsed.action.args as
 					| { resolvedCoords?: { x: number; y: number }[] }
