@@ -56,8 +56,10 @@ export type ActiveDirectives = {
 		missionId?: string;
 	} | null;
 	modifiers: readonly ActiveModifier[];
-	/** All XY tiles from on:"cross" modifiers — agent_core adds these to BFS blocked set. */
+	/** Unpriced on:"cross" tiles (no effect.add) — treated as hard BFS walls. */
 	hardForbiddenTileCoords: readonly XY[];
+	/** Priced on:"cross" tiles — penalty is subtracted from paths that cross them. */
+	pricedCrossTiles: readonly { x: number; y: number; penalty: number }[];
 	/** Parcel IDs explicitly forbidden for pickup (from on:"pickup" with parcelId). */
 	forbiddenPickupParcelIds: ReadonlySet<string>;
 };
@@ -118,11 +120,16 @@ export class DirectiveHandler {
 
 	get state(): ActiveDirectives {
 		const hardForbiddenTileCoords: XY[] = [];
+		const pricedCrossTiles: { x: number; y: number; penalty: number }[] =
+			[];
 		const forbiddenPickupParcelIds = new Set<string>();
 		for (const m of this.pool) {
 			if (m.selector.on === "cross") {
-				for (const xy of m.selector.tiles)
-					hardForbiddenTileCoords.push(xy);
+				const penalty = m.effect.add !== undefined ? -m.effect.add : 0;
+				for (const xy of m.selector.tiles) {
+					if (penalty > 0) pricedCrossTiles.push({ ...xy, penalty });
+					else hardForbiddenTileCoords.push(xy);
+				}
 			}
 			if (m.selector.on === "pickup" && m.selector.parcelId) {
 				forbiddenPickupParcelIds.add(m.selector.parcelId);
@@ -133,6 +140,7 @@ export class DirectiveHandler {
 			stage: this._stages[0] ?? null,
 			modifiers: this.pool,
 			hardForbiddenTileCoords,
+			pricedCrossTiles,
 			forbiddenPickupParcelIds,
 		};
 	}

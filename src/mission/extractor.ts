@@ -117,7 +117,7 @@ export class Extractor {
 				};
 				log.info(
 					"extractor",
-					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} lifetime=${record.lifetime} bonus=${record.bonus}${record.token ? ` token=${record.token}` : ""}${record.condition ? " condition=yes" : ""}`,
+					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} lifetime=${record.lifetime} bonus=${record.bonus}${record.effect.mult !== undefined ? ` mult=${record.effect.mult}` : ""}${record.effect.add !== undefined ? ` add=${record.effect.add}` : ""}${record.token ? ` token=${record.token}` : ""}${record.condition ? ` condition=${JSON.stringify(record.condition)}` : ""}`,
 				);
 			}
 		} catch (err) {

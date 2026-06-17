@@ -67,6 +67,7 @@ function emptyDirectives(): Readonly<ActiveDirectives> {
 		stage: null,
 		modifiers: [],
 		hardForbiddenTileCoords: [],
+		pricedCrossTiles: [],
 		forbiddenPickupParcelIds: new Set(),
 	};
 }
@@ -274,6 +275,7 @@ describe("modifier: deliver MODIFIER mult boosts deliver score", () => {
 			paused: false,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -305,6 +307,7 @@ describe("modifier: deliver MODIFIER mult boosts deliver score", () => {
 			paused: false,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -341,6 +344,7 @@ describe("modifier: forbiddenPickupParcelIds excludes the parcel", () => {
 			stage: null,
 			modifiers: [],
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(["p1"]),
 		};
 		const result = scorePickup(
@@ -365,6 +369,7 @@ describe("modifier: forbiddenPickupParcelIds excludes the parcel", () => {
 			stage: null,
 			modifiers: [],
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(["p1"]),
 		};
 		const result = scorePickup(
@@ -388,6 +393,7 @@ describe("modifier: deliver mult=0 at carryCountEquals forces deliver score = 0"
 			paused: false,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -436,6 +442,7 @@ describe("batchCandidates — count-multiplier valley fix", () => {
 			paused: false,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -490,6 +497,7 @@ describe("batchCandidates — count-multiplier valley fix", () => {
 			paused: false,
 			stage: null,
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
@@ -626,6 +634,7 @@ describe("modifier: deliver-parcel cap with fractional mult (M4)", () => {
 				},
 			],
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 		};
 		const result = scorePickup(
@@ -658,6 +667,7 @@ describe("modifier: deliver-parcel cap with fractional mult (M4)", () => {
 				},
 			],
 			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
 			forbiddenPickupParcelIds: new Set(),
 		};
 		const result = scorePickup(

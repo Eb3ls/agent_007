@@ -14,12 +14,46 @@ import type {
 } from "../team/directives.js";
 import type { BeliefStore, ParcelBelief } from "../belief_store.js";
 import { idToXY, tileId, type StaticMap } from "../static_map.js";
-import type { BfsFromSelf } from "../pathfinder.js";
-import { bfsFromSelf } from "../pathfinder.js";
+import { bfsFromSelf, type BfsFromSelf } from "../pathfinder.js";
 import { cfg } from "../config.js";
 
 export type { CarryState, PickResult };
 export { nearestOutOfViewSpawn as scoreExplore };
+
+/**
+ * Context for priced-cross tile scoring.
+ * bfsAvoid = BFS with priced tiles also blocked (detour distances).
+ * pricedById = tileId → penalty (positive cost).
+ */
+export type CrossCtx = {
+	bfsAvoid: BfsFromSelf;
+	pricedById: Map<number, number>;
+};
+
+/**
+ * Sum of penalties for distinct priced tiles on the BFS path to (tx,ty).
+ * Walks bfs.prev backward from target to origin (dist=0); origin is not charged.
+ * Charged per distinct tile — not per step.
+ * NOTE: open spec question whether charge is per-crossing or per-step; per-tile for now.
+ */
+export function pathCrossPenalty(
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	tx: number,
+	ty: number,
+	pricedById: Map<number, number>,
+): number {
+	const targetId = tileId(map, tx, ty);
+	if (targetId === -1 || bfs.dist[targetId] === -1) return Infinity;
+	let penalty = 0;
+	let id = targetId;
+	while (bfs.prev[id] !== -1) {
+		const p = pricedById.get(id);
+		if (p !== undefined) penalty += p;
+		id = bfs.prev[id]!;
+	}
+	return penalty;
+}
 
 export type ValuatorMetrics = {
 	M: number;
@@ -130,6 +164,7 @@ export function scorePickup(
 	directives?: Readonly<ActiveDirectives>,
 	stealHorizonSteps: number = cfg.belief.expected_steal_horizon_steps,
 	extraExcludedIds?: ReadonlySet<string>,
+	crossCtx?: CrossCtx,
 ): PickResult | null {
 	const now = Date.now();
 	const dp = dPerStep(metrics);
@@ -173,11 +208,42 @@ export function scorePickup(
 			continue;
 
 		const pId = tileId(map, p.x, p.y);
-		const distToP = bfs.dist[pId];
-		if (distToP === undefined || distToP === -1) continue;
-
 		const distPToDel = map.baseReverseDistToDelivery[pId];
 		if (distPToDel === undefined || distPToDel === -1) continue;
+
+		// Effective distance to parcel: best of avoid-path and cross-path minus penalty.
+		let distToP: number;
+		if (crossCtx) {
+			const avoidDist = crossCtx.bfsAvoid.dist[pId];
+			const crossDist = bfs.dist[pId];
+			if (
+				(avoidDist === undefined || avoidDist === -1) &&
+				(crossDist === undefined || crossDist === -1)
+			)
+				continue;
+			const avoidEff =
+				avoidDist !== undefined && avoidDist !== -1
+					? avoidDist
+					: Infinity;
+			const crossEff =
+				crossDist !== undefined && crossDist !== -1
+					? crossDist +
+						pathCrossPenalty(
+							map,
+							bfs,
+							p.x,
+							p.y,
+							crossCtx.pricedById,
+						) /
+							Math.max(dp * (n + 1), 1)
+					: Infinity;
+			distToP = Math.min(avoidEff, crossEff);
+			if (!Number.isFinite(distToP)) continue;
+		} else {
+			const d = bfs.dist[pId];
+			if (d === undefined || d === -1) continue;
+			distToP = d;
+		}
 
 		const S = distToP + distPToDel;
 
@@ -194,7 +260,7 @@ export function scorePickup(
 					beliefs,
 					p.x,
 					p.y,
-					distToP,
+					Math.round(distToP),
 					metrics.M,
 					now,
 				));
@@ -228,6 +294,7 @@ export function scoreDeliver(
 	carry: CarryState,
 	metrics: ValuatorMetrics,
 	directives?: Readonly<ActiveDirectives>,
+	crossCtx?: CrossCtx,
 ): DeliverResult | null {
 	if (carry.n === 0) return null;
 
@@ -239,11 +306,33 @@ export function scoreDeliver(
 	let bestScore = -Infinity;
 
 	for (const id of map.deliveryTileIds) {
-		const dist = bfs.dist[id];
-		if (dist === undefined || dist === -1) continue;
 		const { x, y } = idToXY(map, id);
-		const score =
-			sigmaEffects(R_c, modifiers, carry, { x, y }) - carry.n * dp * dist;
+		let score = -Infinity;
+
+		if (crossCtx) {
+			const base = sigmaEffects(R_c, modifiers, carry, { x, y });
+			const avoidDist = crossCtx.bfsAvoid.dist[id];
+			if (avoidDist !== undefined && avoidDist !== -1)
+				score = Math.max(score, base - carry.n * dp * avoidDist);
+			const crossDist = bfs.dist[id];
+			if (crossDist !== undefined && crossDist !== -1) {
+				const pen = pathCrossPenalty(
+					map,
+					bfs,
+					x,
+					y,
+					crossCtx.pricedById,
+				);
+				score = Math.max(score, base - carry.n * dp * crossDist - pen);
+			}
+		} else {
+			const dist = bfs.dist[id];
+			if (dist === undefined || dist === -1) continue;
+			score =
+				sigmaEffects(R_c, modifiers, carry, { x, y }) -
+				carry.n * dp * dist;
+		}
+
 		if (!Number.isFinite(score) || score <= bestScore) continue;
 		bestScore = score;
 		best = { tile: { x, y, id }, score };
@@ -263,15 +352,36 @@ export function scoreGoto(
 	bonus: number,
 	carry: CarryState,
 	metrics: ValuatorMetrics,
+	crossCtx?: CrossCtx,
 ): number | null {
 	const tId = tileId(map, target.x, target.y);
-	const sT = bfs.dist[tId];
-	if (sT === undefined || sT === -1) return null;
-
 	const d = Number.isFinite(metrics.decayIntervalMs)
 		? 1 / metrics.decayIntervalMs
 		: 0;
-	return bonus - (metrics.L + carry.n * d) * metrics.M * sT;
+	const coeff = (metrics.L + carry.n * d) * metrics.M;
+
+	if (crossCtx) {
+		let best = -Infinity;
+		const avoidDist = crossCtx.bfsAvoid.dist[tId];
+		if (avoidDist !== undefined && avoidDist !== -1)
+			best = Math.max(best, bonus - coeff * avoidDist);
+		const crossDist = bfs.dist[tId];
+		if (crossDist !== undefined && crossDist !== -1) {
+			const pen = pathCrossPenalty(
+				map,
+				bfs,
+				target.x,
+				target.y,
+				crossCtx.pricedById,
+			);
+			best = Math.max(best, bonus - coeff * crossDist - pen);
+		}
+		return Number.isFinite(best) ? best : null;
+	}
+
+	const sT = bfs.dist[tId];
+	if (sT === undefined || sT === -1) return null;
+	return bonus - coeff * sT;
 }
 
 /**

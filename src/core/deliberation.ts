@@ -1,15 +1,16 @@
 import {
-	selectBestIntention,
-	type IntentionCandidate,
-	type IntentionRuleContext,
-} from "./intention_rules.js";
-import {
 	scorePickup,
 	scoreDeliver,
 	scoreGoto,
 	batchCandidates,
+	type CrossCtx,
 	type ValuatorMetrics,
 } from "./valuator.js";
+import {
+	selectBestIntention,
+	type IntentionCandidate,
+	type IntentionRuleContext,
+} from "./intention_rules.js";
 import {
 	buildPlan,
 	computeDecayPerStep,
@@ -46,6 +47,8 @@ export type DeliberationContext = {
 	metrics?: ValuatorMetrics;
 	/** Server-reported average parcel reward for explore EV estimate. Fallback: 10. */
 	rewardAvg?: number;
+	/** Priced-cross BFS context — built when pricedCrossTiles non-empty. */
+	crossCtx?: CrossCtx;
 };
 
 function freshObservedEmptySpawns(
@@ -130,6 +133,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		context.carry,
 		metrics,
 		directives,
+		context.crossCtx,
 	);
 	if (deliverResult) {
 		candidates.push({
@@ -153,6 +157,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 		directives,
 		undefined,
 		excludedParcels,
+		context.crossCtx,
 	);
 	if (pickupResult) {
 		candidates.push({
@@ -220,6 +225,7 @@ export function deliberate(context: DeliberationContext): Intention | null {
 				bonus,
 				context.carry,
 				metrics,
+				context.crossCtx,
 			);
 			if (gotoScore === null) continue;
 

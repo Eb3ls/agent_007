@@ -10,20 +10,21 @@ import {
 	type CarryState,
 } from "./planner.js";
 import {
+	parcelCapEffect,
+	batchCandidates,
+	carryValue,
+	maxBatchScore,
+	scoreDeliver,
+	type CrossCtx,
+	type ValuatorMetrics,
+} from "./valuator.js";
+import {
 	applyDelivery,
 	applyPickupResult,
 	clearUncarriedParcelsAt,
 	topCompetitorTiles,
 	type BeliefStore,
 } from "../belief_store.js";
-import {
-	parcelCapEffect,
-	batchCandidates,
-	carryValue,
-	maxBatchScore,
-	scoreDeliver,
-	type ValuatorMetrics,
-} from "./valuator.js";
 import {
 	buildPlanWithCrateHandling,
 	createCratePlannerContext,
@@ -72,6 +73,7 @@ type TickContext = {
 	carry: CarryState;
 	selfId: number;
 	now: number;
+	crossCtx?: CrossCtx;
 };
 
 type ReflexResult = {
@@ -148,6 +150,30 @@ export class AgentCore {
 				? passableCrateTileSet(map, this.beliefs)
 				: undefined;
 		const bfs = bfsFromSelf(map, selfX, selfY, blocked, passableCrates);
+
+		let crossCtx: CrossCtx | undefined;
+		if (state.pricedCrossTiles.length > 0) {
+			const blockedWithPriced = new Set(blocked);
+			const pricedById = new Map<number, number>();
+			for (const pt of state.pricedCrossTiles) {
+				const id = tileId(map, pt.x, pt.y);
+				if (id !== -1) {
+					blockedWithPriced.add(id);
+					pricedById.set(id, pt.penalty);
+				}
+			}
+			crossCtx = {
+				bfsAvoid: bfsFromSelf(
+					map,
+					selfX,
+					selfY,
+					blockedWithPriced,
+					passableCrates,
+				),
+				pricedById,
+			};
+		}
+
 		const carry = deriveCarryState(
 			this.beliefs.parcels,
 			cfg.myId,
@@ -158,7 +184,15 @@ export class AgentCore {
 		);
 		const now = Date.now();
 		const selfId = tileId(map, selfX, selfY);
-		return { blocked, passableCrates, bfs, carry, selfId, now };
+		return {
+			blocked,
+			passableCrates,
+			bfs,
+			carry,
+			selfId,
+			now,
+			...(crossCtx && { crossCtx }),
+		};
 	}
 
 	private metrics(cfg: TickConfig): ValuatorMetrics {
@@ -544,6 +578,7 @@ export class AgentCore {
 				metrics,
 				rewardAvg: cfg.rewardAvg,
 				...(teamExclusions && { teamExclusions }),
+				...(ctx.crossCtx && { crossCtx: ctx.crossCtx }),
 			});
 
 			if (intention) {

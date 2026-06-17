@@ -96,7 +96,7 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 		expect(h.state.modifiers[0]!.effect.mult).toBe(2);
 	});
 
-	it("on:cross tiles appear in hardForbiddenTileCoords", () => {
+	it("priced on:cross tiles (effect.add present) appear in pricedCrossTiles", () => {
 		const h = new DirectiveHandler();
 		h.enqueue({
 			kind: "MODIFIER",
@@ -113,8 +113,28 @@ describe("DirectiveHandler — MODIFIER|OVERRIDE pool", () => {
 			target: "both",
 		});
 		h.apply();
-		expect(h.state.hardForbiddenTileCoords).toHaveLength(2);
-		expect(h.state.hardForbiddenTileCoords[0]).toEqual({ x: 2, y: 0 });
+		expect(h.state.hardForbiddenTileCoords).toHaveLength(0);
+		expect(h.state.pricedCrossTiles).toHaveLength(2);
+		expect(h.state.pricedCrossTiles[0]).toEqual({
+			x: 2,
+			y: 0,
+			penalty: 100,
+		});
+	});
+
+	it("unpriced on:cross tiles (no effect.add) appear in hardForbiddenTileCoords", () => {
+		const h = new DirectiveHandler();
+		h.enqueue({
+			kind: "MODIFIER",
+			selector: { on: "cross", tiles: [{ x: 5, y: 0 }] },
+			effect: {},
+			lifetime: "persistent",
+			missionId: "m1",
+			target: "both",
+		});
+		h.apply();
+		expect(h.state.hardForbiddenTileCoords).toHaveLength(1);
+		expect(h.state.pricedCrossTiles).toHaveLength(0);
 	});
 
 	it("on:pickup parcelId appears in forbiddenPickupParcelIds", () => {
