@@ -138,6 +138,18 @@ export function scorePickup(
 		if (forbidden.has(p.id)) continue;
 		if (extraExcludedIds?.has(p.id)) continue;
 
+		// Skip parcels too stale to actually pursue. A pickup committed to an
+		// out-of-view parcel not seen within parcel_belief_stale_steps is dropped by
+		// viability (checkTargetParcel) on the very next tick, so selecting one here
+		// only causes commit → target_lost → reselect thrash (and, while carrying,
+		// oscillation against deliver). Keep selection consistent with viability.
+		if (
+			!p.inView &&
+			now - p.lastSeenAt >
+				metrics.M * cfg.belief.parcel_belief_stale_steps
+		)
+			continue;
+
 		// Score-cap: skip parcels whose reward exceeds active cap
 		if (cap !== null && p.reward > cap) continue;
 
@@ -328,6 +340,13 @@ function buildGreedyChain(
 			if (forbidden.has(p.id)) continue;
 			if (extraExcluded?.has(p.id)) continue;
 			if (taken.has(p.id)) continue;
+			// Skip parcels too stale to pursue (see scorePickup) — consistency with viability.
+			if (
+				!p.inView &&
+				now - p.lastSeenAt >
+					metrics.M * cfg.belief.parcel_belief_stale_steps
+			)
+				continue;
 
 			const pId = tileId(map, p.x, p.y);
 			const dist = currentBfs.dist[pId];

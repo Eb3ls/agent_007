@@ -298,6 +298,17 @@ export function pickBestParcelTarget(
 	for (const p of beliefs.parcels.values()) {
 		if (p.carriedBy) continue;
 		if (excludedParcelIds?.has(p.id)) continue;
+		// Skip parcels too stale to pursue: viability (checkTargetParcel) drops a
+		// pickup whose out-of-view parcel hasn't been seen within
+		// parcel_belief_stale_steps, so the reconsider gate must not keep switching
+		// to such a target — otherwise it thrashes (commit → target_lost → reselect,
+		// and oscillation against deliver while carrying). Same threshold as viability.
+		if (
+			!p.inView &&
+			now - p.lastSeenAt >
+				movementDurationMs * cfg.belief.parcel_belief_stale_steps
+		)
+			continue;
 		const parcelTileId = tileId(map, p.x, p.y);
 		const distToParcel = bfs.dist[parcelTileId];
 		if (distToParcel === undefined || distToParcel === -1) continue;

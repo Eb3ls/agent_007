@@ -144,6 +144,26 @@ export function shouldReconsider(
 		freshTarget.parcel.id === intention.targetId
 	)
 		return false;
+
+	// Delivery commitment: don't abandon a delivery to chase a parcel that is
+	// farther away than finishing the delivery itself. Banking the carried reward
+	// first avoids thrashing toward a distant parcel — e.g. one that's visible
+	// across a maze fold (Manhattan-close) but many BFS-steps away, which the
+	// agent can never sustain a pursuit of. Parcels closer than the delivery tile
+	// (genuinely on the way) still preempt as before.
+	if (intention.kind === "deliver") {
+		const deliverDist = computeTargetDistance(map, bfs, intention);
+		const pickupDist =
+			bfs.dist[tileId(map, freshTarget.parcel.x, freshTarget.parcel.y)];
+		if (
+			deliverDist !== null &&
+			pickupDist !== undefined &&
+			pickupDist !== -1 &&
+			pickupDist >= deliverDist
+		)
+			return false;
+	}
+
 	const currentUtility = computeCurrentIntentionUtility(
 		intention,
 		map,
