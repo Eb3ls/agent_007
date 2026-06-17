@@ -10,7 +10,7 @@ function fmtXY(coords: readonly XY[]): string {
 function selectorDesc(sel: MissionRecord["selector"]): string {
 	switch (sel.on) {
 		case "deliver":
-			return `tile=${sel.tile ? `(${sel.tile.x},${sel.tile.y})` : "any"}`;
+			return `tiles=${sel.tiles?.length ? fmtXY(sel.tiles) : "any"}`;
 		case "goto":
 			return sel.coords?.length
 				? `coords=${fmtXY(sel.coords)}`

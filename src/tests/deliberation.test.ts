@@ -460,7 +460,7 @@ describe("deliberate — selfExcludedParcelIds", () => {
 		],
 	});
 
-	it("without exclusion: underfoot refused parcel freezes deliberate (null)", () => {
+	it("without exclusion: modifier-aware pickup avoids the freeze → agent delivers", () => {
 		const beliefs = createBeliefStore();
 		beliefs.parcels.set("p2", parcelAt("p2", 3, 10));
 		const r = deliberate(
@@ -472,8 +472,12 @@ describe("deliberate — selfExcludedParcelIds", () => {
 				directives: overCarry(),
 			}),
 		);
-		// pickup wins (dist 0) but its plan-to-self is empty → null; deliver suppressed.
-		expect(r.intention).toBeNull();
+		// Pre-fix scorePickup was blind to the carryCountAtLeast:2 mult=0 condition and
+		// re-selected p2 (dist 0), whose plan-to-self is empty → null (freeze). Now the
+		// projected post-pickup carry (n=2) zeroes the delivery, so p2's marginal value
+		// is negative → pruned; the agent delivers its current carry instead of freezing.
+		expect(r.intention).not.toBeNull();
+		expect(r.intention?.kind).not.toBe("pickup");
 	});
 
 	it("with exclusion: agent recovers (delivers current carry instead of freezing)", () => {
@@ -528,7 +532,7 @@ describe("deliberate — nullified delivery tile (mult=0 at (0,0))", () => {
 		...emptyDirectives(),
 		modifiers: [
 			{
-				selector: { on: "deliver", tile: { x: 0, y: 0 } },
+				selector: { on: "deliver", tiles: [{ x: 0, y: 0 }] },
 				effect: { mult: 0 },
 				lifetime: "persistent",
 				missionId: "m1",

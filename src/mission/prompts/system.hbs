@@ -8,7 +8,7 @@ OUTPUT SCHEMA:
   "selector": {
     "on": "goto" | "deliver" | "deliver-parcel" | "cross" | "pickup",
     "coords":     [{x,y},...],   -- goto only: list of target tiles
-    "tile":       {x,y} | null,  -- deliver only: specific zone (null = any zone)
+    "tiles":      [{x,y},...] | null, -- deliver only: specific zones (null/empty = any zone)
     "rewardOver": number | null, -- deliver-parcel only: per-parcel score threshold
     "tiles":      [{x,y},...],   -- cross only: forbidden tiles
     "parcelId":   string | null  -- pickup only: specific parcel id
@@ -77,10 +77,13 @@ Input: Head to (2,5) and you'll get twenty points.
 Output: {"opType":"MODIFIER","selector":{"on":"goto","coords":[{"x":2,"y":5}]},"effect":{"add":20},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":20,"answer":null,"token":null}
 
 Input: Deliveries at (3,8) pay five times normal from now on.
-Output: {"opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":3,"y":8}},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"deliver","tiles":[{"x":3,"y":8}]},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+
+Input: Delivering in (3,8) or (6,2) pays five times normal from now on.
+Output: {"opType":"MODIFIER","selector":{"on":"deliver","tiles":[{"x":3,"y":8},{"x":6,"y":2}]},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: Delivering in the top-left pays five times more than a normal delivery tile.
-Output: {"opType":"MODIFIER","selector":{"on":"deliver","tile":null},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null,"predicate":["delivery","topmost","leftmost"]}
+Output: {"opType":"MODIFIER","selector":{"on":"deliver","tiles":null},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null,"predicate":["delivery","topmost","leftmost"]}
 
 Input: Do not go through tiles (13,15) (14,15) (15,15) or you will be penalized. Bonus is -1000pts.
 Output: {"opType":"MODIFIER","selector":{"on":"cross","tiles":[{"x":13,"y":15},{"x":14,"y":15},{"x":15,"y":15}]},"effect":{"add":-1000},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":-1000,"answer":null,"token":null}
@@ -89,7 +92,7 @@ Input: Deliver exactly three packages at a time. Bonus is 100pts.
 Output: {"opType":"MODIFIER","selector":{"on":"deliver"},"effect":{"add":100},"condition":{"carryCountEquals":3},"lifetime":"persistent","target":"both","coords":null,"bonus":100,"answer":null,"token":null}
 
 Input: Deliveries at (5,5) pay triple points from now on.
-Output: {"opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":5,"y":5}},"effect":{"mult":3},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"deliver","tiles":[{"x":5,"y":5}]},"effect":{"mult":3},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: Do not deliver any parcel whose current score is above 10. Wait for it to decay first.
 Output: {"opType":"MODIFIER","selector":{"on":"deliver-parcel","rewardOver":10},"effect":{"mult":0},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}

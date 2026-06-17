@@ -279,7 +279,7 @@ describe("Assembler — deterministic-first resolution", () => {
 	): string {
 		return JSON.stringify({
 			opType: "MODIFIER",
-			selector: { on: "deliver", tile: null },
+			selector: { on: "deliver", tiles: null },
 			effect: { mult: 5 },
 			condition: null,
 			lifetime: "persistent",
@@ -331,8 +331,8 @@ describe("Assembler — deterministic-first resolution", () => {
 				>["selector"] & {
 					on: "deliver";
 				}
-			).tile,
-		).toEqual({ x: 0, y: 0 });
+			).tiles,
+		).toEqual([{ x: 0, y: 0 }]);
 		expect(mod!.effect.mult).toBe(5);
 		expect(calls).toHaveLength(0); // deterministic path, no LLM resolver
 	});
@@ -360,8 +360,8 @@ describe("Assembler — deterministic-first resolution", () => {
 				>["selector"] & {
 					on: "deliver";
 				}
-			).tile,
-		).toEqual({ x: 2, y: 2 });
+			).tiles,
+		).toEqual([{ x: 2, y: 2 }]);
 	});
 
 	it("needsResolve routes to the resolver loop, ignoring any predicate", async () => {
@@ -391,8 +391,8 @@ describe("Assembler — deterministic-first resolution", () => {
 				>["selector"] & {
 					on: "deliver";
 				}
-			).tile,
-		).toEqual({ x: 2, y: 0 });
+			).tiles,
+		).toEqual([{ x: 2, y: 0 }]);
 	});
 
 	it("rendezvous with predicate dispatches to L3 with the resolved center coord", async () => {

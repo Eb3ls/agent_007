@@ -21,7 +21,7 @@ export type Predicate = PredicateToken[];
 
 export type TargetSelector =
 	| { on: "goto"; coords: XY[] }
-	| { on: "deliver"; tile?: XY }
+	| { on: "deliver"; tiles?: XY[] }
 	| { on: "deliver-parcel"; rewardOver?: number }
 	| { on: "cross"; tiles: XY[] }
 	| { on: "pickup"; parcelId?: string };

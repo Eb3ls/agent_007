@@ -169,8 +169,7 @@ export class Assembler {
 		tiles: XY[],
 	): MissionRecord["selector"] {
 		const sel = record.selector;
-		if (sel.on === "deliver")
-			return { on: "deliver", tile: tiles[0] ?? null };
+		if (sel.on === "deliver") return { on: "deliver", tiles };
 		if (sel.on === "cross") return { on: "cross", tiles };
 		return { ...sel, coords: tiles };
 	}

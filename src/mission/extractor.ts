@@ -19,7 +19,6 @@ export type MissionRecord = {
 	selector: {
 		on: "goto" | "deliver" | "deliver-parcel" | "cross" | "pickup";
 		coords?: XY[];
-		tile?: XY | null;
 		rewardOver?: number | null;
 		tiles?: XY[];
 		parcelId?: string | null;

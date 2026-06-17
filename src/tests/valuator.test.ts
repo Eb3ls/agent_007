@@ -282,7 +282,7 @@ describe("modifier: deliver MODIFIER mult boosts deliver score", () => {
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
-					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					selector: { on: "deliver", tiles: [{ x: 0, y: 0 }] },
 					effect: { mult: 3 },
 					lifetime: "persistent",
 					missionId: "m1",
@@ -315,7 +315,7 @@ describe("modifier: deliver MODIFIER mult boosts deliver score", () => {
 			modifiers: [
 				{
 					// tile (9,9) doesn't exist in map — modifier won't apply
-					selector: { on: "deliver", tile: { x: 9, y: 9 } },
+					selector: { on: "deliver", tiles: [{ x: 9, y: 9 }] },
 					effect: { mult: 3 },
 					lifetime: "persistent",
 					missionId: "m1",
@@ -873,7 +873,7 @@ describe("deliverTileBlocked", () => {
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
-					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					selector: { on: "deliver", tiles: [{ x: 0, y: 0 }] },
 					effect: { mult: 0 },
 					lifetime: "persistent",
 					missionId: "m1",
@@ -893,7 +893,7 @@ describe("deliverTileBlocked", () => {
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
-					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					selector: { on: "deliver", tiles: [{ x: 0, y: 0 }] },
 					condition: { carryCountEquals: 1 },
 					effect: { mult: 0 },
 					lifetime: "persistent",
@@ -914,7 +914,7 @@ describe("deliverTileBlocked", () => {
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
-					selector: { on: "deliver", tile: { x: 5, y: 5 } },
+					selector: { on: "deliver", tiles: [{ x: 5, y: 5 }] },
 					effect: { mult: 0 },
 					lifetime: "persistent",
 					missionId: "m1",
@@ -934,7 +934,7 @@ describe("deliverTileBlocked", () => {
 			forbiddenPickupParcelIds: new Set(),
 			modifiers: [
 				{
-					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					selector: { on: "deliver", tiles: [{ x: 0, y: 0 }] },
 					effect: { mult: 5 },
 					lifetime: "persistent",
 					missionId: "m1",
@@ -963,5 +963,162 @@ describe("deliverTileBlocked", () => {
 			],
 		};
 		expect(deliverTileBlocked(dir, { x: 0, y: 0 })).toBe(false);
+	});
+});
+
+// ─────────────────────────────────────────────
+// multi-tile deliver modifier ("deliver in t1 OR t2")
+// Regression: a two-tile deliver bonus must apply to BOTH tiles,
+// not just the first. Pre-fix the selector held a single tile.
+// ─────────────────────────────────────────────
+
+describe("multi-tile deliver modifier", () => {
+	// Two delivery tiles at the ends: (0,0)=delivery | (1,0) (2,0) (3,0) | (4,0)=delivery
+	function buildTwoDeliveryMap() {
+		const map = createStaticMap();
+		const tiles: IOTile[] = [
+			{ x: 0, y: 0, type: "2" as IOTile["type"] },
+			{ x: 1, y: 0, type: "1" as IOTile["type"] },
+			{ x: 2, y: 0, type: "1" as IOTile["type"] },
+			{ x: 3, y: 0, type: "1" as IOTile["type"] },
+			{ x: 4, y: 0, type: "2" as IOTile["type"] },
+		];
+		setMap(map, tiles);
+		return map;
+	}
+
+	function fiveXBoth(): ActiveDirectives {
+		return {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: {
+						on: "deliver",
+						tiles: [
+							{ x: 0, y: 0 },
+							{ x: 4, y: 0 },
+						],
+					},
+					effect: { mult: 5 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+		};
+	}
+
+	it("applies 5x at the FIRST listed tile (0,0)", () => {
+		const map = buildTwoDeliveryMap();
+		// self at (1,0): nearest delivery is (0,0) dist=1 → 5*10 - 0.5*1 = 49.5
+		const bfs = bfsFromSelf(map, 1, 0);
+		const result = scoreDeliver(
+			map,
+			bfs,
+			carryOf([10]),
+			decayMetrics(500, 1000),
+			fiveXBoth(),
+		);
+		expect(result).not.toBeNull();
+		expect(result!.tile).toMatchObject({ x: 0, y: 0 });
+		expect(result!.score).toBeCloseTo(49.5, 5);
+	});
+
+	it("applies 5x at the SECOND listed tile (4,0) — the pre-fix gap", () => {
+		const map = buildTwoDeliveryMap();
+		// self at (3,0): nearest delivery is (4,0) dist=1 → 5*10 - 0.5*1 = 49.5
+		const bfs = bfsFromSelf(map, 3, 0);
+		const result = scoreDeliver(
+			map,
+			bfs,
+			carryOf([10]),
+			decayMetrics(500, 1000),
+			fiveXBoth(),
+		);
+		expect(result).not.toBeNull();
+		expect(result!.tile).toMatchObject({ x: 4, y: 0 });
+		expect(result!.score).toBeCloseTo(49.5, 5);
+	});
+
+	it("deliverTileBlocked (mult=0) blocks BOTH listed tiles, not others", () => {
+		const dir: ActiveDirectives = {
+			...fiveXBoth(),
+			modifiers: [
+				{
+					...fiveXBoth().modifiers[0]!,
+					effect: { mult: 0 },
+				},
+			],
+		};
+		expect(deliverTileBlocked(dir, { x: 0, y: 0 })).toBe(true);
+		expect(deliverTileBlocked(dir, { x: 4, y: 0 })).toBe(true);
+		expect(deliverTileBlocked(dir, { x: 2, y: 0 })).toBe(false);
+	});
+});
+
+// ─────────────────────────────────────────────
+// pickup inherits the deliver modifier (portfolio-aware)
+// Regression: under a 5x deliver bonus a carrying agent must still value
+// topping up with a cheap parcel — pre-fix scorePickup was modifier-blind,
+// so deliver always dominated and the agent walked past adjacent parcels.
+// ─────────────────────────────────────────────
+
+describe("pickup inherits deliver modifier", () => {
+	function fiveXGlobal(): ActiveDirectives {
+		return {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: { on: "deliver" }, // any zone
+					effect: { mult: 5 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+		};
+	}
+
+	// self at (2,0), carrying [10]; adjacent parcel at (3,0) reward 10.
+	function setup() {
+		const map = buildWideMap();
+		const bfs = bfsFromSelf(map, 2, 0);
+		const beliefs = createBeliefStore();
+		beliefs.parcels.set("p", makeParcel("p", 3, 0, 10));
+		return { map, bfs, beliefs, carry: carryOf([10]) };
+	}
+
+	it("no modifier: pickup keeps the raw §5.3 score (unchanged behavior)", () => {
+		const { map, bfs, beliefs, carry } = setup();
+		// R_c + R_p - (n+1)*dp*S = 10 + 10 - 2*0.5*4 = 16
+		const pick = scorePickup(
+			map,
+			bfs,
+			beliefs,
+			carry,
+			decayMetrics(500, 1000),
+			emptyDirectives(),
+		)!;
+		expect(pick.utility).toBeCloseTo(16, 5);
+	});
+
+	it("5x deliver: pickup value is boosted and now beats immediate delivery", () => {
+		const { map, bfs, beliefs, carry } = setup();
+		const m = decayMetrics(500, 1000);
+		const dir = fiveXGlobal();
+		// projDelivered = 5*(10+10)=100; score = 100 - 2*0.5*4 = 96
+		const pick = scorePickup(map, bfs, beliefs, carry, m, dir)!;
+		// deliver = 5*10 - 1*0.5*2 = 49
+		const del = scoreDeliver(map, bfs, carry, m, dir)!;
+		expect(pick.utility).toBeCloseTo(96, 5);
+		expect(pick.utility).toBeGreaterThan(del.score);
 	});
 });

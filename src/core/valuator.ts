@@ -91,7 +91,7 @@ export function conditionMet(
 // Applies modifier effects to the carry set: returns the net multiplier on R_c from active MODIFIER directives.
 /**
  * Σ_effects(R_c) = R_c × Π(mult_i) + Σ(add_i) for all matching deliver modifiers.
- * tile: if provided, tile-specific modifiers only apply when selector.tile matches.
+ * tile: if provided, tile-specific modifiers only apply when selector.tiles contains it.
  */
 function sigmaEffects(
 	R_c: number,
@@ -103,12 +103,14 @@ function sigmaEffects(
 	let add = 0;
 	for (const m of modifiers) {
 		if (m.selector.on !== "deliver") continue;
-		if (
-			tile &&
-			m.selector.tile &&
-			(m.selector.tile.x !== tile.x || m.selector.tile.y !== tile.y)
-		)
-			continue;
+		const mtiles = m.selector.tiles;
+		// Tile-restricted modifier: applies only when the delivery tile is known
+		// and matches. With no tile context (pickup scoring) it is skipped — its
+		// boost is realised later, once the agent commits to that delivery tile.
+		if (mtiles?.length) {
+			if (!tile || !mtiles.some((t) => t.x === tile.x && t.y === tile.y))
+				continue;
+		}
 		if (!conditionMet(m.condition, carry)) continue;
 		if (m.effect.mult !== undefined) mult *= m.effect.mult;
 		if (m.effect.add !== undefined) add += m.effect.add;
@@ -160,6 +162,7 @@ function scoreOneParcelInner(
 	s0: number,
 	R_c: number,
 	n: number,
+	modifiers: readonly ActiveModifier[],
 ): number | null {
 	if (p.carriedBy) return null;
 
@@ -228,10 +231,29 @@ function scoreOneParcelInner(
 			? R_p * capFx.mult + capFx.add
 			: R_p;
 
-	// Prune: parcel can't recoup its additional trip cost over all n+1 stops.
-	if (dp > 0 && R_p_eff <= dp * ((n + 1) * S - n * s0)) return null;
+	// Value the pickup at what it will actually DELIVER for: pass the projected
+	// post-pickup carry through the active deliver modifiers (e.g. a 5x bonus),
+	// mirroring scoreDeliver. Empty modifiers ⇒ sigmaEffects is identity ⇒ the
+	// original §5.3 formula (R_c + R_p_eff − (n+1)·d·M·S).
+	const baseCarry: CarryState = {
+		n,
+		rewards: [R_c],
+		nearestDeliveryDist: 0,
+		ids: [],
+	};
+	const projCarry: CarryState = {
+		n: n + 1,
+		rewards: [R_c + R_p_eff],
+		nearestDeliveryDist: 0,
+		ids: [],
+	};
+	const projDelivered = sigmaEffects(R_c + R_p_eff, modifiers, projCarry);
+	const marginalR_p = projDelivered - sigmaEffects(R_c, modifiers, baseCarry);
 
-	return R_c + R_p_eff - (n + 1) * dp * S;
+	// Prune: parcel can't recoup its additional trip cost over all n+1 stops.
+	if (dp > 0 && marginalR_p <= dp * ((n + 1) * S - n * s0)) return null;
+
+	return projDelivered - (n + 1) * dp * S;
 }
 
 // Scores a single parcel using the same formula as scorePickup's argmax.
@@ -271,6 +293,7 @@ export function scoreOneParcel(
 		s0,
 		sumRewards(carry),
 		carry.n,
+		modifiers,
 	);
 }
 
@@ -330,6 +353,7 @@ export function scorePickup(
 			s0,
 			R_c,
 			n,
+			modifiers,
 		);
 		if (s !== null && s > bestScore) {
 			bestScore = s;
@@ -645,9 +669,9 @@ export function deliverTileBlocked(
 ): boolean {
 	for (const m of directives.modifiers) {
 		if (m.selector.on !== "deliver") continue;
-		if (!m.selector.tile) continue;
-		if (m.selector.tile.x !== tile.x || m.selector.tile.y !== tile.y)
-			continue;
+		const mtiles = m.selector.tiles;
+		if (!mtiles?.length) continue;
+		if (!mtiles.some((t) => t.x === tile.x && t.y === tile.y)) continue;
 		if (m.condition !== undefined) continue;
 		if (m.effect.mult === 0) return true;
 	}

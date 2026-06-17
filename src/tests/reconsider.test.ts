@@ -270,7 +270,7 @@ describe("computeCurrentIntentionUtility — per-kind dispatch", () => {
 			...emptyDirectives(),
 			modifiers: [
 				{
-					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					selector: { on: "deliver", tiles: [{ x: 0, y: 0 }] },
 					effect: { mult: 5 },
 					lifetime: "persistent",
 					missionId: "m1",
@@ -473,7 +473,7 @@ describe("checkIntentionViability — directive-retraction checks", () => {
 			...emptyDirectives(),
 			modifiers: [
 				{
-					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					selector: { on: "deliver", tiles: [{ x: 0, y: 0 }] },
 					effect: { mult: 0 },
 					lifetime: "persistent",
 					missionId: "m1",
@@ -494,7 +494,7 @@ describe("checkIntentionViability — directive-retraction checks", () => {
 			...emptyDirectives(),
 			modifiers: [
 				{
-					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					selector: { on: "deliver", tiles: [{ x: 0, y: 0 }] },
 					effect: { mult: 0 },
 					condition: { carryCountAtLeast: 3 },
 					lifetime: "persistent",

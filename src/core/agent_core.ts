@@ -977,7 +977,10 @@ export class AgentCore {
 			if (m.lifetime !== "one-shot") continue;
 			const sel = m.selector;
 			if (sel.on === "deliver") {
-				if (sel.tile && (sel.tile.x !== tileX || sel.tile.y !== tileY))
+				if (
+					sel.tiles?.length &&
+					!sel.tiles.some((t) => t.x === tileX && t.y === tileY)
+				)
 					continue;
 				if (!conditionMet(m.condition, carry)) continue;
 			} else if (sel.on === "deliver-parcel") {

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 function rec(over: Partial<MissionRecord>): MissionRecord {
 	return {
 		opType: "MODIFIER",
-		selector: { on: "deliver", tile: null },
+		selector: { on: "deliver" },
 		effect: {},
 		condition: null,
 		lifetime: "persistent",
@@ -19,21 +19,27 @@ function rec(over: Partial<MissionRecord>): MissionRecord {
 }
 
 describe("formatMissionRecord", () => {
-	it("deliver modifier shows the tile (not a coords count)", () => {
+	it("deliver modifier shows the tiles (not a coords count)", () => {
 		const s = formatMissionRecord(
 			rec({
-				selector: { on: "deliver", tile: { x: 1, y: 1 } },
+				selector: {
+					on: "deliver",
+					tiles: [
+						{ x: 1, y: 1 },
+						{ x: 6, y: 2 },
+					],
+				},
 				effect: { mult: 5 },
 			}),
 		);
 		expect(s).toContain("on=deliver");
-		expect(s).toContain("tile=(1,1)");
+		expect(s).toContain("tiles=(1,1),(6,2)");
 		expect(s).toContain("mult=5");
 		expect(s).not.toContain("coords=");
 	});
 
-	it("deliver with no tile shows tile=any", () => {
-		expect(formatMissionRecord(rec({}))).toContain("tile=any");
+	it("deliver with no tiles shows tiles=any", () => {
+		expect(formatMissionRecord(rec({}))).toContain("tiles=any");
 	});
 
 	it("goto modifier shows coords", () => {
