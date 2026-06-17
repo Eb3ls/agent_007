@@ -367,11 +367,8 @@ export class L3Executor {
 			return;
 		}
 
-		const nearbyTiles = findRendezvousTiles(
-			this.map,
-			target,
-			RENDEZVOUS_MAX_DIST,
-		);
+		const maxDist = record.maxDist ?? RENDEZVOUS_MAX_DIST;
+		const nearbyTiles = findRendezvousTiles(this.map, target, maxDist);
 		if (nearbyTiles.length === 0) {
 			log.warn(
 				"l3_executor",
@@ -435,7 +432,7 @@ export class L3Executor {
 
 		log.info(
 			"l3_executor",
-			`dispatching rendezvous to (${target.x},${target.y}) tiles=${nearbyTiles.length} EV=${ev.toFixed(1)} missionId=${missionId}`,
+			`dispatching rendezvous to (${target.x},${target.y}) maxDist=${maxDist} tiles=${nearbyTiles.length} EV=${ev.toFixed(1)} missionId=${missionId}`,
 		);
 
 		this.bus.emitDirective(AGENT_BDI, {

@@ -37,12 +37,14 @@ export type MissionRecord = {
 	answer: string | null;
 	token: string | null;
 	predicate?: PredicateToken[];
+	maxDist?: number | null;
 	raw: string;
 };
 
 type ParsedResponse = Partial<MissionRecord> & {
 	coords?: Array<XY | string> | null;
 	predicate?: PredicateToken[] | null;
+	maxDist?: number | null;
 	selector?: Partial<MissionRecord["selector"]> & {
 		coords?: Array<XY | string> | null;
 	};
@@ -119,11 +121,12 @@ export class Extractor {
 					answer: parsed.answer ?? null,
 					token: parsed.token ?? null,
 					...(predicate !== undefined ? { predicate } : {}),
+					...(parsed.maxDist != null ? { maxDist: parsed.maxDist } : {}),
 					raw: text,
 				};
 				log.info(
 					"extractor",
-					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} predicate=${predicate ? JSON.stringify(predicate) : "none"} lifetime=${record.lifetime} bonus=${record.bonus}${record.effect.mult !== undefined ? ` mult=${record.effect.mult}` : ""}${record.effect.add !== undefined ? ` add=${record.effect.add}` : ""}${record.token ? ` token=${record.token}` : ""}${record.condition ? ` condition=${JSON.stringify(record.condition)}` : ""}`,
+					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} predicate=${predicate ? JSON.stringify(predicate) : "none"} lifetime=${record.lifetime} bonus=${record.bonus}${record.effect.mult !== undefined ? ` mult=${record.effect.mult}` : ""}${record.effect.add !== undefined ? ` add=${record.effect.add}` : ""}${record.token ? ` token=${record.token}` : ""}${record.maxDist != null ? ` maxDist=${record.maxDist}` : ""}${record.condition ? ` condition=${JSON.stringify(record.condition)}` : ""}`,
 				);
 			}
 		} catch (err) {
