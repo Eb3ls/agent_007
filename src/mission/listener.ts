@@ -46,9 +46,10 @@ export class Listener {
 	): void {
 		if (senderName.toLowerCase() !== this.allowlist) return;
 
+		// token fires only if it matches the entire message (ignoring case), to avoid false positives on common words
 		const textLower = text.toLowerCase();
 		for (const token of this.armedTokens) {
-			if (textLower.includes(token)) {
+			if (textLower === token) {
 				this.armedTokens.delete(token);
 				this.bus.emitSignal(token);
 				log.info("listener", `signal emitted token=${token}`);

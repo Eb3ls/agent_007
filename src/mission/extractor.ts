@@ -65,6 +65,8 @@ export class Extractor {
 
 	// Sends the text to the LLM, parses the JSON response into a MissionRecord, and caches by content hash.
 	async extract(text: string): Promise<MissionRecord | null> {
+		text = text.replace(/\r\n/g, "\n").replace(/\n+/g, " ").trim();
+
 		const key = cacheKey(text);
 		if (this.cache.has(key)) {
 			log.debug("extractor", `cache hit: ${text}`);
@@ -72,8 +74,9 @@ export class Extractor {
 		}
 
 		let record: MissionRecord | null = null;
+		let response = "";
 		try {
-			const response = await this.llm.complete([
+			response = await this.llm.complete([
 				{ role: "system", content: buildSystemPrompt() },
 				{ role: "user", content: buildExtractionPrompt(text) },
 			]);
@@ -130,7 +133,10 @@ export class Extractor {
 				);
 			}
 		} catch (err) {
-			log.error("extractor", `parse failed: ${String(err)}`);
+			log.error(
+				"extractor",
+				`parse failed: ${String(err)} | raw response=${JSON.stringify(response)}`,
+			);
 			record = null;
 		}
 
