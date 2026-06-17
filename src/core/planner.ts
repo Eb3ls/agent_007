@@ -280,87 +280,6 @@ export function computeContestFactor(
 	return maxSteal;
 }
 
-// Two-mode utility: empty carry → full trip cost; carrying → marginal detour from delivery path.
-// Both modes share the same decayCost/contest primitives for a comparable score scale.
-export function pickBestParcelTarget(
-	map: StaticMap,
-	bfs: BfsFromSelf,
-	beliefs: BeliefStore,
-	decayIntervalMs: number,
-	movementDurationMs: number,
-	carry: CarryState,
-	stealHorizonSteps: number = cfg.belief.expected_steal_horizon_steps,
-	excludedParcelIds?: ReadonlySet<string>,
-): PickResult | null {
-	const now = Date.now();
-	const decayPerStep = computeDecayPerStep(
-		decayIntervalMs,
-		movementDurationMs,
-	);
-	let best: ParcelBelief | null = null;
-	let bestUtility = -Infinity;
-	for (const p of beliefs.parcels.values()) {
-		if (p.carriedBy) continue;
-		if (excludedParcelIds?.has(p.id)) continue;
-		// Skip parcels too stale to pursue: viability (checkTargetParcel) drops a
-		// pickup whose out-of-view parcel hasn't been seen within
-		// parcel_belief_stale_steps, so the reconsider gate must not keep switching
-		// to such a target — otherwise it thrashes (commit → target_lost → reselect,
-		// and oscillation against deliver while carrying). Same threshold as viability.
-		if (
-			!p.inView &&
-			now - p.lastSeenAt >
-				movementDurationMs * cfg.belief.parcel_belief_stale_steps
-		)
-			continue;
-		const parcelTileId = tileId(map, p.x, p.y);
-		const distToParcel = bfs.dist[parcelTileId];
-		if (distToParcel === undefined || distToParcel === -1) continue;
-		const distParcelToDelivery =
-			map.baseReverseDistToDelivery[parcelTileId];
-		if (distParcelToDelivery === undefined || distParcelToDelivery === -1)
-			continue;
-
-		const totalDist = distToParcel + distParcelToDelivery;
-		const parcelReward =
-			expectedReward(
-				p,
-				decayIntervalMs,
-				movementDurationMs,
-				stealHorizonSteps,
-				now,
-			) *
-			(1 -
-				computeContestFactor(
-					beliefs,
-					p.x,
-					p.y,
-					distToParcel,
-					movementDurationMs,
-					now,
-				));
-		if (parcelReward <= 0) continue;
-		const parcelNet =
-			parcelReward - decayCost(parcelReward, decayPerStep, totalDist);
-		if (parcelNet <= 0) continue;
-
-		let utility: number;
-		if (carry.n === 0) {
-			utility = parcelNet;
-		} else {
-			utility =
-				computeDeliverUtility(carry.rewards, decayPerStep, totalDist) +
-				parcelNet;
-		}
-
-		if (utility > bestUtility) {
-			bestUtility = utility;
-			best = p;
-		}
-	}
-	return best ? { parcel: best, utility: bestUtility } : null;
-}
-
 export type CarryState = {
 	n: number;
 	rewards: number[];
@@ -411,27 +330,6 @@ function nearestDeliveryDist(map: StaticMap, bfs: BfsFromSelf): number {
 	const tile = nearestDeliveryTile(map, bfs);
 	if (!tile) return Infinity;
 	return bfs.dist[tileId(map, tile.x, tile.y)] ?? Infinity;
-}
-
-// Saturated decay cost: a parcel with reward R cannot lose more than R over t steps.
-export function decayCost(
-	reward: number,
-	decayPerStep: number,
-	steps: number,
-): number {
-	return Math.min(reward, decayPerStep * steps);
-}
-
-// Net portfolio value when delivering from dist steps away (per-parcel saturated decay).
-export function computeDeliverUtility(
-	rewards: number[],
-	decayPerStep: number,
-	dist: number,
-): number {
-	return rewards.reduce(
-		(s, r) => s + r - decayCost(r, decayPerStep, dist),
-		0,
-	);
 }
 
 // Reconstructs the BFS path to (targetX, targetY) as a direction array, or [] if unreachable.

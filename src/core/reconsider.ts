@@ -1,15 +1,18 @@
 import {
-	computeDecayPerStep,
-	computeDeliverUtility,
-	decayCost,
-	expectedReward,
-	pickBestParcelTarget,
-	type CarryState,
-} from "./planner.js";
+	scoreOneParcel,
+	scoreDeliver,
+	scoreGoto,
+	gotoBonusForMission,
+	deliverTileBlocked,
+	type CrossCtx,
+	type ValuatorMetrics,
+} from "./valuator.js";
+import type { ActiveDirectives } from "../team/directives.js";
 import { tileId, type StaticMap } from "../static_map.js";
 import type { BeliefStore } from "../belief_store.js";
 import type { BfsFromSelf } from "../pathfinder.js";
 import type { Intention } from "./intention.js";
+import { type CarryState } from "./planner.js";
 import { cfg } from "../config.js";
 
 export type TerminalReason =
@@ -24,7 +27,9 @@ export type TargetLostDetail =
 	| "stolen" // carried by another agent
 	| "moved" // seen in-view at different coords
 	| "stale" // out-of-view belief expired
-	| "not-on-tile"; // reached target tile but parcel not ours
+	| "not-on-tile" // reached target tile but parcel not ours
+	| "goto-retracted" // backing goto modifier was removed/released
+	| "deliver-denied"; // delivery tile unconditionally blocked (mult===0)
 
 export type ViabilityCheck =
 	| { viable: true }
@@ -66,158 +71,58 @@ function checkTargetParcel(
 	return null;
 }
 
-// Computes absolute utility of the current intention — same formula as pickBestParcelTarget
-// so the comparison with freshTarget.utility is on the same scale.
+// Computes absolute utility of the current intention using the same valuator scorers as
+// deliberate() — ensures current and fresh candidates are on the same scale.
 export function computeCurrentIntentionUtility(
 	intention: Intention,
 	map: StaticMap,
 	bfs: BfsFromSelf,
 	beliefs: BeliefStore,
 	carry: CarryState,
-	decayIntervalMs: number,
-	movementDurationMs: number,
+	metrics: ValuatorMetrics,
+	directives?: Readonly<ActiveDirectives>,
+	crossCtx?: CrossCtx,
 ): number {
-	const decayPerStep = computeDecayPerStep(
-		decayIntervalMs,
-		movementDurationMs,
-	);
-
 	if (intention.kind === "deliver") {
-		return computeDeliverUtility(
-			carry.rewards,
-			decayPerStep,
-			carry.nearestDeliveryDist,
+		// Global best deliver score — deliberate() re-picks the best tile each tick,
+		// so scoring the committed tile would create a false schism.
+		return (
+			scoreDeliver(map, bfs, carry, metrics, directives, crossCtx)
+				?.score ?? 0
 		);
 	}
-	if (intention.kind === "explore") return 0;
-
+	if (intention.kind === "explore" || intention.kind === "push") return 0;
+	if (intention.kind === "goto") {
+		const bonus = gotoBonusForMission(directives, intention.missionId);
+		// null = modifier retracted or no missionId — score 0 so it loses the argmax.
+		if (bonus === null) return 0;
+		return (
+			scoreGoto(
+				bfs,
+				map,
+				intention.targetXY,
+				bonus,
+				carry,
+				metrics,
+				crossCtx,
+			) ?? 0
+		);
+	}
 	// kind === "pickup"
 	const p = beliefs.parcels.get(intention.targetId!);
 	if (!p || p.carriedBy) return 0;
-
-	const parcelTileId = tileId(map, p.x, p.y);
-	const dist = bfs.dist[parcelTileId];
-	const distToDel = map.baseReverseDistToDelivery[parcelTileId];
-	if (
-		dist === undefined ||
-		dist === -1 ||
-		distToDel === undefined ||
-		distToDel === -1
-	)
-		return 0;
-
-	const reward = expectedReward(
-		p,
-		decayIntervalMs,
-		movementDurationMs,
-		cfg.belief.expected_steal_horizon_steps,
-		Date.now(),
-	);
-	if (reward <= 0) return 0;
-
-	// Mirrors pickBestParcelTarget's detour formula exactly — scores must be on the same scale for comparison.
-	const totalDist = dist + distToDel; // detour path: self → parcel → delivery
-	const parcelNet = reward - decayCost(reward, decayPerStep, totalDist);
-	if (carry.n === 0) return parcelNet;
 	return (
-		computeDeliverUtility(carry.rewards, decayPerStep, totalDist) +
-		parcelNet
-	);
-}
-
-// Meta-level reconsider gate: should we re-deliberate even though intention is still viable?
-// Utilities are absolute and comparable: freshTarget uses pickBestParcelTarget,
-// currentUtility uses the same formula for the committed intention.
-export function shouldReconsider(
-	intention: Intention,
-	map: StaticMap,
-	bfs: BfsFromSelf,
-	beliefs: BeliefStore,
-	carry: CarryState,
-	decayIntervalMs: number,
-	movementDurationMs: number,
-): boolean {
-	const freshTarget = pickBestParcelTarget(
-		map,
-		bfs,
-		beliefs,
-		decayIntervalMs,
-		movementDurationMs,
-		carry,
-	);
-	if (!freshTarget) return false;
-	if (
-		intention.kind === "pickup" &&
-		freshTarget.parcel.id === intention.targetId
-	)
-		return false;
-
-	// Delivery commitment: don't abandon a delivery to chase a parcel that is
-	// farther away than finishing the delivery itself. Banking the carried reward
-	// first avoids thrashing toward a distant parcel — e.g. one that's visible
-	// across a maze fold (Manhattan-close) but many BFS-steps away, which the
-	// agent can never sustain a pursuit of. Parcels closer than the delivery tile
-	// (genuinely on the way) still preempt as before.
-	if (intention.kind === "deliver") {
-		const deliverDist = computeTargetDistance(map, bfs, intention);
-		const pickupDist =
-			bfs.dist[tileId(map, freshTarget.parcel.x, freshTarget.parcel.y)];
-		if (
-			deliverDist !== null &&
-			pickupDist !== undefined &&
-			pickupDist !== -1 &&
-			pickupDist >= deliverDist
-		)
-			return false;
-	}
-
-	const currentUtility = computeCurrentIntentionUtility(
-		intention,
-		map,
-		bfs,
-		beliefs,
-		carry,
-		decayIntervalMs,
-		movementDurationMs,
-	);
-	// abort_margin: force reconsider if current utility has dropped too low.
-	if (
-		cfg.intention.abort_margin > 0 &&
-		currentUtility < cfg.intention.abort_margin
-	)
-		return true;
-	// opportunity_margin: fresh option must beat current by this fraction before switching —
-	// prevents abandoning a nearly-done intention for a marginally better one.
-	return (
-		freshTarget.utility >
-		currentUtility *
-			(1 + cfg.intention.reconsider_opportunity_margin_fraction)
-	);
-}
-
-// Reconsider gate for committed PDDL plans: only an explore plan may be
-// preempted, and only by a more valuable parcel pickup — never by another
-// explore target — so crate plans run to completion. For an explore intention
-// shouldReconsider already reduces to exactly this parcel comparison, so we
-// just gate on kind and delegate.
-export function shouldReconsiderPDDLForParcel(
-	intention: Intention,
-	map: StaticMap,
-	bfs: BfsFromSelf,
-	beliefs: BeliefStore,
-	carry: CarryState,
-	decayIntervalMs: number,
-	movementDurationMs: number,
-): boolean {
-	if (intention.kind !== "explore") return false;
-	return shouldReconsider(
-		intention,
-		map,
-		bfs,
-		beliefs,
-		carry,
-		decayIntervalMs,
-		movementDurationMs,
+		scoreOneParcel(
+			p,
+			map,
+			bfs,
+			beliefs,
+			carry,
+			metrics,
+			directives,
+			undefined,
+			crossCtx,
+		) ?? 0
 	);
 }
 
@@ -233,6 +138,7 @@ export function checkIntentionViability(
 	selfY: number,
 	now: number,
 	movementDurationMs: number,
+	directives?: Readonly<ActiveDirectives>,
 ): ViabilityCheck {
 	// 1) Target reached — distinguish succeeded from target_lost for pickup
 	if (selfX === intention.targetXY.x && selfY === intention.targetXY.y) {
@@ -270,6 +176,30 @@ export function checkIntentionViability(
 		movementDurationMs,
 	);
 	if (lost) return { viable: false, reason: "target_lost", detail: lost };
+
+	// 2b) Directive retraction: goto modifier released, deliver tile hard-blocked.
+	// Stage-driven gotos (no missionId) are not modifier-backed — skip them.
+	if (
+		directives &&
+		intention.kind === "goto" &&
+		intention.missionId &&
+		gotoBonusForMission(directives, intention.missionId) === null
+	)
+		return {
+			viable: false,
+			reason: "target_lost",
+			detail: "goto-retracted",
+		};
+	if (
+		directives &&
+		intention.kind === "deliver" &&
+		deliverTileBlocked(directives, intention.targetXY)
+	)
+		return {
+			viable: false,
+			reason: "target_lost",
+			detail: "deliver-denied",
+		};
 
 	// 3) Explore: target in FOV and close enough to react quickly if a parcel spawns
 	if (intention.kind === "explore") {

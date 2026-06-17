@@ -45,23 +45,27 @@ function evaluateCandidate(
 }
 
 // Returns the highest-scoring viable candidate, or null if none pass.
-// Hysteresis: a new candidate must exceed the current intention's score by the
-// absolute margin cfg.intention.switch_margin to prevent flicker between near-equal options.
+// Hysteresis (anti-thrash): a value-based alternative must beat the current
+// intention by switch_margin_fraction (relative) before switching; two explore
+// targets compare on a distance margin; mixed value/explore switches freely.
 export function selectBestIntention(
 	context: IntentionRuleContext,
 	candidates: IntentionCandidate[],
 ): IntentionCandidate | null {
 	if (candidates.length === 0) return null;
 
-	// Pure argmax over all viable candidates.
 	let best: IntentionCandidate | null = null;
 	let bestScore = -Infinity;
+	let current: IntentionCandidate | null = null;
 	let currentScore = -Infinity;
 
 	for (const candidate of candidates) {
 		const result = evaluateCandidate(candidate, context);
 		if (!result.pass) continue;
-		if (candidate.source === "current") currentScore = result.score;
+		if (candidate.source === "current") {
+			current = candidate;
+			currentScore = result.score;
+		}
 		if (result.score > bestScore) {
 			best = candidate;
 			bestScore = result.score;
@@ -69,15 +73,26 @@ export function selectBestIntention(
 	}
 
 	if (!best) return null;
+	if (!current || best.source === "current") return best;
 
-	// If the current intention is viable, require the new best to exceed it by
-	// the hysteresis margin (absolute pts) before switching.
-	if (currentScore > -Infinity && best.source !== "current") {
-		if (bestScore <= currentScore + cfg.intention.switch_margin) {
-			return candidates.find((c) => c.source === "current")!;
-		}
-	}
+	const currentIsExplore = current.intention.kind === "explore";
+	const bestIsExplore = best.intention.kind === "explore";
 
+	// Both explore: scores are -distance, so a relative margin is meaningless.
+	// Hold the committed target unless the fresh one is meaningfully nearer.
+	if (currentIsExplore && bestIsExplore)
+		return bestScore > currentScore + cfg.explore.switch_distance_margin
+			? best
+			: current;
+
+	// Both value-based: relative margin scales the threshold with reward.
+	if (!currentIsExplore && !bestIsExplore)
+		return bestScore >
+			currentScore * (1 + cfg.intention.switch_margin_fraction)
+			? best
+			: current;
+
+	// Mixed (value vs explore): no comparable margin — take the argmax winner.
 	return best;
 }
 

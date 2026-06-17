@@ -4,6 +4,9 @@ import {
 	scoreGoto,
 	batchCandidates,
 	parcelCapEffect,
+	scoreOneParcel,
+	gotoBonusForMission,
+	deliverTileBlocked,
 	type ValuatorMetrics,
 } from "../core/valuator.js";
 import type { ActiveDirectives } from "../team/directives.js";
@@ -679,5 +682,251 @@ describe("modifier: deliver-parcel cap with fractional mult (M4)", () => {
 			directives,
 		);
 		expect(result).toBeNull();
+	});
+});
+
+// ─────────────────────────────────────────────
+// scoreOneParcel parity — behavior-preservation regression
+// ─────────────────────────────────────────────
+
+describe("scoreOneParcel — parity with scorePickup argmax", () => {
+	it("single parcel: scoreOneParcel === scorePickup.utility", () => {
+		const map = buildLinearMap();
+		const bfs = bfsFromSelf(map, 2, 0);
+		const beliefs = createBeliefStore();
+		const p1 = makeParcel("p1", 1, 0, 20);
+		beliefs.parcels.set("p1", p1);
+		const carry = emptyCarry();
+		const metrics = decayMetrics(500, 1000);
+		const dir = emptyDirectives();
+
+		const argmax = scorePickup(map, bfs, beliefs, carry, metrics, dir);
+		const single = scoreOneParcel(
+			p1,
+			map,
+			bfs,
+			beliefs,
+			carry,
+			metrics,
+			dir,
+		);
+
+		expect(argmax).not.toBeNull();
+		expect(single).not.toBeNull();
+		expect(single).toBeCloseTo(argmax!.utility, 10);
+	});
+
+	it("multi-parcel: max(scoreOneParcel) matches scorePickup winner", () => {
+		const map = buildLinearMap();
+		const bfs = bfsFromSelf(map, 2, 0);
+		const beliefs = createBeliefStore();
+		const p1 = makeParcel("p1", 1, 0, 20);
+		const p2 = makeParcel("p2", 2, 0, 5);
+		beliefs.parcels.set("p1", p1);
+		beliefs.parcels.set("p2", p2);
+		const carry = emptyCarry();
+		const metrics = decayMetrics(500, 1000);
+		const dir = emptyDirectives();
+
+		const argmax = scorePickup(map, bfs, beliefs, carry, metrics, dir);
+
+		let bestScore = -Infinity;
+		let bestId: string | null = null;
+		for (const p of [p1, p2]) {
+			const s = scoreOneParcel(p, map, bfs, beliefs, carry, metrics, dir);
+			if (s !== null && s > bestScore) {
+				bestScore = s;
+				bestId = p.id;
+			}
+		}
+
+		expect(argmax).not.toBeNull();
+		expect(bestId).not.toBeNull();
+		expect(bestScore).toBeCloseTo(argmax!.utility, 10);
+		expect(bestId).toBe(argmax!.parcel.id);
+	});
+
+	it("carried parcel returns null", () => {
+		const map = buildLinearMap();
+		const bfs = bfsFromSelf(map, 2, 0);
+		const beliefs = createBeliefStore();
+		const p = {
+			...makeParcel("p1", 1, 0, 20),
+			carriedBy: "other",
+		} as unknown as Parameters<typeof scoreOneParcel>[0];
+		const result = scoreOneParcel(
+			p,
+			map,
+			bfs,
+			beliefs,
+			emptyCarry(),
+			noDecayMetrics(),
+		);
+		expect(result).toBeNull();
+	});
+});
+
+// ─────────────────────────────────────────────
+// gotoBonusForMission
+// ─────────────────────────────────────────────
+
+describe("gotoBonusForMission", () => {
+	it("returns bonus when missionId matches an active goto modifier", () => {
+		const dir: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: { on: "goto", coords: [{ x: 3, y: 3 }] },
+					effect: { add: 100 },
+					lifetime: "persistent",
+					missionId: "g1",
+					target: "both",
+				},
+			],
+		};
+		expect(gotoBonusForMission(dir, "g1")).toBe(100);
+	});
+
+	it("returns null when missionId not found (retracted)", () => {
+		expect(gotoBonusForMission(emptyDirectives(), "g1")).toBeNull();
+	});
+
+	it("returns null when missionId is undefined", () => {
+		expect(gotoBonusForMission(emptyDirectives(), undefined)).toBeNull();
+	});
+
+	it("returns null when directives is undefined", () => {
+		expect(gotoBonusForMission(undefined, "g1")).toBeNull();
+	});
+
+	it("returns 0 when modifier has no effect.add (bonus is genuinely 0)", () => {
+		const dir: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: { on: "goto", coords: [{ x: 0, y: 0 }] },
+					effect: {},
+					lifetime: "persistent",
+					missionId: "g0",
+					target: "both",
+				},
+			],
+		};
+		expect(gotoBonusForMission(dir, "g0")).toBe(0);
+	});
+});
+
+// ─────────────────────────────────────────────
+// deliverTileBlocked
+// ─────────────────────────────────────────────
+
+describe("deliverTileBlocked", () => {
+	it("returns true when tile has unconditional mult=0 deliver modifier", () => {
+		const dir: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					effect: { mult: 0 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+		};
+		expect(deliverTileBlocked(dir, { x: 0, y: 0 })).toBe(true);
+	});
+
+	it("returns false when modifier has a condition (deferred case)", () => {
+		const dir: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					condition: { carryCountEquals: 1 },
+					effect: { mult: 0 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+		};
+		expect(deliverTileBlocked(dir, { x: 0, y: 0 })).toBe(false);
+	});
+
+	it("returns false for a different tile", () => {
+		const dir: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: { on: "deliver", tile: { x: 5, y: 5 } },
+					effect: { mult: 0 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+		};
+		expect(deliverTileBlocked(dir, { x: 0, y: 0 })).toBe(false);
+	});
+
+	it("returns false when mult is not 0 (e.g. x5 bonus)", () => {
+		const dir: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: { on: "deliver", tile: { x: 0, y: 0 } },
+					effect: { mult: 5 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+		};
+		expect(deliverTileBlocked(dir, { x: 0, y: 0 })).toBe(false);
+	});
+
+	it("returns false when modifier applies to all tiles (no tile field, deferred)", () => {
+		const dir: ActiveDirectives = {
+			paused: false,
+			stage: null,
+			hardForbiddenTileCoords: [],
+			pricedCrossTiles: [],
+			forbiddenPickupParcelIds: new Set(),
+			modifiers: [
+				{
+					selector: { on: "deliver" },
+					effect: { mult: 0 },
+					lifetime: "persistent",
+					missionId: "m1",
+					target: "both",
+				},
+			],
+		};
+		expect(deliverTileBlocked(dir, { x: 0, y: 0 })).toBe(false);
 	});
 });

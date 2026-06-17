@@ -16,24 +16,18 @@ interface RawConfig {
 		parcel_belief_stale_steps: number;
 	};
 	intention: {
-		start_margin: number;
-		abort_margin: number;
-		switch_margin: number;
-		reconsider_opportunity_margin_fraction: number;
+		switch_margin_fraction: number;
 		max_move_fail_streak: number;
 		max_age_steps: number;
-		ski_rental_fraction: number;
-		p_steal_clamp: number;
 		opponent_defer_steps: number;
 		l_seed_efficiency: number;
 		hysteresis_pct: number;
 		steal_prob: number;
-		staleness_discount: number;
-		contest_p_lose: number;
 	};
 	explore: {
 		spawn_observed_ttl_steps: number;
 		termination_distance: number;
+		switch_distance_margin: number;
 		competitor_penalty_alpha: number;
 		memory_decay_horizon_steps: number;
 		ev_promote: boolean;

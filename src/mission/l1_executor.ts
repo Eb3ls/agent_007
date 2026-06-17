@@ -37,6 +37,8 @@ export class L1Executor {
 
 		let messageSent = false;
 
+		log.info("l1_executor", `starting exec loop for mission${record.raw}`);
+
 		for (let step = 0; step < cfg.mission.l1_max_steps; step++) {
 			let raw: string;
 			try {

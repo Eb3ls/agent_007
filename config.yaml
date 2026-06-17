@@ -11,30 +11,22 @@ belief:
 
 # Intention layer
 intention:
-  # Minimum utility (pts) to start pursuing a new non-explore intention.
-  start_margin: 0
-  # Abort current intention if its utility falls below this value.
-  abort_margin: 0
-  # New candidate must exceed current utility by this many pts to trigger switch.
-  switch_margin: 0
-  reconsider_opportunity_margin_fraction: 0.25
+  # A value-based alternative must beat the current intention by this fraction to switch.
+  switch_margin_fraction: 0.25
   max_move_fail_streak: 3
   max_age_steps: 50
-  # A/B knobs (stubs — not yet wired into core logic)
-  ski_rental_fraction: 0.5
-  p_steal_clamp: 0.9
-  opponent_defer_steps: 3
-  l_seed_efficiency: 0.5
+  opponent_defer_steps: 3   # defer a crate push while an opponent is within this many tiles
+  l_seed_efficiency: 0.5    # fraction of rewardAvg seeded as the L-throughput floor
   hysteresis_pct: 0.05      # single switching-cost threshold: G3, L3 dispatch/abort (§5.8, §5.9)
-  steal_prob: 0.3            # behavioral uncertainty in steal_risk (§5.9)
-  staleness_discount: 1.0   # multiplier on out-of-view parcel expected reward (1.0 = off, §9f)
-  contest_p_lose: 0.0       # additional contest-factor floor discount (0.0 = off, §9e)
+  steal_prob: 0.3           # behavioral uncertainty in steal_risk (§5.9)
 
 # Exploration
 explore:
   spawn_observed_ttl_steps: 100
   # Explore succeeds when target is in FOV AND Manhattan distance ≤ this value.
   termination_distance: 2
+  # Both-explore hysteresis: a fresh spawn must be this many steps nearer to switch.
+  switch_distance_margin: 2
   # cost += competitor_penalty_alpha * competitorWeight(spawn)
   competitor_penalty_alpha: 3
   # weight(t) = weight(0) * exp(-Δsteps / memory_decay_horizon_steps)

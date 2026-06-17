@@ -38,11 +38,6 @@ import {
 	type PredicateToken,
 } from "../team/directives.js";
 import {
-	checkIntentionViability,
-	shouldReconsider,
-	shouldReconsiderPDDLForParcel,
-} from "./reconsider.js";
-import {
 	TILE,
 	tileId,
 	idToXY,
@@ -52,6 +47,7 @@ import {
 import { bfsFromSelf, DELTA_OF, type BfsFromSelf } from "../pathfinder.js";
 import { cfg as appCfg, parseDecayInterval } from "../config.js";
 import type { Coordinator } from "../team/coordinator.js";
+import { checkIntentionViability } from "./reconsider.js";
 import type { AgentBus } from "../team/agent_bus.js";
 import type { GameClient } from "../game_client.js";
 import { intentSig } from "./intention_rules.js";
@@ -529,7 +525,7 @@ export class AgentCore {
 		return { skip: false, intention };
 	}
 
-	// Runs the three-gate deliberation pipeline (viability, soundness, reconsider) and crate PDDL fallback,
+	// Runs the two-gate deliberation pipeline (viability, soundness) + regime split (PDDL run-to-completion vs deliberate-every-tick) and crate PDDL fallback,
 	// then logs intention transitions and returns the selected intention.
 	private async runDeliberationPhase(
 		ctx: TickContext,
@@ -558,6 +554,7 @@ export class AgentCore {
 				selfY,
 				ctx.now,
 				cfg.movementDurationMs,
+				state,
 			);
 			if (!viability.viable) {
 				terminatedThisTick = true;
@@ -639,35 +636,16 @@ export class AgentCore {
 			}
 		}
 
-		// Gate 3: reconsider + deliberate. PDDL plans only yield to a better
-		// parcel and only when exploring — committed crate pushes run to completion.
-		const reconsider =
-			intention !== null &&
-			(intention.usedPDDL
-				? shouldReconsiderPDDLForParcel(
-						intention,
-						map,
-						ctx.bfs,
-						this.beliefs,
-						ctx.carry,
-						cfg.decayIntervalMs,
-						cfg.movementDurationMs,
-					)
-				: shouldReconsider(
-						intention,
-						map,
-						ctx.bfs,
-						this.beliefs,
-						ctx.carry,
-						cfg.decayIntervalMs,
-						cfg.movementDurationMs,
-					));
-
+		// Gate 3: regime split. A committed PDDL plan runs to completion (the
+		// expensive solve is the only thing worth amortizing). A BFS intention is
+		// re-deliberated every tick — buildPlan is O(path), nothing to gate — with
+		// the current intention as a candidate so the switch margin (now inside
+		// selectBestIntention) provides the anti-thrash hysteresis.
+		const metrics = this.metrics(cfg);
 		const teamExclusions = this.coordinator?.exclusionsFor(this.id);
 
-		if (!intention || reconsider) {
+		if (!intention?.usedPDDL) {
 			const prev = intention;
-			const metrics = this.metrics(cfg);
 			const result = deliberate({
 				myId: cfg.myId,
 				map,
@@ -680,7 +658,7 @@ export class AgentCore {
 				observationDistance: cfg.observationDistance,
 				decayIntervalMs: cfg.decayIntervalMs,
 				carry: ctx.carry,
-				intention: reconsider ? intention : null,
+				intention,
 				directives: state,
 				metrics,
 				rewardAvg: cfg.rewardAvg,
@@ -697,10 +675,12 @@ export class AgentCore {
 					intention.targetXY.x !== prev.targetXY.x ||
 					intention.targetXY.y !== prev.targetXY.y;
 				if (changed) {
-					const missionPart = intention.missionId ? ` mission=${intention.missionId}` : "";
+					const missionPart = intention.missionId
+						? ` mission=${intention.missionId}`
+						: "";
 					log.debug(
 						`${this.id}:intent`,
-						`${reconsider && prev ? "reconsider→replan" : "new"} kind=${intention.kind} carrying=${ctx.carry.n > 0} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps${missionPart}`,
+						`${prev ? "switch" : "new"} kind=${intention.kind} carrying=${ctx.carry.n > 0} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps${missionPart}`,
 					);
 				}
 			}
@@ -770,16 +750,12 @@ export class AgentCore {
 						crateCtx,
 					);
 					if (plan.length > 0) {
-						// A delivery-bound crate push must run to completion: kind
-						// "push" so shouldReconsiderPDDLForParcel (which only preempts
-						// "explore") won't swap it for a nearby pickup every tick,
-						// leaving the agent wandering while it carries undeliverable
-						// parcels.
-						intention = makeIntention(
-							"push",
-							target,
-							ctx.now,
-						);
+						// A delivery-bound crate push must run to completion: built as
+						// a usedPDDL plan so Gate 3's regime split runs it to completion
+						// (no BFS intention preempts a committed PDDL plan — §9.1),
+						// instead of swapping it for a nearby pickup while it carries
+						// undeliverable parcels.
+						intention = makeIntention("push", target, ctx.now);
 						intention.plan = plan;
 						intention.usedPDDL = true;
 						label = `deliver → (${target.x},${target.y})`;
@@ -817,8 +793,8 @@ export class AgentCore {
 			}
 
 			if (target && plan.length > 0) {
-				// Both legs run to completion: kind "push" so the BFS-based viability/
-				// reconsider gates can't abort a solver-verified crate plan mid-route.
+				// Both legs run to completion: kind "push" so the BFS-based viability
+				// gate can't abort a solver-verified crate plan mid-route.
 				// Parcels are still picked up via the position reflexes along the way.
 				intention = makeIntention("push", target, ctx.now);
 				intention.plan = plan;
@@ -1081,7 +1057,9 @@ export class AgentCore {
 
 			if (directiveCount > 0) {
 				const activeModifiers = state.modifiers.length;
-				const activeMissions = new Set(state.modifiers.map(m => m.missionId)).size;
+				const activeMissions = new Set(
+					state.modifiers.map((m) => m.missionId),
+				).size;
 				log.info(
 					`${this.id}:directives`,
 					`received=${directiveCount} active-modifiers=${activeModifiers} active-missions=${activeMissions}${state.paused ? " [PAUSED]" : ""}${state.stage ? " [STAGE]" : ""}`,
@@ -1108,6 +1086,8 @@ export class AgentCore {
 			);
 			deliveryCount = reflex.deliveryCount;
 			intention = reflex.intention;
+			// A fired reflex skips the rest of the tick, so deliberation never runs
+			// the same tick — reflex and deliberate never double-score.
 			if (reflex.skip) continue;
 
 			// Stage override or deliberation.
@@ -1158,9 +1138,10 @@ export class AgentCore {
 			}
 
 			if (intention.plan.length === 0) {
-				const modContext = state.modifiers.length > 0
-					? ` mods=[${state.modifiers.map(m => `${m.missionId}:${m.selector.on}`).join(",")}]`
-					: "";
+				const modContext =
+					state.modifiers.length > 0
+						? ` mods=[${state.modifiers.map((m) => `${m.missionId}:${m.selector.on}`).join(",")}]`
+						: "";
 				log.debug(
 					`${this.id}:plan`,
 					`building: kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y})${intention.missionId ? ` mission=${intention.missionId}` : ""}${modContext}`,

@@ -143,6 +143,137 @@ export function parcelCapEffect(
 	return rewardOver !== null ? { rewardOver, mult, add } : null;
 }
 
+// Inner per-parcel body shared by scorePickup (argmax) and scoreOneParcel (single-call).
+// Callers that iterate many parcels should pre-compute now/dp/capFx/s0/R_c/n once and
+// pass them here to avoid Date.now() drift across the loop.
+function scoreOneParcelInner(
+	p: ParcelBelief,
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	beliefs: BeliefStore,
+	metrics: ValuatorMetrics,
+	stealHorizonSteps: number,
+	crossCtx: CrossCtx | undefined,
+	now: number,
+	dp: number,
+	capFx: ParcelCapEffect | null,
+	s0: number,
+	R_c: number,
+	n: number,
+): number | null {
+	if (p.carriedBy) return null;
+
+	if (
+		!p.inView &&
+		now - p.lastSeenAt > metrics.M * cfg.belief.parcel_belief_stale_steps
+	)
+		return null;
+
+	if (capFx !== null && p.reward > capFx.rewardOver && capFx.mult === 0)
+		return null;
+
+	const pId = tileId(map, p.x, p.y);
+	const distPToDel = map.baseReverseDistToDelivery[pId];
+	if (distPToDel === undefined || distPToDel === -1) return null;
+
+	let distToP: number;
+	if (crossCtx) {
+		const avoidDist = crossCtx.bfsAvoid.dist[pId];
+		const crossDist = bfs.dist[pId];
+		if (
+			(avoidDist === undefined || avoidDist === -1) &&
+			(crossDist === undefined || crossDist === -1)
+		)
+			return null;
+		const avoidEff =
+			avoidDist !== undefined && avoidDist !== -1 ? avoidDist : Infinity;
+		// Spread penalty across all stops: each stop shares 1/(n+1) of the crossing cost.
+		const crossEff =
+			crossDist !== undefined && crossDist !== -1
+				? crossDist +
+					pathCrossPenalty(map, bfs, p.x, p.y, crossCtx.pricedById) /
+						Math.max(dp * (n + 1), 1)
+				: Infinity;
+		distToP = Math.min(avoidEff, crossEff);
+		if (!Number.isFinite(distToP)) return null;
+	} else {
+		const d = bfs.dist[pId];
+		if (d === undefined || d === -1) return null;
+		distToP = d;
+	}
+
+	const S = distToP + distPToDel;
+
+	const R_p =
+		expectedReward(
+			p,
+			metrics.decayIntervalMs,
+			metrics.M,
+			stealHorizonSteps,
+			now,
+		) *
+		(1 -
+			computeContestFactor(
+				beliefs,
+				p.x,
+				p.y,
+				Math.round(distToP),
+				metrics.M,
+				now,
+			));
+	if (R_p <= 0) return null;
+
+	const R_p_eff =
+		capFx !== null && p.reward > capFx.rewardOver
+			? R_p * capFx.mult + capFx.add
+			: R_p;
+
+	// Prune: parcel can't recoup its additional trip cost over all n+1 stops.
+	if (dp > 0 && R_p_eff <= dp * ((n + 1) * S - n * s0)) return null;
+
+	return R_c + R_p_eff - (n + 1) * dp * S;
+}
+
+// Scores a single parcel using the same formula as scorePickup's argmax.
+// Use when you need the score of ONE specific parcel (e.g. the committed pickup intention).
+export function scoreOneParcel(
+	p: ParcelBelief,
+	map: StaticMap,
+	bfs: BfsFromSelf,
+	beliefs: BeliefStore,
+	carry: CarryState,
+	metrics: ValuatorMetrics,
+	directives?: Readonly<ActiveDirectives>,
+	stealHorizonSteps: number = cfg.belief.expected_steal_horizon_steps,
+	crossCtx?: CrossCtx,
+): number | null {
+	const now = Date.now();
+	const dp = computeDecayPerStep(metrics.decayIntervalMs, metrics.M);
+	const modifiers = directives?.modifiers ?? [];
+	const capFx = parcelCapEffect(modifiers);
+	const nearestDeliv = nearestDeliveryTile(map, bfs);
+	const s0 =
+		nearestDeliv !== null
+			? (bfs.dist[tileId(map, nearestDeliv.x, nearestDeliv.y)] ??
+				Infinity)
+			: Infinity;
+	return scoreOneParcelInner(
+		p,
+		map,
+		bfs,
+		beliefs,
+		metrics,
+		stealHorizonSteps,
+		crossCtx,
+		now,
+		dp,
+		capFx,
+		s0,
+		sumRewards(carry),
+		carry.n,
+	);
+}
+
 /**
  * Absolute full-trip pickup score per §5.3.
  * Score_pickup(P) = R_c + R_p_eff − (n+1)·d·M·S
@@ -185,94 +316,23 @@ export function scorePickup(
 		if (p.carriedBy) continue;
 		if (forbidden.has(p.id)) continue;
 		if (extraExcludedIds?.has(p.id)) continue;
-
-		// Skip parcels too stale to actually pursue. A pickup committed to an
-		// out-of-view parcel not seen within parcel_belief_stale_steps is dropped by
-		// viability (checkTargetParcel) on the very next tick, so selecting one here
-		// only causes commit → target_lost → reselect thrash (and, while carrying,
-		// oscillation against deliver). Keep selection consistent with viability.
-		if (
-			!p.inView &&
-			now - p.lastSeenAt >
-				metrics.M * cfg.belief.parcel_belief_stale_steps
-		)
-			continue;
-
-		// Hard-skip when cap mult is 0 (×0 block); fractional mult → scale reward below.
-		if (capFx !== null && p.reward > capFx.rewardOver && capFx.mult === 0)
-			continue;
-
-		const pId = tileId(map, p.x, p.y);
-		const distPToDel = map.baseReverseDistToDelivery[pId];
-		if (distPToDel === undefined || distPToDel === -1) continue;
-
-		// Effective distance to parcel: best of avoid-path and cross-path minus penalty.
-		let distToP: number;
-		if (crossCtx) {
-			const avoidDist = crossCtx.bfsAvoid.dist[pId];
-			const crossDist = bfs.dist[pId];
-			if (
-				(avoidDist === undefined || avoidDist === -1) &&
-				(crossDist === undefined || crossDist === -1)
-			)
-				continue;
-			const avoidEff =
-				avoidDist !== undefined && avoidDist !== -1
-					? avoidDist
-					: Infinity;
-			// Spread penalty across all stops: each stop shares 1/(n+1) of the crossing cost.
-			const crossEff =
-				crossDist !== undefined && crossDist !== -1
-					? crossDist +
-						pathCrossPenalty(
-							map,
-							bfs,
-							p.x,
-							p.y,
-							crossCtx.pricedById,
-						) /
-							Math.max(dp * (n + 1), 1)
-					: Infinity;
-			distToP = Math.min(avoidEff, crossEff);
-			if (!Number.isFinite(distToP)) continue;
-		} else {
-			const d = bfs.dist[pId];
-			if (d === undefined || d === -1) continue;
-			distToP = d;
-		}
-
-		const S = distToP + distPToDel;
-
-		const R_p =
-			expectedReward(
-				p,
-				metrics.decayIntervalMs,
-				metrics.M,
-				stealHorizonSteps,
-				now,
-			) *
-			(1 -
-				computeContestFactor(
-					beliefs,
-					p.x,
-					p.y,
-					Math.round(distToP),
-					metrics.M,
-					now,
-				));
-		if (R_p <= 0) continue;
-
-		const R_p_eff =
-			capFx !== null && p.reward > capFx.rewardOver
-				? R_p * capFx.mult + capFx.add
-				: R_p;
-
-		// Prune: parcel can't recoup its additional trip cost over all n+1 stops.
-		if (dp > 0 && R_p_eff <= dp * ((n + 1) * S - n * s0)) continue;
-
-		const score = R_c + R_p_eff - (n + 1) * dp * S;
-		if (score > bestScore) {
-			bestScore = score;
+		const s = scoreOneParcelInner(
+			p,
+			map,
+			bfs,
+			beliefs,
+			metrics,
+			stealHorizonSteps,
+			crossCtx,
+			now,
+			dp,
+			capFx,
+			s0,
+			R_c,
+			n,
+		);
+		if (s !== null && s > bestScore) {
+			bestScore = s;
 			best = p;
 		}
 	}
@@ -552,4 +612,38 @@ export function carryValue(
 		d?.score ?? 0,
 		batches.length > 0 ? maxBatchScore(batches) : 0,
 	);
+}
+
+// Reverse-lookup: finds the bonus for a goto intention by missionId in active directives.
+// Returns null when no matching on:"goto" modifier exists (retracted or no missionId).
+// null (not 0) lets callers distinguish "retracted" from "bonus is genuinely 0".
+export function gotoBonusForMission(
+	directives: Readonly<ActiveDirectives> | undefined,
+	missionId: string | undefined,
+): number | null {
+	if (!directives || missionId === undefined) return null;
+	for (const m of directives.modifiers) {
+		if (m.selector.on === "goto" && m.missionId === missionId)
+			return m.effect.add ?? 0;
+	}
+	return null;
+}
+
+// Returns true when the committed deliver tile is unconditionally blocked (mult===0, no
+// condition) by an active deliver modifier. Carry-free so viability can call it without
+// threading metrics. Conditional ×0 mods (e.g. carryCountEquals) are deferred — they are
+// handled by scoreDeliver returning ≤0 rather than by the viability hard gate.
+export function deliverTileBlocked(
+	directives: Readonly<ActiveDirectives>,
+	tile: { x: number; y: number },
+): boolean {
+	for (const m of directives.modifiers) {
+		if (m.selector.on !== "deliver") continue;
+		if (!m.selector.tile) continue;
+		if (m.selector.tile.x !== tile.x || m.selector.tile.y !== tile.y)
+			continue;
+		if (m.condition !== undefined) continue;
+		if (m.effect.mult === 0) return true;
+	}
+	return false;
 }

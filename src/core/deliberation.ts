@@ -123,7 +123,8 @@ function computeExploreEV(
 	);
 }
 
-// Scores all candidate intentions and returns the best one above the start_margin threshold.
+// Scores all candidate intentions and returns the best one (current included as a
+// candidate, so selectBestIntention's switch margin provides the anti-thrash hysteresis).
 export function deliberate(context: DeliberationContext): DeliberateResult {
 	const metrics: ValuatorMetrics = context.metrics ?? {
 		M: context.movementDurationMs,
@@ -136,6 +137,8 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 	const candidates: IntentionCandidate[] = [];
 
 	// Keep current intention as a candidate (retention bias / hysteresis).
+	// MUST be pushed first: selectBestIntention's strict-> argmax keeps current on
+	// a tie, which is the anti-thrash invariant. Do not reorder below deliver/pickup.
 	if (context.intention) {
 		candidates.push({
 			intention: context.intention,
@@ -146,8 +149,9 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 				context.bfs,
 				context.beliefs,
 				context.carry,
-				context.decayIntervalMs,
-				context.movementDurationMs,
+				metrics,
+				directives,
+				context.crossCtx,
 			),
 		});
 	}
@@ -337,14 +341,11 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 
 	const why = buildWhy(candidates, selected);
 
-	// Explore is cheap so start_margin doesn't apply — only costly switches need the inertia buffer.
-	if (
-		selected.source !== "current" &&
-		selected.intention.kind !== "explore" &&
-		cfg.intention.start_margin > 0 &&
-		selected.utility < cfg.intention.start_margin
-	)
-		return { intention: null, why: "below start_margin" };
+	if (selected.source === "current") {
+		// Reuse the live plan; Gate 2 already rebuilt it if unsound. Rebuilding
+		// every tick would oscillate between equal-length routes (path churn).
+		return { intention: context.intention!, why };
+	}
 
 	const plan = buildPlan(
 		context.map,
@@ -353,11 +354,6 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 		selected.intention.targetXY.y,
 	);
 	if (plan.length === 0) return { intention: null, why: "no path" };
-
-	if (selected.source === "current") {
-		// Re-use the live intention object (with its in-progress plan) rather than the freshly-scored candidate shell.
-		return { intention: { ...context.intention!, plan }, why };
-	}
 	return {
 		intention: {
 			...selected.intention,
