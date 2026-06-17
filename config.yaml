@@ -62,3 +62,8 @@ crates:
 # Logging: silent | info | debug
 log:
   level: info
+  disabled_tags:
+    pickup: true
+    deliver: true
+    move: true
+    plan: false

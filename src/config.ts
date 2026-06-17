@@ -42,7 +42,10 @@ interface RawConfig {
 	race: { horizon_steps: number };
 	loop: { ready_poll_ms: number; no_step_wait_ms: number };
 	crates: { enabled: boolean; cooldown_ms: number };
-	log: { level: "silent" | "info" | "debug" };
+	log: {
+		level: "silent" | "info" | "debug";
+		disabled_tags?: Record<string, boolean>;
+	};
 }
 
 function loadConfig(): RawConfig {

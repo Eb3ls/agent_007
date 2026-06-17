@@ -107,11 +107,32 @@ export class Assembler {
 			if (result.kind !== "modifier" || result.coords.length === 0)
 				return;
 			const mid = `m${++this.missionSeq}`;
+			// Map resolved coords to appropriate selector field based on opType.
+			// Special case: on="deliver" with resolved coords → convert to "goto" so agents route there.
+			const baseSelector = record.selector;
+			let resolvedSelector: typeof record.selector;
+			if (baseSelector.on === "deliver" && result.coords.length > 0) {
+				// Keep deliver semantics with the resolved specific tile.
+				resolvedSelector = {
+					on: "deliver" as const,
+					tile: result.coords[0] ?? null,
+				};
+				log.info("assembler", `resolved deliver tile missionId=${mid}`);
+			} else if (baseSelector.on === "cross") {
+				// For cross: use tiles array
+				resolvedSelector = {
+					on: "cross" as const,
+					tiles: result.coords,
+				};
+			} else {
+				// For goto and others: use coords array
+				resolvedSelector = {
+					...baseSelector,
+					coords: result.coords,
+				};
+			}
 			const dir = this.buildModifier(
-				{
-					...record,
-					selector: { ...record.selector, coords: result.coords },
-				},
+				{ ...record, selector: resolvedSelector },
 				mid,
 				record.target,
 			);

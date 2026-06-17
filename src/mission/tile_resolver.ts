@@ -47,5 +47,19 @@ export function resolveLabel(label: string, map: StaticMap): XY | null {
 		}
 	}
 
+	// Bare directional labels ("rightmost tile", "leftmost", "topmost", "bottommost")
+	// without a type qualifier — default to delivery tiles since that's where packages are dropped.
+	const deliveries = map.deliveryTileIds.map((id) => idToXY(map, id));
+	if (deliveries.length > 0) {
+		if (norm.includes("right"))
+			return deliveries.reduce((a, b) => (a.x > b.x ? a : b));
+		if (norm.includes("left"))
+			return deliveries.reduce((a, b) => (a.x < b.x ? a : b));
+		if (norm.includes("top") || norm.includes("north"))
+			return deliveries.reduce((a, b) => (a.y < b.y ? a : b));
+		if (norm.includes("bottom") || norm.includes("south"))
+			return deliveries.reduce((a, b) => (a.y > b.y ? a : b));
+	}
+
 	return null;
 }
