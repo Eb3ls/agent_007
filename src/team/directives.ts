@@ -1,3 +1,5 @@
+import { log } from "../logger.js";
+
 export type XY = { x: number; y: number };
 
 export type PredicateToken =
@@ -88,7 +90,8 @@ export class DirectiveHandler {
 	}
 
 	apply(): void {
-		for (const d of this.queue.splice(0)) {
+		const directives = this.queue.splice(0);
+		for (const d of directives) {
 			if (d.kind === "OVERRIDE") {
 				if (d.op === "PAUSE") {
 					this._pausedBy.add(d.missionId ?? ORPHAN);
@@ -117,6 +120,23 @@ export class DirectiveHandler {
 				});
 			}
 		}
+		if (directives.length > 0) {
+			const summary = this.getAppliedSummary(directives.length);
+			log.info("directives", `accepted ${directives.length} mission(s) — ${summary}`);
+		}
+	}
+
+	// Returns a log-friendly summary of what was just applied.
+	getAppliedSummary(count: number): string {
+		if (count === 0) return "";
+		const modifiersNow = this.pool.length;
+		const pausedNow = this._pausedBy.size;
+		const stageNow = this._stages.length;
+		const parts: string[] = [];
+		if (modifiersNow > 0) parts.push(`modifiers=${modifiersNow}`);
+		if (pausedNow > 0) parts.push(`paused-by=${Array.from(this._pausedBy).join(",")}`);
+		if (stageNow > 0) parts.push(`stage=${stageNow}`);
+		return parts.join(" ");
 	}
 
 	releaseByMissionId(missionId: string): void {

@@ -218,10 +218,16 @@ export class Assembler {
 			return;
 		}
 		this.emitBoth(directive);
-		log.info(
-			"assembler",
-			`MODIFIER on=${record.selector.on} missionId=${missionId} lifetime=${record.lifetime} scope=${scopeOf(record.target)}`,
-		);
+		if (directive.kind === "MODIFIER") {
+			const sel = directive.selector;
+			const selectorDesc = sel.on === "goto" || sel.on === "cross"
+				? `on=${sel.on} count=${sel.on === "goto" ? sel.coords.length : sel.tiles.length}`
+				: `on=${sel.on}`;
+			log.info(
+				"assembler",
+				`MODIFIER ${selectorDesc} missionId=${missionId} lifetime=${record.lifetime} scope=${scopeOf(record.target)}`,
+			);
+		}
 	}
 
 	// --- shared helpers ---
@@ -255,15 +261,34 @@ export class Assembler {
 	}
 
 	// Builds a MODIFIER directive from a MissionRecord, normalising selector, effect, and condition fields.
+	// Converts negative-bonus goto missions into cross (avoidance) modifiers so agents actively avoid them.
 	private buildModifier(
 		record: MissionRecord,
 		missionId: string,
 		target: string | "both",
 	): Directive | null {
-		const sel = record.selector;
+		let sel = record.selector;
 		const effect = { ...record.effect };
 		if (!effect.add && !effect.mult && record.bonus !== null) {
 			effect.add = record.bonus;
+		}
+
+		// Convert negative-bonus goto coords to cross (avoidance) modifiers.
+		// This makes agents actively avoid those coords in pathfinding instead of just not pursuing them as a goto target.
+		// Negate the effect so that negative bonus becomes positive penalty (hard forbidden tile).
+		if (
+			sel.on === "goto" &&
+			sel.coords &&
+			sel.coords.length > 0 &&
+			(effect.add ?? 0) < 0
+		) {
+			sel = { on: "cross", tiles: sel.coords };
+			if (effect.add !== undefined) effect.add = -effect.add;
+			if (effect.mult !== undefined) effect.mult = 1 / effect.mult;
+			log.info(
+				"assembler",
+				`converted goto→cross (negated effect) missionId=${missionId}`,
+			);
 		}
 
 		// Validate selector has required coords/tiles.

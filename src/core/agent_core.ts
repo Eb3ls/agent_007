@@ -688,11 +688,13 @@ export class AgentCore {
 					intention.kind !== prev.kind ||
 					intention.targetXY.x !== prev.targetXY.x ||
 					intention.targetXY.y !== prev.targetXY.y;
-				if (changed)
+				if (changed) {
+					const missionPart = intention.missionId ? ` mission=${intention.missionId}` : "";
 					log.debug(
 						`${this.id}:intent`,
-						`${reconsider && prev ? "reconsider→replan" : "new"} kind=${intention.kind} carrying=${ctx.carry.n > 0} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps`,
+						`${reconsider && prev ? "reconsider→replan" : "new"} kind=${intention.kind} carrying=${ctx.carry.n > 0} target=(${intention.targetXY.x},${intention.targetXY.y}) plan=${intention.plan.length}steps${missionPart}`,
 					);
+				}
 			}
 		}
 
@@ -1007,9 +1009,10 @@ export class AgentCore {
 		} else {
 			intention.moveFailStreak++;
 			intention.plan = [];
+			const failContext = `kind=${intention.kind}${intention.targetXY ? ` target=(${intention.targetXY.x},${intention.targetXY.y})` : ""}${intention.missionId ? ` mission=${intention.missionId}` : ""}`;
 			log.error(
 				"move",
-				`${step} → FAILED fails=${intention.moveFailStreak}`,
+				`${step} → FAILED fails=${intention.moveFailStreak} ${failContext}`,
 			);
 			await sleep(cfg.movementDurationMs);
 		}
@@ -1058,12 +1061,24 @@ export class AgentCore {
 			loopCount++;
 
 			// Drain bus directives and apply them.
+			let directiveCount = 0;
 			if (this.bus) {
-				for (const d of this.bus.drainDirectives(this.id))
+				for (const d of this.bus.drainDirectives(this.id)) {
 					this.directives.enqueue(d);
+					directiveCount++;
+				}
 			}
 			this.directives.apply();
 			const state = this.directives.state;
+
+			if (directiveCount > 0) {
+				const activeModifiers = state.modifiers.length;
+				const activeMissions = new Set(state.modifiers.map(m => m.missionId)).size;
+				log.info(
+					`${this.id}:directives`,
+					`received=${directiveCount} active-modifiers=${activeModifiers} active-missions=${activeMissions}${state.paused ? " [PAUSED]" : ""}${state.stage ? " [STAGE]" : ""}`,
+				);
+			}
 
 			const ctx = this.buildTickContext(selfX, selfY, state, cfg);
 
@@ -1132,6 +1147,16 @@ export class AgentCore {
 			if (!intention) {
 				await sleep(appCfg.loop.no_step_wait_ms);
 				continue;
+			}
+
+			if (intention.plan.length === 0) {
+				const modContext = state.modifiers.length > 0
+					? ` mods=[${state.modifiers.map(m => `${m.missionId}:${m.selector.on}`).join(",")}]`
+					: "";
+				log.debug(
+					`${this.id}:plan`,
+					`building: kind=${intention.kind} target=(${intention.targetXY.x},${intention.targetXY.y})${intention.missionId ? ` mission=${intention.missionId}` : ""}${modContext}`,
+				);
 			}
 
 			// Move: empty-plan rebuild + push-defer + execute.
