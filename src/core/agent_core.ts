@@ -97,6 +97,10 @@ export class AgentCore {
 	private M = 0;
 	private lastIntentSig: string | null = null;
 	private intentRebuilds = 0;
+	// Parcels the grab reflex refused because adding them would lower carry value
+	// (e.g. a carry-condition mission). Excluded from pickup selection so the agent
+	// doesn't re-target and freeze on the tile. Cleared on every carry change.
+	private readonly refusedPickupIds = new Set<string>();
 
 	constructor(
 		private readonly id: string,
@@ -109,6 +113,13 @@ export class AgentCore {
 		bus?.onRelease((payload) => {
 			this.directives.releaseByMissionId(payload.missionId);
 		});
+	}
+
+	// Notifies the team bus and clears refused-pickup exclusions: a refusal is
+	// carry-relative, so any carry change re-opens those parcels for selection.
+	private signalCarryChanged(): void {
+		this.bus?.emitCarryChange(this.id);
+		this.refusedPickupIds.clear();
 	}
 
 	// Polls until the server has sent a valid integer position and the static map is populated.
@@ -253,7 +264,7 @@ export class AgentCore {
 		const deliveredPts = sumRewards(ctx.carry);
 		const dropped = await this.client.putdown();
 		applyDelivery(this.beliefs, cfg.myId);
-		this.bus?.emitCarryChange(this.id);
+		this.signalCarryChanged();
 		this.coordinator?.recordDelivery(this.id, deliveredPts);
 		deliveryCount += dropped.length;
 		log.ok(
@@ -299,7 +310,7 @@ export class AgentCore {
 				this.beliefs.parcels.set(id, rest as typeof p);
 			}
 		}
-		this.bus?.emitCarryChange(this.id);
+		this.signalCarryChanged();
 		log.warn(
 			"score-cap",
 			`dropped ${overCapIds.length} over-cap parcels (rewardOver=${capFx.rewardOver})`,
@@ -341,13 +352,17 @@ export class AgentCore {
 		if (
 			carryValue(map, ctx.bfs, this.beliefs, carryAfterGrab, m, state) <
 			carryValue(map, ctx.bfs, this.beliefs, ctx.carry, m, state)
-		)
+		) {
+			// Refused on portfolio value (e.g. a carry-condition mission): exclude from
+			// selection so deliberation doesn't re-target it and freeze on this tile.
+			this.refusedPickupIds.add(parcelAtFeet.id);
 			return { skip: false, intention, deliveryCount };
+		}
 
 		const picked = await this.client.pickup();
 		applyPickupResult(this.beliefs, picked, cfg.myId);
 		clearUncarriedParcelsAt(this.beliefs, selfX, selfY);
-		this.bus?.emitCarryChange(this.id);
+		this.signalCarryChanged();
 		log.ok("pickup", `picked=${picked.length}`);
 		return { skip: true, intention, deliveryCount };
 	}
@@ -418,11 +433,11 @@ export class AgentCore {
 				pickedCount = picked.length;
 				applyPickupResult(this.beliefs, picked, cfg.myId);
 				clearUncarriedParcelsAt(this.beliefs, selfX, selfY);
-				this.bus?.emitCarryChange(this.id);
+				this.signalCarryChanged();
 			} else if (stage.thenAct === "putDown") {
 				await this.client.putdown();
 				applyDelivery(this.beliefs, cfg.myId);
-				this.bus?.emitCarryChange(this.id);
+				this.signalCarryChanged();
 			}
 			const confirmResult =
 				stage.thenAct === "putDown"
@@ -608,6 +623,9 @@ export class AgentCore {
 				metrics,
 				rewardAvg: cfg.rewardAvg,
 				...(teamExclusions && { teamExclusions }),
+				...(this.refusedPickupIds.size > 0 && {
+					selfExcludedParcelIds: this.refusedPickupIds,
+				}),
 				...(ctx.crossCtx && { crossCtx: ctx.crossCtx }),
 			});
 			intention = result.intention;

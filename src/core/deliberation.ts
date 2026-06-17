@@ -28,6 +28,17 @@ import { cfg } from "../config.js";
 
 const DECISION_TOP_K = 4;
 
+// Merges two optional parcel-id sets; returns undefined when both are empty so
+// scorers keep their cheap no-exclusion path.
+function unionSets(
+	a?: ReadonlySet<string>,
+	b?: ReadonlySet<string>,
+): ReadonlySet<string> | undefined {
+	if (!a?.size) return b?.size ? b : undefined;
+	if (!b?.size) return a;
+	return new Set([...a, ...b]);
+}
+
 // Formats the deliberation decision as a human-readable string: selected candidate and top alternatives with their utilities.
 export function buildWhy(
 	candidates: IntentionCandidate[],
@@ -62,6 +73,9 @@ export type DeliberationContext = {
 	carry: import("./planner.js").CarryState;
 	intention: Intention | null;
 	teamExclusions?: TeamExclusions;
+	/** Per-agent parcels the grab reflex refused (carryValue would drop) — excluded
+	 * from pickup selection so the agent doesn't re-target and freeze on the tile. */
+	selfExcludedParcelIds?: ReadonlySet<string>;
 	/** Active mission directives — consumed by valuator scorers. */
 	directives?: Readonly<ActiveDirectives>;
 	/** Live currency rates (M-EMA, L-throughput). Fallback: M=movementDurationMs, L=0. */
@@ -132,7 +146,10 @@ export function deliberate(context: DeliberationContext): DeliberateResult {
 		decayIntervalMs: context.decayIntervalMs,
 	};
 	const directives = context.directives;
-	const excludedParcels = context.teamExclusions?.excludedParcelIds;
+	const excludedParcels = unionSets(
+		context.teamExclusions?.excludedParcelIds,
+		context.selfExcludedParcelIds,
+	);
 
 	const candidates: IntentionCandidate[] = [];
 

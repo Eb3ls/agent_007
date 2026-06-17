@@ -436,3 +436,68 @@ describe("deliberate — stability (post-collapse)", () => {
 		expect(flip.intention?.targetXY).toEqual({ x: 6, y: 0 });
 	});
 });
+
+// ─────────────────────────────────────────────
+// deliberate — self-excluded parcels (stuck-on-refused-pickup fix)
+// ─────────────────────────────────────────────
+
+describe("deliberate — selfExcludedParcelIds", () => {
+	// "Penalize over-carrying": delivery pays 0 once carrying >= 2 parcels. The grab
+	// reflex (carryValue) refuses a 2nd parcel; scorePickup is blind to the condition
+	// and would re-select it, freezing the agent on the tile. Excluding it recovers.
+	const overCarry = (): ActiveDirectives => ({
+		...emptyDirectives(),
+		modifiers: [
+			{
+				selector: { on: "deliver" },
+				effect: { mult: 0 },
+				condition: { carryCountAtLeast: 2 },
+				lifetime: "persistent",
+				missionId: "m1",
+				target: "both",
+			},
+		],
+	});
+
+	it("without exclusion: underfoot refused parcel freezes deliberate (null)", () => {
+		const beliefs = createBeliefStore();
+		beliefs.parcels.set("p2", parcelAt("p2", 3, 10));
+		const r = deliberate(
+			makeContext({
+				map: corridor(),
+				selfX: 3,
+				beliefs,
+				carry: carryOf([10]),
+				directives: overCarry(),
+			}),
+		);
+		// pickup wins (dist 0) but its plan-to-self is empty → null; deliver suppressed.
+		expect(r.intention).toBeNull();
+	});
+
+	it("with exclusion: agent recovers (delivers current carry instead of freezing)", () => {
+		const beliefs = createBeliefStore();
+		beliefs.parcels.set("p2", parcelAt("p2", 3, 10));
+		const r = deliberate({
+			...makeContext({
+				map: corridor(),
+				selfX: 3,
+				beliefs,
+				carry: carryOf([10]),
+				directives: overCarry(),
+			}),
+			selfExcludedParcelIds: new Set(["p2"]),
+		});
+		expect(r.intention).not.toBeNull();
+		expect(r.intention?.kind).not.toBe("pickup");
+	});
+
+	it("regression: no over-carry modifier → parcel still selectable", () => {
+		const beliefs = createBeliefStore();
+		beliefs.parcels.set("p9", parcelAt("p9", 3, 20));
+		const r = deliberate(
+			makeContext({ map: corridor(), selfX: 5, beliefs }),
+		);
+		expect(r.intention?.kind).toBe("pickup");
+	});
+});
