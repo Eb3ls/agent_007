@@ -1,8 +1,12 @@
-import { resolveLabel, type XY } from "./tile_resolver.js";
-import { idToXY, type StaticMap } from "../static_map.js";
+import {
+	idToXY,
+	resolvePredicateTokens,
+	type StaticMap,
+} from "../static_map.js";
+import type { PredicateToken } from "../team/directives.js";
 import type { GameClient } from "../game_client.js";
 
-export type { XY } from "./tile_resolver.js";
+export type XY = { x: number; y: number };
 
 export type ToolName =
 	| "calculate"
@@ -15,12 +19,12 @@ export type ToolCall = { tool: ToolName; args: unknown };
 
 export type ToolError = { error: string; recoverable: boolean };
 
-export type L1DoneShape =
+export type ResolveDoneShape =
 	| { kind: "answered" }
 	| { kind: "modifier"; coords: XY[] }
 	| { kind: "failed" };
 
-export type L1Ctx = {
+export type ResolverCtx = {
 	map: StaticMap;
 	chatClient: GameClient;
 	senderId: string;
@@ -52,7 +56,7 @@ function execCalculate(args: unknown): number {
 }
 
 // Answers spawn_tiles, delivery_tiles, tile_at, or bounds queries against the static map.
-function execMapQuery(args: unknown, ctx: L1Ctx): unknown {
+function execMapQuery(args: unknown, ctx: ResolverCtx): unknown {
 	const a = args as { query: string; x?: number; y?: number };
 	switch (a.query) {
 		case "spawn_tiles":
@@ -75,14 +79,19 @@ function execMapQuery(args: unknown, ctx: L1Ctx): unknown {
 	}
 }
 
-// Resolves a human-readable tile label to its XY coordinates.
-function execResolveTile(args: unknown, ctx: L1Ctx): XY | null {
-	const label = requireString(args, "label", "resolve_tile");
-	return resolveLabel(label, ctx.map);
+// Resolves a predicate token array (e.g. ["delivery","leftmost"]) to map tiles.
+function execResolveTile(args: unknown, ctx: ResolverCtx): XY[] {
+	const tokens = (args as { tokens?: unknown } | null)?.tokens;
+	if (!Array.isArray(tokens) || tokens.some((t) => typeof t !== "string"))
+		toolError("resolve_tile requires args.tokens (string array)");
+	return resolvePredicateTokens(tokens as PredicateToken[], ctx.map);
 }
 
 // Sends a chat message; defaults to replying to the current sender when no recipient is specified.
-async function execSendMessage(args: unknown, ctx: L1Ctx): Promise<string> {
+async function execSendMessage(
+	args: unknown,
+	ctx: ResolverCtx,
+): Promise<string> {
 	const a = args as { to?: string; msg: string };
 	await ctx.chatClient.say(a.to ?? ctx.senderId, a.msg);
 	return "sent";
@@ -91,7 +100,7 @@ async function execSendMessage(args: unknown, ctx: L1Ctx): Promise<string> {
 // Dispatches a tool call to its implementation; throws ToolError for unknown tool names.
 export async function executeTool(
 	call: ToolCall,
-	ctx: L1Ctx,
+	ctx: ResolverCtx,
 ): Promise<unknown> {
 	switch (call.tool) {
 		case "calculate":
@@ -102,7 +111,7 @@ export async function executeTool(
 			return execResolveTile(call.args, ctx);
 		case "send_message":
 			return execSendMessage(call.args, ctx);
-		// "done" is terminal — handled by l1_executor before executeTool is called; never reaches here.
+		// "done" is terminal — handled by the resolver loop before executeTool is called; never reaches here.
 		default:
 			toolError(
 				`Unknown tool "${call.tool}". Valid tools: calculate, map_query, resolve_tile, send_message, done.`,

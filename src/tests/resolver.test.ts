@@ -1,13 +1,12 @@
 import type { LlmClient, ChatMessage } from "../mission/llm_client.js";
 import type { MissionRecord } from "../mission/extractor.js";
-import { L1Executor } from "../mission/l1_executor.js";
+import type { ResolverCtx } from "../mission/tools.js";
 import { createStaticMap } from "../static_map.js";
-import type { L1Ctx } from "../mission/tools.js";
+import { Resolver } from "../mission/resolver.js";
 import { describe, expect, it } from "vitest";
 
 function makeRecord(overrides: Partial<MissionRecord> = {}): MissionRecord {
 	return {
-		level: "L1",
 		opType: "MODIFIER",
 		selector: { on: "deliver" },
 		effect: {},
@@ -31,7 +30,7 @@ function makeMockLlm(responses: string[]): LlmClient {
 	} as unknown as LlmClient;
 }
 
-function makeCtx(): L1Ctx {
+function makeCtx(): ResolverCtx {
 	return {
 		map: createStaticMap(),
 		chatClient: {
@@ -41,12 +40,12 @@ function makeCtx(): L1Ctx {
 	};
 }
 
-describe("L1Executor", () => {
+describe("Resolver", () => {
 	it("terminates with kind=failed when LLM returns done(null)", async () => {
 		const llm = makeMockLlm([
 			'{"thought":"cannot resolve","action":{"tool":"done","args":null}}',
 		]);
-		const exec = new L1Executor(llm, makeCtx());
+		const exec = new Resolver(llm, makeCtx());
 		const result = await exec.run(makeRecord());
 		expect(result.kind).toBe("failed");
 	});
@@ -55,7 +54,7 @@ describe("L1Executor", () => {
 		const llm = makeMockLlm([
 			'{"thought":"resolved","action":{"tool":"done","args":{"resolvedCoords":[{"x":3,"y":4}]}}}',
 		]);
-		const exec = new L1Executor(llm, makeCtx());
+		const exec = new Resolver(llm, makeCtx());
 		const result = await exec.run(makeRecord());
 		expect(result.kind).toBe("modifier");
 		if (result.kind === "modifier")
@@ -67,7 +66,7 @@ describe("L1Executor", () => {
 			'{"thought":"answering","action":{"tool":"send_message","args":{"to":"server","msg":"42"}}}',
 			'{"thought":"done","action":{"tool":"done","args":null}}',
 		]);
-		const exec = new L1Executor(llm, makeCtx());
+		const exec = new Resolver(llm, makeCtx());
 		const result = await exec.run(makeRecord());
 		expect(result.kind).toBe("answered");
 	});
@@ -78,7 +77,7 @@ describe("L1Executor", () => {
 		const sameAction =
 			'{"thought":"stuck","action":{"tool":"map_query","args":{"query":"bounds"}}}';
 		const llm = makeMockLlm([sameAction, sameAction, sameAction]);
-		const exec = new L1Executor(llm, makeCtx());
+		const exec = new Resolver(llm, makeCtx());
 		const result = await exec.run(makeRecord());
 		expect(result.kind).toBe("failed");
 	});
@@ -88,7 +87,7 @@ describe("L1Executor", () => {
 			"not json at all",
 			'{"thought":"giving up","action":{"tool":"done","args":null}}',
 		]);
-		const exec = new L1Executor(llm, makeCtx());
+		const exec = new Resolver(llm, makeCtx());
 		const result = await exec.run(makeRecord());
 		// No send_message, done(null) → failed, but loop recovered instead of crashing.
 		expect(result.kind).toBe("failed");
@@ -99,7 +98,7 @@ describe("L1Executor", () => {
 			'{"thought":"calc","action":{"tool":"calculate","args":{"expr":"2+3"}}}',
 			'{"thought":"done","action":{"tool":"done","args":null}}',
 		]);
-		const exec = new L1Executor(llm, makeCtx());
+		const exec = new Resolver(llm, makeCtx());
 		const result = await exec.run(makeRecord());
 		// no send_message, done(null) → failed
 		expect(result.kind).toBe("failed");

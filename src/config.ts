@@ -32,7 +32,7 @@ interface RawConfig {
 		memory_decay_horizon_steps: number;
 		ev_promote: boolean;
 	};
-	mission: { l1_max_steps: number };
+	mission: { resolver_max_steps: number };
 	race: { horizon_steps: number };
 	loop: { ready_poll_ms: number; no_step_wait_ms: number };
 	crates: { enabled: boolean; cooldown_ms: number };

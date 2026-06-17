@@ -44,7 +44,7 @@ loop:
 
 # Mission brain
 mission:
-  l1_max_steps: 10
+  resolver_max_steps: 10
 
 # Crate-aware PDDL planning (ENHSP). Falls back to wall-only behaviour if disabled.
 crates:

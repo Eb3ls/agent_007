@@ -4,7 +4,6 @@ GAME: 2 robots on a grid collect and deliver parcels for points. Missions add bo
 
 OUTPUT SCHEMA:
 {
-  "level":    "L1" | "L2" | "L3",
   "opType":   "MODIFIER" | "PAUSE" | "RESUME" | "STAGE" | "handoff" | "rendezvous" | "qa",
   "selector": {
     "on": "goto" | "deliver" | "deliver-parcel" | "cross" | "pickup",
@@ -23,11 +22,11 @@ OUTPUT SCHEMA:
   "answer":    string | null,
   "token":     string | null,
   "predicate": ["odd-row"|"even-row"|"odd-col"|"even-col"|"odd-tile"|"even-tile"|"delivery"|"spawn"|"leftmost"|"rightmost"|"topmost"|"bottommost"|"center"] | null,
+  "needsResolve": boolean,
   "maxDist":   number | null
 }
 
 FIELD RULES:
-- level: L1=goto/answer/calculate, L2=score modifier/constraint, L3=handoff/rendezvous/red-light
 - opType:
     MODIFIER  = scoring rule (goto bonus, cross penalty, delivery condition)
     PAUSE     = stop both robots; RESUME = let them go again
@@ -48,15 +47,16 @@ FIELD RULES:
 - condition: only for deliver selector; use exactly ONE key; omit whole field if no condition
 - lifetime: "one-shot" if "una tantum" / "only first time" / "per agent once"; "persistent" otherwise
 - target: "both" unless message targets one robot explicitly
-- coords (TOP LEVEL): use for map-relative labels like "northwest", "leftmost-delivery"; else put {x,y} directly in selector.coords or selector.tiles
+- coords (TOP LEVEL): put explicit {x,y} here only when the message gives numeric/arithmetic coordinates; for map-relative targets use predicate instead, not a string label
 - bonus: the numeric value in the message (can be negative); convert words to numbers ("ten"=10, "hundred"=100); null if absent
 - answer: answer to any question the message asks; null if no question
 - token: the exact resume word/phrase the referee will say to restart movement (e.g. "green", "via"); null if not stated
-- predicate: STAGE only — closed-vocabulary token array describing the target tile class; null for any other opType or when selector.coords has explicit {x,y}
-- maxDist: rendezvous only — the maximum BFS distance from the target tile that counts as "neighborhood"; extract from phrases like "within a maximum distance of N", "entro N caselle", "raggio N"; null for all other opTypes
+- predicate: the map-resolution hint for ANY opType — emit when the target tile(s) are a map-relative class/position expressible by the token vocab (e.g. "top-left delivery", "leftmost spawn", "central zone", "odd rows"). Resolved deterministically from the map, no coords needed. null when the message gives explicit {x,y} or the target isn't vocab-expressible.
     tokens: "odd-row","even-row","odd-col","even-col","odd-tile","even-tile","delivery","spawn","leftmost","rightmost","topmost","bottommost","center"
-    combine tokens: ["delivery","leftmost"] = leftmost delivery tile; ["odd-row"] = any tile on an odd-numbered row (y is odd); ["odd-tile"] = tile where both x and y are odd
+    combine tokens: ["delivery","topmost","leftmost"] = top-left delivery tile; ["delivery","center"] = central delivery tile; ["odd-row"] = any tile on an odd-numbered row (y is odd); ["odd-tile"] = tile where both x and y are odd
     row = y-axis, col = x-axis; "dispari"=odd, "pari"=even
+- needsResolve: true ONLY when the target needs map info the token vocab can't express (freeform landmark like "near the fountain", a value you can't compute yourself). Sends the mission to the tool-based resolver. false otherwise (explicit coords or predicate handle it).
+- maxDist: rendezvous only — the maximum BFS distance from the target tile that counts as "neighborhood"; extract from phrases like "within a maximum distance of N", "entro N caselle", "raggio N"; null for all other opTypes
 - If a field cannot be determined: use null — never guess
 
 COORD RULES:
@@ -64,65 +64,74 @@ COORD RULES:
 - Arithmetic: "x=4*2 y=(1+3)*3" → evaluate → {x:8,y:12}
 - Tuple: "(4,7)", "4 7", "four, seven" → {x:4,y:7}
 - row/col: "row 5, col 12" → x=12, y=5 (col=x, row=y)
-- Map-relative: "north-west corner", "leftmost tile" → put string label in top-level coords field
+- Map-relative: "north-west corner", "leftmost delivery", "central zone" → use predicate tokens (NOT coords)
 - Range: "x=15 rows 30-33" → expand to tiles [{x:15,y:30},{x:15,y:31},{x:15,y:32},{x:15,y:33}]
 - cross tiles → selector.tiles (NOT top-level coords)
 
 EXAMPLES:
 
 Input: Move to (4,7) to receive a bonus. Bonus is 10pts. Coordinates are [{"x":4,"y":7}]
-Output: {"level":"L1","opType":"MODIFIER","selector":{"on":"goto","coords":[{"x":4,"y":7}]},"effect":{"add":10},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":10,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"goto","coords":[{"x":4,"y":7}]},"effect":{"add":10},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":10,"answer":null,"token":null}
 
 Input: Head to (2,5) and you'll get twenty points.
-Output: {"level":"L1","opType":"MODIFIER","selector":{"on":"goto","coords":[{"x":2,"y":5}]},"effect":{"add":20},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":20,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"goto","coords":[{"x":2,"y":5}]},"effect":{"add":20},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":20,"answer":null,"token":null}
 
 Input: Deliveries at (3,8) pay five times normal from now on.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":3,"y":8}},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":3,"y":8}},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+
+Input: Delivering in the top-left pays five times more than a normal delivery tile.
+Output: {"opType":"MODIFIER","selector":{"on":"deliver","tile":null},"effect":{"mult":5},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null,"predicate":["delivery","topmost","leftmost"]}
 
 Input: Do not go through tiles (13,15) (14,15) (15,15) or you will be penalized. Bonus is -1000pts.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"cross","tiles":[{"x":13,"y":15},{"x":14,"y":15},{"x":15,"y":15}]},"effect":{"add":-1000},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":-1000,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"cross","tiles":[{"x":13,"y":15},{"x":14,"y":15},{"x":15,"y":15}]},"effect":{"add":-1000},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":-1000,"answer":null,"token":null}
 
 Input: Deliver exactly three packages at a time. Bonus is 100pts.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver"},"effect":{"add":100},"condition":{"carryCountEquals":3},"lifetime":"persistent","target":"both","coords":null,"bonus":100,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"deliver"},"effect":{"add":100},"condition":{"carryCountEquals":3},"lifetime":"persistent","target":"both","coords":null,"bonus":100,"answer":null,"token":null}
 
 Input: Deliveries at (5,5) pay triple points from now on.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":5,"y":5}},"effect":{"mult":3},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"deliver","tile":{"x":5,"y":5}},"effect":{"mult":3},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: Do not deliver any parcel whose current score is above 10. Wait for it to decay first.
-Output: {"level":"L2","opType":"MODIFIER","selector":{"on":"deliver-parcel","rewardOver":10},"effect":{"mult":0},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+Output: {"opType":"MODIFIER","selector":{"on":"deliver-parcel","rewardOver":10},"effect":{"mult":0},"condition":null,"lifetime":"persistent","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: What is the capital of Italy? Answer me for 50 points.
-Output: {"level":"L1","opType":"qa","selector":{"on":"deliver"},"effect":{"add":50},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":50,"answer":"Rome","token":null}
+Output: {"opType":"qa","selector":{"on":"deliver"},"effect":{"add":50},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":50,"answer":"Rome","token":null}
 
 Input: Calculate (5*(5+3)/2)+2. First one to answer gets a 1000pts bonus, una tantum.
-Output: {"level":"L1","opType":"qa","selector":{"on":"deliver"},"effect":{"add":1000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":1000,"answer":"22","token":null}
+Output: {"opType":"qa","selector":{"on":"deliver"},"effect":{"add":1000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":1000,"answer":"22","token":null}
 
 Input: Stop moving and hold your position until I tell you to go.
-Output: {"level":"L2","opType":"PAUSE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
+Output: {"opType":"PAUSE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":null}
 
 Input: Move both robots onto an odd-numbered row, stop, and wait. When you receive the word "green" from me, go. Bonus is 700pts.
-Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{"add":700},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":700,"answer":null,"token":"green","predicate":["odd-row"]}
+Output: {"opType":"STAGE","selector":{"on":"deliver"},"effect":{"add":700},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":700,"answer":null,"token":"green","predicate":["odd-row"]}
 
 Input: Semaforo: andate sulla riga pari più vicina e fermatevi. Ripartite al mio "via".
-Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":"via","predicate":["even-row"]}
+Output: {"opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":"via","predicate":["even-row"]}
 
 Input: Mettetevi entrambi su una tile dispari e aspettate il mio via.
-Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":"via","predicate":["odd-tile"]}
+Output: {"opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":"via","predicate":["odd-tile"]}
 
 Input: Go to the leftmost delivery tile and wait for my signal.
-Output: {"level":"L3","opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":null,"predicate":["delivery","leftmost"]}
+Output: {"opType":"STAGE","selector":{"on":"deliver"},"effect":{},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":null,"answer":null,"token":null,"predicate":["delivery","leftmost"]}
 
 Input: If a parcel is initially picked up by one agent and later delivered by the other agent, you will receive a 200 points bonus.
-Output: {"level":"L3","opType":"handoff","selector":{"on":"deliver"},"effect":{"add":200},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":200,"answer":null,"token":null,"maxDist":null}
+Output: {"opType":"handoff","selector":{"on":"deliver"},"effect":{"add":200},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":200,"answer":null,"token":null,"maxDist":null}
 
 Input: Se un robot raccoglie un pacco e l'altro lo consegna, riceverete 500 punti.
-Output: {"level":"L3","opType":"handoff","selector":{"on":"deliver"},"effect":{"add":500},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":500,"answer":null,"token":null,"maxDist":null}
+Output: {"opType":"handoff","selector":{"on":"deliver"},"effect":{"add":500},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":500,"answer":null,"token":null,"maxDist":null}
 
 Input: Move both agents to the neighborhood of position (21,3) within a maximum distance of 3, and have them wait for each other. You will receive 5000pts.
-Output: {"level":"L3","opType":"rendezvous","selector":{"on":"goto","coords":[{"x":21,"y":3}]},"effect":{"add":5000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":5000,"answer":null,"token":null,"maxDist":3}
+Output: {"opType":"rendezvous","selector":{"on":"goto","coords":[{"x":21,"y":3}]},"effect":{"add":5000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":5000,"answer":null,"token":null,"maxDist":3}
 
 Input: Move both agents to the neighborhood of position (23,1) within a maximum distance of 1, and have them wait for each other. You will receive 5000pts.
-Output: {"level":"L3","opType":"rendezvous","selector":{"on":"goto","coords":[{"x":23,"y":1}]},"effect":{"add":5000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":5000,"answer":null,"token":null,"maxDist":1}
+Output: {"opType":"rendezvous","selector":{"on":"goto","coords":[{"x":23,"y":1}]},"effect":{"add":5000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":5000,"answer":null,"token":null,"maxDist":1}
 
 Input: Portate entrambi i robot vicino a (10,7) e aspettatevi. Bonus 300 punti.
-Output: {"level":"L3","opType":"rendezvous","selector":{"on":"goto","coords":[{"x":10,"y":7}]},"effect":{"add":300},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":300,"answer":null,"token":null,"maxDist":null}
+Output: {"opType":"rendezvous","selector":{"on":"goto","coords":[{"x":10,"y":7}]},"effect":{"add":300},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":300,"answer":null,"token":null,"maxDist":null}
+
+Input: Meet at the central delivery zone and wait for each other. You will receive 5000pts.
+Output: {"opType":"rendezvous","selector":{"on":"goto","coords":null},"effect":{"add":5000},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":5000,"answer":null,"token":null,"predicate":["delivery","center"],"maxDist":null}
+
+Input: Go to the tile right next to the fountain for a 100pts bonus.
+Output: {"opType":"MODIFIER","selector":{"on":"goto","coords":null},"effect":{"add":100},"condition":null,"lifetime":"one-shot","target":"both","coords":null,"bonus":100,"answer":null,"token":null,"needsResolve":true}

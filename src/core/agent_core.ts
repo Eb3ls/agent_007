@@ -42,7 +42,7 @@ import {
 	tileId,
 	idToXY,
 	spawnsWithinRadius,
-	type StaticMap,
+	resolvePredicateTokens,
 } from "../static_map.js";
 import { bfsFromSelf, DELTA_OF, type BfsFromSelf } from "../pathfinder.js";
 import { cfg as appCfg, parseDecayInterval } from "../config.js";
@@ -55,63 +55,6 @@ import type { Intention } from "./intention.js";
 import { deliberate } from "./deliberation.js";
 import { makeIntention } from "./intention.js";
 import { log } from "../logger.js";
-
-// Resolves a predicate token array to concrete XY positions on the map.
-// Tokens: "center", "delivery", "spawn", corner/edge shorthands, and parity filters (odd/even x|y).
-export function resolvePredicateTokens(
-	tokens: PredicateToken[],
-	map: StaticMap,
-): { x: number; y: number }[] {
-	if (tokens.includes("center")) {
-		const cx = map.minX + Math.floor(map.gridWidth / 2);
-		const cy = map.minY + Math.floor(map.gridHeight / 2);
-		const tile = map.tiles.get(`${cx},${cy}`);
-		if (!tile || tile.type === TILE.EMPTY) return [];
-		return [{ x: cx, y: cy }];
-	}
-
-	let result: { x: number; y: number }[] = [];
-	for (const [, t] of map.tiles) {
-		if (t.type !== TILE.EMPTY) result.push({ x: t.x, y: t.y });
-	}
-
-	if (tokens.includes("delivery")) {
-		result = result.filter(
-			(p) => map.tiles.get(`${p.x},${p.y}`)?.type === TILE.DELIVERY,
-		);
-	}
-	// "spawn" means type-"1" only (WALKABLE), excludes delivery and directional tiles
-	if (tokens.includes("spawn")) {
-		result = result.filter(
-			(p) => map.tiles.get(`${p.x},${p.y}`)?.type === TILE.WALKABLE,
-		);
-	}
-
-	// % preserves sign in JS — only matters on negative coords, not used by Deliveroo server
-	if (tokens.includes("odd-row"))
-		result = result.filter((p) => p.y % 2 !== 0);
-	if (tokens.includes("even-row"))
-		result = result.filter((p) => p.y % 2 === 0);
-	if (tokens.includes("odd-col"))
-		result = result.filter((p) => p.x % 2 !== 0);
-	if (tokens.includes("even-col"))
-		result = result.filter((p) => p.x % 2 === 0);
-	if (tokens.includes("odd-tile"))
-		result = result.filter((p) => p.x % 2 !== 0 && p.y % 2 !== 0);
-	if (tokens.includes("even-tile"))
-		result = result.filter((p) => p.x % 2 === 0 && p.y % 2 === 0);
-
-	if (tokens.includes("leftmost"))
-		return result.sort((a, b) => a.x - b.x).slice(0, 1);
-	if (tokens.includes("rightmost"))
-		return result.sort((a, b) => b.x - a.x).slice(0, 1);
-	if (tokens.includes("topmost"))
-		return result.sort((a, b) => a.y - b.y).slice(0, 1);
-	if (tokens.includes("bottommost"))
-		return result.sort((a, b) => b.y - a.y).slice(0, 1);
-
-	return result;
-}
 
 const M_EMA_ALPHA = 0.1;
 let mapLogged = false;

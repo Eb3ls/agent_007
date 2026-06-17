@@ -1,4 +1,7 @@
+import type { PredicateToken } from "./team/directives.js";
 import type { IOTile } from "@unitn-asa/deliveroo-js-sdk";
+
+type XY = { x: number; y: number };
 
 // The 4 cardinal move offsets [dx, dy]. Exported for reuse in pathfinder.
 export const DIRS: [number, number][] = [
@@ -104,6 +107,90 @@ export function idToXY(m: StaticMap, id: number): { x: number; y: number } {
 		x: (id % m.gridWidth) + m.minX,
 		y: Math.floor(id / m.gridWidth) + m.minY,
 	};
+}
+
+const DIRECTIONAL_CMP: Partial<
+	Record<PredicateToken, (a: XY, b: XY) => number>
+> = {
+	leftmost: (a, b) => a.x - b.x,
+	rightmost: (a, b) => b.x - a.x,
+	topmost: (a, b) => a.y - b.y,
+	bottommost: (a, b) => b.y - a.y,
+};
+
+// Resolves a predicate token array to concrete map tiles. Single source of truth
+// shared by STAGE staging, the assembler's deterministic mission resolution, and the
+// resolve_tile tool. Class tokens (parity / delivery / spawn) yield the full matching
+// set; selecting tokens (directional / center) yield a single best tile.
+export function resolvePredicateTokens(
+	tokens: PredicateToken[],
+	map: StaticMap,
+): XY[] {
+	let result: XY[] = [];
+	for (const [, t] of map.tiles) {
+		if (t.type !== TILE.EMPTY) result.push({ x: t.x, y: t.y });
+	}
+
+	if (tokens.includes("delivery"))
+		result = result.filter(
+			(p) => map.tiles.get(`${p.x},${p.y}`)?.type === TILE.DELIVERY,
+		);
+	// "spawn" means type-"1" only (WALKABLE), excludes delivery and directional tiles
+	if (tokens.includes("spawn"))
+		result = result.filter(
+			(p) => map.tiles.get(`${p.x},${p.y}`)?.type === TILE.WALKABLE,
+		);
+
+	// % preserves sign in JS — only matters on negative coords, not used by Deliveroo server
+	if (tokens.includes("odd-row"))
+		result = result.filter((p) => p.y % 2 !== 0);
+	if (tokens.includes("even-row"))
+		result = result.filter((p) => p.y % 2 === 0);
+	if (tokens.includes("odd-col"))
+		result = result.filter((p) => p.x % 2 !== 0);
+	if (tokens.includes("even-col"))
+		result = result.filter((p) => p.x % 2 === 0);
+	if (tokens.includes("odd-tile"))
+		result = result.filter((p) => p.x % 2 !== 0 && p.y % 2 !== 0);
+	if (tokens.includes("even-tile"))
+		result = result.filter((p) => p.x % 2 === 0 && p.y % 2 === 0);
+
+	if (result.length === 0) return [];
+
+	// Directional tokens compose as cascading sort keys in token order, so
+	// ["topmost","leftmost"] picks the true top-left corner, not just the leftmost.
+	const cmps = tokens
+		.map((t) => DIRECTIONAL_CMP[t])
+		.filter((c): c is (a: XY, b: XY) => number => c !== undefined);
+	if (cmps.length > 0) {
+		return [...result]
+			.sort((a, b) => {
+				for (const cmp of cmps) {
+					const d = cmp(a, b);
+					if (d !== 0) return d;
+				}
+				return 0;
+			})
+			.slice(0, 1);
+	}
+
+	// "center" selects the filtered tile nearest the map center (composes with filters).
+	if (tokens.includes("center")) {
+		const cx = map.minX + Math.floor(map.gridWidth / 2);
+		const cy = map.minY + Math.floor(map.gridHeight / 2);
+		let best = result[0]!;
+		let bestD = Math.abs(best.x - cx) + Math.abs(best.y - cy);
+		for (const p of result) {
+			const d = Math.abs(p.x - cx) + Math.abs(p.y - cy);
+			if (d < bestD) {
+				bestD = d;
+				best = p;
+			}
+		}
+		return [best];
+	}
+
+	return result;
 }
 
 /** Returns tile ids of all spawn tiles within Manhattan radius of center. */

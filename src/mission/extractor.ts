@@ -7,7 +7,6 @@ import { log } from "../logger.js";
 export type XY = { x: number; y: number };
 
 export type MissionRecord = {
-	level: "L1" | "L2" | "L3";
 	opType:
 		| "MODIFIER"
 		| "PAUSE"
@@ -37,6 +36,7 @@ export type MissionRecord = {
 	answer: string | null;
 	token: string | null;
 	predicate?: PredicateToken[];
+	needsResolve?: boolean;
 	maxDist?: number | null;
 	raw: string;
 };
@@ -83,11 +83,10 @@ export class Extractor {
 			const parsed = JSON.parse(response) as ParsedResponse;
 
 			const opType = parsed.opType as MissionRecord["opType"] | undefined;
-			const level = parsed.level as MissionRecord["level"] | undefined;
-			if (!opType || !level) {
+			if (!opType) {
 				log.warn(
 					"extractor",
-					`missing required fields opType=${opType} level=${level} for: ${text.slice(0, 60)}`,
+					`missing required field opType for: ${text.slice(0, 60)}`,
 				);
 			} else {
 				// Prefer top-level coords; fall back to selector coords. Filter strings — unresolved label placeholders
@@ -106,7 +105,6 @@ export class Extractor {
 						: undefined;
 
 				record = {
-					level,
 					opType,
 					selector: {
 						...(parsed.selector ?? { on: "deliver" }),
@@ -123,6 +121,7 @@ export class Extractor {
 					bonus: parsed.bonus ?? null,
 					answer: parsed.answer ?? null,
 					token: parsed.token ?? null,
+					needsResolve: parsed.needsResolve ?? false,
 					...(predicate !== undefined ? { predicate } : {}),
 					...(parsed.maxDist != null
 						? { maxDist: parsed.maxDist }
@@ -131,7 +130,7 @@ export class Extractor {
 				};
 				log.info(
 					"extractor",
-					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} predicate=${predicate ? JSON.stringify(predicate) : "none"} lifetime=${record.lifetime} bonus=${record.bonus}${record.effect.mult !== undefined ? ` mult=${record.effect.mult}` : ""}${record.effect.add !== undefined ? ` add=${record.effect.add}` : ""}${record.token ? ` token=${record.token}` : ""}${record.maxDist != null ? ` maxDist=${record.maxDist}` : ""}${record.condition ? ` condition=${JSON.stringify(record.condition)}` : ""}`,
+					`op=${record.opType} on=${record.selector.on} coords=${resolvedCoords.length} predicate=${predicate ? JSON.stringify(predicate) : "none"} lifetime=${record.lifetime} bonus=${record.bonus}${record.effect.mult !== undefined ? ` mult=${record.effect.mult}` : ""}${record.effect.add !== undefined ? ` add=${record.effect.add}` : ""}${record.token ? ` token=${record.token}` : ""}${record.maxDist != null ? ` maxDist=${record.maxDist}` : ""}${record.needsResolve ? ` needsResolve=true` : ""}${record.condition ? ` condition=${JSON.stringify(record.condition)}` : ""}`,
 				);
 			}
 		} catch (err) {
