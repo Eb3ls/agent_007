@@ -528,12 +528,15 @@ export class AgentCore {
 		}
 
 		// Crate fallback via PDDL. Only when occupied crates exist and we're not
-		// already running a PDDL plan (those run to completion). Two cases:
-		//  (a) carrying but every delivery tile is sealed off by crates → push
-		//      straight to the nearest delivery tile;
-		//  (b) idle/exploring while the parcel source is sealed behind crates →
-		//      plan the WHOLE collect-then-deliver route at once, so the crate
-		//      pushes used to reach the parcel can never block the delivery tile.
+		// already running a PDDL plan (those run to completion). Two legs:
+		//  (a) DELIVERY leg — carrying, every delivery tile sealed off by crates, and
+		//      nothing reachable left to grab → push the carry to the nearest delivery.
+		//  (b) COLLECT leg — empty-handed while the parcel source is sealed behind
+		//      crates → solve the FULL collect-then-deliver route (so delivery stays
+		//      reachable, no self-block) but drive only to the spawn. There the agent
+		//      gathers parcels via normal deliberation; once nothing reachable is left,
+		//      leg (a) delivers. Leg (a) is suppressed while a pickup is deliberated so
+		//      the whole spawn cluster is collected before heading to delivery.
 		if (
 			crateCtx &&
 			this.beliefs.crateOccupancy.size > 0 &&
@@ -545,6 +548,9 @@ export class AgentCore {
 			const spawnsBlocked = map.spawnTileIds.some(
 				(id) => ctx.bfs.dist[id] === -1,
 			);
+			// A freshly deliberated pickup means a parcel is still reachable to grab —
+			// keep collecting before committing the delivery leg.
+			const deliberatedPickup = intention?.kind === "pickup";
 
 			// Nearest tile (by manhattan) among ids; blockedOnly skips BFS-reachable ones.
 			const nearest = (
@@ -569,7 +575,9 @@ export class AgentCore {
 			let target: { x: number; y: number } | null = null;
 			let label = "";
 
-			if (carryingUndeliverable) {
+			if (carryingUndeliverable && !deliberatedPickup) {
+				// Delivery leg: nothing reachable left to collect, so push the carried
+				// parcels straight to the nearest (sealed) delivery tile.
 				target = nearest(map.deliveryTileIds, true);
 				if (target) {
 					plan = await buildPlanWithCrateHandling(
@@ -585,13 +593,16 @@ export class AgentCore {
 					label = `deliver → (${target.x},${target.y})`;
 				}
 			} else if (
+				ctx.carry.n === 0 &&
 				spawnsBlocked &&
 				(!intention || intention.kind === "explore")
 			) {
+				// Collect leg: solve the full collect-then-deliver (proves delivery
+				// stays reachable) but drive ONLY to the spawn, then collect there.
 				const pickup = nearest(map.spawnTileIds, true);
 				const delivery = nearest(map.deliveryTileIds, false);
 				if (pickup && delivery) {
-					target = delivery;
+					target = pickup;
 					plan = await buildPlanWithCrateHandling(
 						map,
 						ctx.bfs,
@@ -602,16 +613,16 @@ export class AgentCore {
 						selfY,
 						crateCtx,
 						pickup,
+						true, // stopAtPickup: return only the agent→spawn leg
 					);
-					label = `collect (${pickup.x},${pickup.y})→(${delivery.x},${delivery.y})`;
+					label = `collect leg → spawn (${pickup.x},${pickup.y})`;
 				}
 			}
 
 			if (target && plan.length > 0) {
-				// Both fallbacks run to completion: kind "push" so the BFS-based
-				// viability/reconsider gates can't abort a solver-verified crate plan
-				// mid-route (which would leave the agent wandering). Parcels are still
-				// picked up and delivered via the position reflexes along the route.
+				// Both legs run to completion: kind "push" so the BFS-based viability/
+				// reconsider gates can't abort a solver-verified crate plan mid-route.
+				// Parcels are still picked up via the position reflexes along the way.
 				intention = makeIntention("push", target, ctx.now);
 				intention.plan = plan;
 				intention.usedPDDL = true;

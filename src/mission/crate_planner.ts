@@ -30,6 +30,7 @@ export async function buildPlanWithCrateHandling(
 	selfY: number,
 	context: CratePlannerContext,
 	pickup?: { x: number; y: number },
+	stopAtPickup = false,
 ): Promise<Direction[]> {
 	// PDDL only helps when occupied crate tiles exist; nothing to do otherwise.
 	if (beliefs.crateOccupancy.size === 0) return [];
@@ -73,6 +74,7 @@ export async function buildPlanWithCrateHandling(
 			targetX,
 			targetY,
 			pickup,
+			stopAtPickup,
 		);
 
 		if (pddlPlan && pddlPlan.length > 0) {

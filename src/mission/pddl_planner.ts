@@ -375,10 +375,17 @@ function parsePlanFromStdout(stdout: string): PlanStep[] | null {
 
 // Both move-empty (?a ?from ?to) and push-crate (?a ?from ?via ?to) advance the agent
 // from params[1] to params[2], so direction extraction is identical for both actions.
-function convertPDDLPlanToPath(plan: PlanStep[]): Direction[] {
+// `stopAtPickup` truncates the path at the first pickup-here action, yielding just the
+// agent→spawn leg of a combined collect-then-deliver plan (so the agent can pause at
+// the spawn to collect parcels before the delivery leg is planned separately).
+function convertPDDLPlanToPath(
+	plan: PlanStep[],
+	stopAtPickup = false,
+): Direction[] {
 	const path: Direction[] = [];
 
 	for (const { action, parameters } of plan) {
+		if (stopAtPickup && action === "pickup-here") break;
 		if (action !== "move-empty" && action !== "push-crate") continue;
 		const [, from, to] = parameters;
 		if (!from || !to) continue;
@@ -528,6 +535,7 @@ export async function planWithCrates(
 	targetX: number,
 	targetY: number,
 	pickup?: { x: number; y: number },
+	stopAtPickup = false,
 ): Promise<Direction[] | null> {
 	log.debug(
 		"pddl_plan",
@@ -546,6 +554,11 @@ export async function planWithCrates(
 			// goal (30s+), but WA* with the hmrp relaxed-plan heuristic solves it
 			// (typically ~1.5–6s). The capped timeout keeps this blocking solve under
 			// the game socket's ping window so it can't drop the connection.
+			//
+			// With `stopAtPickup`, we still solve the full combined goal (so we know
+			// delivery stays reachable — no self-block), but return ONLY the agent→
+			// spawn leg. The agent drives there, collects parcels via normal
+			// deliberation, then the delivery leg is planned separately afterwards.
 			const problemPDDL = generateProblemPDDL(
 				map,
 				beliefs,
@@ -566,10 +579,10 @@ export async function planWithCrates(
 				result.plan &&
 				result.plan.length > 0
 			) {
-				const path = convertPDDLPlanToPath(result.plan);
+				const path = convertPDDLPlanToPath(result.plan, stopAtPickup);
 				log.ok(
 					"pddl_plan",
-					`collect-then-deliver solved in ${result.planning_time ?? "?"}ms, steps=${path.length}`,
+					`collect-then-deliver solved in ${result.planning_time ?? "?"}ms, ${stopAtPickup ? `leg-to-spawn=${path.length}` : `steps=${path.length}`}`,
 				);
 				return path;
 			}
