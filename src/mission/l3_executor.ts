@@ -16,6 +16,7 @@ const AGENT_LLM = "llm";
 // rendezvous agents converge in one relay step; no sequential handoff phase
 const RENDEZVOUS_SERIAL_STEPS = 1;
 const CONFIRM_TIMEOUT_MS = 60_000;
+const RENDEZVOUS_MAX_DIST = 3;
 
 // ── Drop-tile feasibility ──────────────────────────────────────────────────────
 
@@ -73,6 +74,27 @@ export function findDropTile(
 		}
 	}
 	return best;
+}
+
+/**
+ * Returns all walkable tiles reachable from `target` within `maxDist` BFS steps.
+ * If `target` is not a walkable tile, returns an empty array.
+ */
+export function findRendezvousTiles(
+	map: StaticMap,
+	target: XY,
+	maxDist: number,
+): XY[] {
+	const bfs = bfsFromSelf(map, target.x, target.y);
+	const tiles: XY[] = [];
+	for (const [, tile] of map.tiles) {
+		const id = tileId(map, tile.x, tile.y);
+		const d = bfs.dist[id];
+		if (d !== undefined && d >= 0 && d <= maxDist) {
+			tiles.push({ x: tile.x, y: tile.y });
+		}
+	}
+	return tiles;
 }
 
 // ── Role assignment ───────────────────────────────────────────────────────────
@@ -267,6 +289,17 @@ export class L3Executor {
 		record: MissionRecord,
 		missionId: string,
 	): Promise<void> {
+		if (record.opType === "rendezvous") {
+			await this.executeRendezvous(record, missionId);
+		} else {
+			await this.executeHandoff(record, missionId);
+		}
+	}
+
+	private async executeHandoff(
+		record: MissionRecord,
+		missionId: string,
+	): Promise<void> {
 		const ctx = this.resolveContext();
 
 		const site = this.selectHandoffSite();
@@ -306,6 +339,133 @@ export class L3Executor {
 		log.info(
 			"l3_executor",
 			`${record.opType} complete — RELEASE missionId=${missionId}`,
+		);
+	}
+
+	// Moves both agents to any tile within RENDEZVOUS_MAX_DIST of the target and
+	// waits for both to confirm arrival before releasing the mission.
+	private async executeRendezvous(
+		record: MissionRecord,
+		missionId: string,
+	): Promise<void> {
+		const target = record.selector.coords?.[0];
+		if (!target) {
+			log.warn(
+				"l3_executor",
+				`rendezvous: no target coords in record — aborting missionId=${missionId}`,
+			);
+			return;
+		}
+
+		const posA = this.coordinator.posOf(AGENT_BDI);
+		const posB = this.coordinator.posOf(AGENT_LLM);
+		if (!posA || !posB) {
+			log.warn(
+				"l3_executor",
+				"rendezvous: cannot get agent positions — aborting",
+			);
+			return;
+		}
+
+		const nearbyTiles = findRendezvousTiles(
+			this.map,
+			target,
+			RENDEZVOUS_MAX_DIST,
+		);
+		if (nearbyTiles.length === 0) {
+			log.warn(
+				"l3_executor",
+				`rendezvous: no walkable tiles near (${target.x},${target.y}) — aborting missionId=${missionId}`,
+			);
+			return;
+		}
+
+		const ctx = this.resolveContext();
+		const bfsA = bfsFromSelf(this.map, posA.x, posA.y);
+		const bfsB = bfsFromSelf(this.map, posB.x, posB.y);
+
+		const minDistA = nearbyTiles.reduce((min, t) => {
+			const d = bfsA.dist[tileId(this.map, t.x, t.y)] ?? -1;
+			return d >= 0 && d < min ? d : min;
+		}, Infinity);
+		const minDistB = nearbyTiles.reduce((min, t) => {
+			const d = bfsB.dist[tileId(this.map, t.x, t.y)] ?? -1;
+			return d >= 0 && d < min ? d : min;
+		}, Infinity);
+
+		if (minDistA === Infinity && minDistB === Infinity) {
+			log.warn(
+				"l3_executor",
+				`rendezvous: neighborhood unreachable by both agents — aborting missionId=${missionId}`,
+			);
+			return;
+		}
+
+		const setupSteps = Math.max(
+			minDistA === Infinity ? 0 : minDistA,
+			minDistB === Infinity ? 0 : minDistB,
+		);
+		const missionBonus = record.bonus ?? 0;
+		const carryA = this.coordinator.carryOf(AGENT_BDI) ?? {
+			count: 0,
+			reward: 0,
+		};
+
+		const ev = evalRendezvous({
+			missionBonus,
+			oppRate: ctx.oppRate,
+			carrierCarryN: carryA.count,
+			decayRate: ctx.decayRate,
+			M: ctx.M,
+			setupSteps,
+			dropTile: target,
+			map: this.map,
+			beliefs: this.beliefs,
+			parkedReward: 0,
+		});
+
+		const threshold = cfg.intention.hysteresis_pct * Math.abs(missionBonus);
+		if (ev <= threshold) {
+			log.info(
+				"l3_executor",
+				`rendezvous EV=${ev.toFixed(1)} ≤ threshold=${threshold.toFixed(1)} — not dispatching missionId=${missionId}`,
+			);
+			return;
+		}
+
+		log.info(
+			"l3_executor",
+			`dispatching rendezvous to (${target.x},${target.y}) tiles=${nearbyTiles.length} EV=${ev.toFixed(1)} missionId=${missionId}`,
+		);
+
+		this.bus.emitDirective(AGENT_BDI, {
+			kind: "OVERRIDE",
+			op: "STAGE",
+			target: nearbyTiles,
+			missionId,
+		});
+		this.bus.emitDirective(AGENT_LLM, {
+			kind: "OVERRIDE",
+			op: "STAGE",
+			target: nearbyTiles,
+			missionId,
+		});
+
+		try {
+			await this.awaitBothReachedAndHold(missionId);
+		} catch (err) {
+			log.warn(
+				"l3_executor",
+				`rendezvous CONFIRM timeout — aborting missionId=${missionId}: ${String(err)}`,
+			);
+			return;
+		}
+
+		const scope = scopeOf(record.target);
+		this.bus.emitRelease({ missionId, scope });
+		log.info(
+			"l3_executor",
+			`rendezvous complete — RELEASE missionId=${missionId}`,
 		);
 	}
 
@@ -439,6 +599,45 @@ export class L3Executor {
 			target: [dropTile],
 			thenAct: "pickUp",
 			missionId,
+		});
+	}
+
+	// Waits for both agents to confirm "reached", pausing each immediately on arrival
+	// so neither wanders off before the second one gets there.
+	private awaitBothReachedAndHold(missionId: string): Promise<void> {
+		return new Promise((resolve, reject) => {
+			let confirmedCount = 0;
+			const timer = setTimeout(() => {
+				this.bus.off("CONFIRM", handler);
+				reject(
+					new Error(
+						`l3 rendezvous timeout waiting for both agents missionId=${missionId}`,
+					),
+				);
+			}, CONFIRM_TIMEOUT_MS);
+
+			const handler = (payload: ConfirmPayload) => {
+				if (payload.missionId !== missionId) return;
+				if (payload.result !== "reached") return;
+				confirmedCount++;
+				if (confirmedCount === 1) {
+					// First to arrive: hold in place until the other gets here.
+					// RELEASE (emitted after the second confirm) will clear this pause.
+					this.bus.emitDirective(payload.agentId, {
+						kind: "OVERRIDE",
+						op: "PAUSE",
+						missionId,
+					});
+				} else {
+					// Second to arrive: resolve immediately — no PAUSE needed because
+					// RELEASE is emitted synchronously by the caller before this agent's
+					// next tick, so there is nothing to un-pause.
+					clearTimeout(timer);
+					this.bus.off("CONFIRM", handler);
+					resolve();
+				}
+			};
+			this.bus.on("CONFIRM", handler);
 		});
 	}
 
