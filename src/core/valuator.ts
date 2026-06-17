@@ -148,13 +148,6 @@ export function parcelCapEffect(
 	return rewardOver !== null ? { rewardOver, mult, add } : null;
 }
 
-// Thin wrapper for callers that only need the threshold.
-export function activeScoreCap(
-	modifiers: readonly ActiveModifier[],
-): number | null {
-	return parcelCapEffect(modifiers)?.rewardOver ?? null;
-}
-
 /**
  * Absolute full-trip pickup score per §5.3.
  * Score_pickup(P) = R_c + R_p_eff − (n+1)·d·M·S
