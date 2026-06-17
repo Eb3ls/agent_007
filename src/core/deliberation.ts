@@ -302,13 +302,28 @@ export function deliberate(context: DeliberationContext): Intention | null {
 	const selected = selectBestIntention(ruleContext, candidates);
 	if (!selected) return null;
 
-	log.debug(
-		"deliberate",
-		candidates
-			.map((c) => `${c.source}(${c.utility.toFixed(1)})`)
-			.join(" | ") +
-			` → ${selected.source}(${selected.utility.toFixed(1)}) carry=${context.carry.n}`,
-	);
+	const hasModifiers = (context.directives?.modifiers.length ?? 0) > 0;
+	const candidateStr =
+		candidates.map((c) => `${c.source}(${c.utility.toFixed(1)})`).join(" | ") +
+		` → ${selected.source}(${selected.utility.toFixed(1)}) carry=${context.carry.n}`;
+	if (hasModifiers) {
+		const modStr = (context.directives?.modifiers ?? [])
+			.map((m) => {
+				const tile =
+					m.selector.on === "deliver" && m.selector.tile
+						? `@(${m.selector.tile.x},${m.selector.tile.y})`
+						: "";
+				const eff = [
+					m.effect.mult !== undefined ? `×${m.effect.mult}` : "",
+					m.effect.add !== undefined ? `${m.effect.add >= 0 ? "+" : ""}${m.effect.add}` : "",
+				].filter(Boolean).join("");
+				return `${m.selector.on}${tile}${eff}`;
+			})
+			.join(", ");
+		log.info("deliberate", `[mods: ${modStr}] ${candidateStr}`);
+	} else {
+		log.debug("deliberate", candidateStr);
+	}
 
 	if (
 		selected.source !== "current" &&

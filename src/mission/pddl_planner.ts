@@ -44,7 +44,12 @@ const isCrateTile = (type: string): boolean =>
  * tile believed occupied (per `beliefs.crateOccupancy`) emits an `(occupied …)` fact,
  * every other location is `(clear …)`.
  *
- * The goal is the agent reaching the target tile.
+ * The goal is the agent reaching the target tile. When `combinedPickup` is given
+ * the goal becomes "visit that tile (setting (picked)), then reach the target" —
+ * a single collect-then-deliver problem (harder for the solver; see planWithCrates).
+ *
+ * Crate occupancy comes from `beliefs.crateOccupancy`; pass a belief store with a
+ * simulated occupancy set to plan a later leg from a post-push crate state.
  */
 function generateProblemPDDL(
 	map: StaticMap,
@@ -53,6 +58,7 @@ function generateProblemPDDL(
 	agentY: number,
 	targetX: number,
 	targetY: number,
+	combinedPickup?: { x: number; y: number },
 ): string {
 	// A crate tile holds a crate per belief — except the agent's own tile, which it
 	// is standing on and so must be clear (guards against a stale occupancy entry).
@@ -112,6 +118,15 @@ function generateProblemPDDL(
 		}
 	}
 
+	// Combined collect-then-deliver: mark the parcel tile as the pickup waypoint
+	// and require it visited before the delivery goal. Empty when single-target.
+	const pickupFact = combinedPickup
+		? `(is-pickup ${loc(combinedPickup.x, combinedPickup.y)})`
+		: "";
+	const goal = combinedPickup
+		? `(and (picked) (agent-at agent1 ${loc(targetX, targetY)}))`
+		: `(agent-at agent1 ${loc(targetX, targetY)})`;
+
 	// Build the problem PDDL
 	const problem = `(define (problem deliveroo-${Date.now()})
   (:domain deliveroo-crates)
@@ -144,10 +159,13 @@ ${crateTileFacts.join("\n    ")}
 
     ;; Straight-line push geometry
 ${pushLineFacts.join("\n    ")}
+
+    ;; Combined collect-then-deliver waypoint
+    ${pickupFact}
   )
 
   (:goal
-    (agent-at agent1 ${loc(targetX, targetY)})
+    ${goal}
   )
 )`;
 
@@ -157,8 +175,18 @@ ${pushLineFacts.join("\n    ")}
 /**
  * Call local ENHSP solver (Java-based PDDL planner).
  * Writes domain and problem to temp files, invokes enhsp.jar, parses output.
+ *
+ * `searchFlags` selects ENHSP's search strategy + heuristic (e.g. "-s WAStar -h
+ * hmrp"); empty uses ENHSP's default (WA* + AIBR), which is fine for single-goal
+ * problems. `timeoutMs` bounds the blocking solve — keep it under the game socket's
+ * ping timeout so a hard solve can't stall long enough to drop the connection.
  */
-function callENHSP(problemPDDL: string, domainPDDL: string): PlannerResponse {
+function callENHSP(
+	problemPDDL: string,
+	domainPDDL: string,
+	searchFlags = "",
+	timeoutMs = 30000,
+): PlannerResponse {
 	const __filename = fileURLToPath(import.meta.url);
 	const __dirname = dirname(__filename);
 	const enhspJar = join(__dirname, "../../bin/enhsp.jar");
@@ -180,18 +208,19 @@ function callENHSP(problemPDDL: string, domainPDDL: string): PlannerResponse {
 			`temp dir=${tempDir}, domain size=${domainPDDL.length}, problem size=${problemPDDL.length}`,
 		);
 
-		// Execute ENHSP with timeout (30 seconds — grounding large problems takes time)
-		// Command: java -jar enhsp.jar -o domain.pddl -f problem.pddl -sp plan.txt
+		// Execute ENHSP with timeout. Command:
+		//   java -jar enhsp.jar -o domain.pddl -f problem.pddl -sp plan.txt [searchFlags]
+		const flagSuffix = searchFlags ? ` ${searchFlags}` : "";
 		const startTime = Date.now();
 		let output = "";
 		let errorOutput = "";
 		try {
 			output = execSync(
-				`java -jar "${enhspJar}" -o "${domainFile}" -f "${problemFile}" -sp "${planFile}"`,
+				`java -jar "${enhspJar}" -o "${domainFile}" -f "${problemFile}" -sp "${planFile}"${flagSuffix}`,
 				{
 					encoding: "utf-8",
 					maxBuffer: 10 * 1024 * 1024,
-					timeout: 30000,
+					timeout: timeoutMs,
 					stdio: ["pipe", "pipe", "pipe"],
 				},
 			);
@@ -210,7 +239,7 @@ function callENHSP(problemPDDL: string, domainPDDL: string): PlannerResponse {
 			) {
 				return {
 					status: "timeout",
-					error: "ENHSP exceeded 30s timeout",
+					error: `ENHSP exceeded ${timeoutMs}ms timeout`,
 					plan: undefined,
 					planning_time: undefined,
 				};
@@ -425,6 +454,15 @@ function getEmbeddedDomain(): string {
     ;; Straight-line push geometry: agent at ?from pushes a crate at ?via
     ;; onto ?to, where ?from -> ?via -> ?to are collinear and consecutive.
     (push-line ?from ?via ?to - location)
+
+    ;; Combined collect-then-deliver. When the problem sets (is-pickup ?loc) and
+    ;; goals on (picked), the plan must reach the parcel tile (setting (picked))
+    ;; before ending on the delivery tile — one plan whose crate pushes are
+    ;; consistent across both legs, so reaching the parcel can't seal off the
+    ;; delivery route. With no (is-pickup) fact this is inert and planning reduces
+    ;; to the plain (agent-at ...) goal.
+    (is-pickup ?loc - location)
+    (picked)
   )
 
   (:action move-empty
@@ -461,8 +499,22 @@ function getEmbeddedDomain(): string {
       (not (clear ?to))
     )
   )
+
+  (:action pickup-here
+    :parameters (?a - agent ?loc - location)
+    :precondition (and
+      (agent-at ?a ?loc)
+      (is-pickup ?loc)
+    )
+    :effect (picked)
+  )
 )`;
 }
+
+// ENHSP timeouts, both kept under the game socket's ~20s ping window so a blocking
+// solve can't stall long enough to drop the connection.
+const COMBINED_TIMEOUT_MS = 15000; // collect-then-deliver (WA*+hmrp): ~1.5–6s typical
+const SINGLE_TIMEOUT_MS = 6000; // single goal: solves <1s; cap bounds unsat proofs
 
 /**
  * Main entry point: attempt PDDL planning when BFS fails.
@@ -475,14 +527,62 @@ export async function planWithCrates(
 	agentY: number,
 	targetX: number,
 	targetY: number,
+	pickup?: { x: number; y: number },
 ): Promise<Direction[] | null> {
 	log.debug(
 		"pddl_plan",
-		`attempting PDDL planning: agent=(${agentX},${agentY}) → target=(${targetX},${targetY})`,
+		`attempting PDDL planning: agent=(${agentX},${agentY})${pickup ? ` → pickup=(${pickup.x},${pickup.y})` : ""} → target=(${targetX},${targetY})`,
 	);
 
 	try {
 		const domainPDDL = loadDomainPDDLFromFile();
+
+		if (pickup) {
+			// Collect-then-deliver as ONE combined PDDL goal: visit the parcel tile
+			// (setting (picked)) AND end on the delivery tile. Planning both legs in
+			// a single problem is what stops the route to the parcel from sealing off
+			// the delivery — two independent legs can't see each other and routinely
+			// self-block. ENHSP's default/greedy configs blow up on this combined
+			// goal (30s+), but WA* with the hmrp relaxed-plan heuristic solves it
+			// (typically ~1.5–6s). The capped timeout keeps this blocking solve under
+			// the game socket's ping window so it can't drop the connection.
+			const problemPDDL = generateProblemPDDL(
+				map,
+				beliefs,
+				agentX,
+				agentY,
+				targetX,
+				targetY,
+				pickup,
+			);
+			const result = callENHSP(
+				problemPDDL,
+				domainPDDL,
+				"-s WAStar -h hmrp",
+				COMBINED_TIMEOUT_MS,
+			);
+			if (
+				result.status === "solved" &&
+				result.plan &&
+				result.plan.length > 0
+			) {
+				const path = convertPDDLPlanToPath(result.plan);
+				log.ok(
+					"pddl_plan",
+					`collect-then-deliver solved in ${result.planning_time ?? "?"}ms, steps=${path.length}`,
+				);
+				return path;
+			}
+			log.warn(
+				"pddl_plan",
+				`collect-then-deliver unsolved: status=${result.status} error=${result.error}`,
+			);
+			return null;
+		}
+
+		// Single goal (e.g. already carrying, push straight to a delivery tile). The
+		// short timeout means an unsatisfiable goal (delivery truly sealed) bails
+		// quickly instead of freezing on an exhaustive unsat proof.
 		const problemPDDL = generateProblemPDDL(
 			map,
 			beliefs,
@@ -491,7 +591,12 @@ export async function planWithCrates(
 			targetX,
 			targetY,
 		);
-		const result = callENHSP(problemPDDL, domainPDDL);
+		const result = callENHSP(
+			problemPDDL,
+			domainPDDL,
+			"",
+			SINGLE_TIMEOUT_MS,
+		);
 
 		if (
 			result.status === "solved" &&

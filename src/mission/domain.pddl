@@ -22,6 +22,15 @@
     ;; Straight-line push geometry: agent at ?from pushes a crate at ?via
     ;; onto ?to, where ?from -> ?via -> ?to are collinear and consecutive.
     (push-line ?from ?via ?to - location)
+
+    ;; Combined collect-then-deliver. When the problem sets (is-pickup ?loc) and
+    ;; goals on (picked), the plan must reach the parcel tile (setting (picked))
+    ;; before ending on the delivery tile — one plan whose crate pushes are
+    ;; consistent across both legs, so reaching the parcel can't seal off the
+    ;; delivery route. With no (is-pickup) fact this is inert and planning reduces
+    ;; to the plain (agent-at ...) goal.
+    (is-pickup ?loc - location)
+    (picked)
   )
 
   (:action move-empty
@@ -57,5 +66,14 @@
       (occupied ?to)
       (not (clear ?to))
     )
+  )
+
+  (:action pickup-here
+    :parameters (?a - agent ?loc - location)
+    :precondition (and
+      (agent-at ?a ?loc)
+      (is-pickup ?loc)
+    )
+    :effect (picked)
   )
 )

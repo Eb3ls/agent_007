@@ -29,13 +29,18 @@ export async function buildPlanWithCrateHandling(
 	selfX: number,
 	selfY: number,
 	context: CratePlannerContext,
+	pickup?: { x: number; y: number },
 ): Promise<Direction[]> {
 	// PDDL only helps when occupied crate tiles exist; nothing to do otherwise.
 	if (beliefs.crateOccupancy.size === 0) return [];
 
 	// Try plain BFS first; fall back to PDDL only when crates block the path.
-	const bfsPlan = reconstructPath(map, bfs, targetX, targetY);
-	if (bfsPlan && bfsPlan.length > 0) return bfsPlan;
+	// Skip this shortcut in combined mode: a direct BFS path to the target would
+	// bypass the pickup waypoint, so the collect-then-deliver route needs PDDL.
+	if (!pickup) {
+		const bfsPlan = reconstructPath(map, bfs, targetX, targetY);
+		if (bfsPlan && bfsPlan.length > 0) return bfsPlan;
+	}
 
 	// BFS failed — throttle repeated PDDL attempts at the same target to avoid spam.
 	const now = Date.now();
@@ -67,6 +72,7 @@ export async function buildPlanWithCrateHandling(
 			selfY,
 			targetX,
 			targetY,
+			pickup,
 		);
 
 		if (pddlPlan && pddlPlan.length > 0) {
