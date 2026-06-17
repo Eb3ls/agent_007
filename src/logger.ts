@@ -24,10 +24,12 @@ function getDisabledTags(): Set<string> {
 	return disabledTags;
 }
 
-// Check if a tag should be logged (true if not disabled)
+// Check if a tag should be logged (true if not disabled).
+// Matches any ":"-separated segment so attribution prefixes like
+// `${id}:move` stay filterable by the bare `move` config key.
 function isTagEnabled(label: string): boolean {
-	const baseTag = label.split(":")[0]!.toLowerCase();
-	return !getDisabledTags().has(baseTag);
+	const disabled = getDisabledTags();
+	return !label.split(":").some((seg) => disabled.has(seg.toLowerCase()));
 }
 
 export const log = {
@@ -35,37 +37,42 @@ export const log = {
 	info: silent
 		? noop
 		: (label: string, msg: string) => {
-				if (isTagEnabled(label)) console.log(tag(label, chalk.cyan) + " " + msg);
-		},
+				if (isTagEnabled(label))
+					console.log(tag(label, chalk.cyan) + " " + msg);
+			},
 
 	// Positive outcomes: move ok, pickup, deliver
 	ok: silent
 		? noop
 		: (label: string, msg: string) => {
-				if (isTagEnabled(label)) console.log(tag(label, chalk.green) + " " + msg);
-		},
+				if (isTagEnabled(label))
+					console.log(tag(label, chalk.green) + " " + msg);
+			},
 
 	// State changes worth watching: replan, reconsider, stall, wait
 	warn: silent
 		? noop
 		: (label: string, msg: string) => {
-				if (isTagEnabled(label)) console.log(tag(label, chalk.yellow) + " " + msg);
-		},
+				if (isTagEnabled(label))
+					console.log(tag(label, chalk.yellow) + " " + msg);
+			},
 
 	// Failures and errors: move failed, target unreachable
 	error: silent
 		? noop
 		: (label: string, msg: string) => {
-				if (isTagEnabled(label)) console.log(tag(label, chalk.red) + " " + msg);
-		},
+				if (isTagEnabled(label))
+					console.log(tag(label, chalk.red) + " " + msg);
+			},
 
 	// High-frequency ticks: intent commit, plan step — only shown in debug mode
 	debug:
 		silent || !debugEnabled
 			? noop
 			: (label: string, msg: string) => {
-					if (isTagEnabled(label)) console.log(chalk.dim(`[${label}] ${msg}`));
-			},
+					if (isTagEnabled(label))
+						console.log(chalk.dim(`[${label}] ${msg}`));
+				},
 };
 
 // JSONL decision log — one record per line, appended to decisions.jsonl.

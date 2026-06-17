@@ -312,7 +312,7 @@ export class AgentCore {
 		this.coordinator?.recordDelivery(this.id, deliveredPts);
 		deliveryCount += dropped.length;
 		log.ok(
-			"deliver",
+			`${this.id}:deliver`,
 			`putdown=${dropped.length} cleared=${ctx.carry.n} total_delivered=${deliveryCount}`,
 		);
 		this.completeOneShotDeliverModifiers(state, ctx.carry, selfX, selfY);
@@ -492,7 +492,7 @@ export class AgentCore {
 				agentId: this.id,
 			});
 			log.ok(
-				"stage",
+				`${this.id}:stage`,
 				`reached (${selfX},${selfY}) thenAct=${stage.thenAct ?? "none"}${stage.thenAct === "pickUp" ? ` picked=${pickedCount}` : ""}`,
 			);
 			this.directives.clearStage();
@@ -963,7 +963,7 @@ export class AgentCore {
 				});
 				if (oppClose) {
 					log.debug(
-						"push",
+						`${this.id}:push`,
 						`deferring push step — opp within ${appCfg.intention.opponent_defer_steps} tiles of crate`,
 					);
 					await sleep(cfg.movementDurationMs);
@@ -975,7 +975,7 @@ export class AgentCore {
 		// Execute move.
 		const step = intention.plan.shift()!;
 		log.debug(
-			"plan",
+			`${this.id}:plan`,
 			`step=${step} remaining=${intention.plan.length} kind=${intention.kind}`,
 		);
 		const moveStart = Date.now();
@@ -987,7 +987,7 @@ export class AgentCore {
 			selfY = result.y;
 			intention.moveFailStreak = 0;
 			log.debug(
-				"move",
+				`${this.id}:move`,
 				`${step} → (${selfX},${selfY}) M=${Math.round(this.M)}ms`,
 			);
 		} else {
@@ -995,7 +995,7 @@ export class AgentCore {
 			intention.plan = [];
 			const failContext = `kind=${intention.kind}${intention.targetXY ? ` target=(${intention.targetXY.x},${intention.targetXY.y})` : ""}${intention.missionId ? ` mission=${intention.missionId}` : ""}`;
 			log.error(
-				"move",
+				`${this.id}:move`,
 				`${step} → FAILED fails=${intention.moveFailStreak} ${failContext}`,
 			);
 			await sleep(cfg.movementDurationMs);
