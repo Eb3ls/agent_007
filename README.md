@@ -20,11 +20,11 @@ Scoring is utility-based: each candidate is evaluated by expected parcel reward 
 
 ### Crate Planning
 
-When the map includes movable crates that block paths, the agent invokes an external **PDDL solver (ENHSP)** to plan a route that incorporates pushing crates out of the way. The planner can solve a combined collect-then-deliver trip in a single pass. Results are cached per target; the agent falls back to standard BFS path-finding if the solver is disabled or times out.
+The agent uses **BFS** for ordinary path-finding. When crates block a route, it can invoke an external **PDDL solver (ENHSP)** to plan moves that push crates out of the way. The planner can also solve a combined collect-then-deliver trip in a single pass. Repeated PDDL attempts for the same target are limited by a cooldown. If neither BFS nor PDDL produces a route, the unreachable intention is dropped so the agent can reconsider its next action. Disabling the solver leaves only BFS routes available.
 
 ### Mission System
 
-A natural-language instructions are send via the Deliveroo chat channel. The agent interprets these in three steps:
+Natural-language instructions are sent via the Deliveroo chat channel. The agent interprets these in three steps:
 
 1. **Parse** — an LLM (with a cached response layer) converts the free-form text into a structured mission record, classifying it by level and operation type.
 2. **Resolve** — if the instruction references a vague location ("the top area of the map"), a second LLM call with full map context resolves it to concrete tile coordinates.
@@ -54,8 +54,9 @@ When two agents are running, they share state through an in-process coordinator.
 ```bash
 git clone https://github.com/Eb3ls/agent_007.git
 cd agent_007
-npm install
+npm ci
 cp .env.example .env   # fill in credentials
+cp config.example.yaml config.yaml
 npm run build
 ```
 
@@ -67,12 +68,14 @@ Copy `.env.example` to `.env` and fill in:
 |---|---|---|
 | `DELIVEROO_HOST` | yes | Game server URL |
 | `DELIVEROO_TOKEN` | yes | JWT token — BDI agent |
-| `DELIVEROO_TOKEN_LLM` | no | JWT token — LLM agent (enables dual-agent mode) |
-| `SERVER_AGENT_NAME` | no | Display name; also enables mission wiring when set |
-| `LLM_API_URL` | no | OpenAI-compatible API endpoint |
-| `LLM_API_TOKEN` | no | LLM API key |
-| `LLM_MODEL` | no | Model identifier (e.g. `google/gemma-3-27b-it`) |
-| `LLM_TIMEOUT_MS` | no | LLM request timeout in ms |
+| `DELIVEROO_TOKEN_LLM` | for dual-agent mode | Second agent's JWT token; must differ from `DELIVEROO_TOKEN` and belong to the same team |
+| `SERVER_AGENT_NAME` | for missions | Name of the sender whose chat messages are accepted as missions; other senders are ignored |
+| `LLM_API_URL` | when `DELIVEROO_TOKEN_LLM` is set | OpenAI-compatible chat-completions endpoint |
+| `LLM_API_TOKEN` | when `DELIVEROO_TOKEN_LLM` is set | LLM API key |
+| `LLM_MODEL` | when `DELIVEROO_TOKEN_LLM` is set | Model identifier (e.g. `google/gemma-3-27b-it`) |
+| `LLM_TIMEOUT_MS` | no | LLM request timeout in ms; leave blank or unset for no timeout |
+
+For a single BDI agent, set `DELIVEROO_HOST` and `DELIVEROO_TOKEN`; leave `DELIVEROO_TOKEN_LLM` blank. For two agents, also set `DELIVEROO_TOKEN_LLM` and the three LLM API variables. To enable chat missions in dual-agent mode, set `SERVER_AGENT_NAME` to the mission sender's name (matched case-insensitively). It does not change either agent's display name.
 
 ### Tunable constants
 
@@ -96,8 +99,10 @@ Secrets stay in `.env`.
 ```bash
 npm start          # run agent (reads DELIVEROO_HOST + DELIVEROO_TOKEN from .env)
 npm run build      # TypeScript compilation
-npm run dev        # watch mode
+npm run dev        # watch and recompile TypeScript; does not start/restart the agent
 npm run typecheck  # type check without emit
+npm test           # tests; live LLM tests are skipped unless explicitly enabled
+npm run check      # type check, formatting check, and tests
 ```
 
 ---

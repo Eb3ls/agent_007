@@ -25,7 +25,7 @@ function required(name: string): string {
 
 function parseOptionalPositiveInt(name: string): number | undefined {
 	const raw = process.env[name];
-	if (raw === undefined) return undefined;
+	if (raw === undefined || raw.trim() === "") return undefined;
 	const n = Number(raw);
 	if (!Number.isFinite(n) || n <= 0)
 		throw new Error(`${name} must be a positive integer, got "${raw}"`);
